@@ -633,6 +633,41 @@ class Tests(unittest.TestCase):
         self.assertEqual(result["summary_status"], "pagination_exhausted")
         self.assertFalse(result["count_confirmed"])
 
+    def test_keyed_profile_reads_preserve_additional_fields_without_overwriting(self):
+        from central_tool import keyed_profile_contracts, capture_keyed_profile_details
+        self.assertEqual(keyed_profile_contracts()["dns"], "name")
+        self.assertNotIn("layer2-vlan", keyed_profile_contracts())
+        profile = {"name": "example name"}
+        library = {"modules": {"dns": {"status": "list_parsed", "profiles": {"example name": profile}}}}
+        results = {"ACCESS_SWITCH": {"modules": {"dns": {"scope_results": [
+            {"scope": "12", "local_view": {"status": "list_parsed", "profiles": {"example name": profile}},
+             "effective_view": {"status": "list_parsed", "profiles": {}}}
+        ]}}}}
+        fake = Fake([{"dns": {"name": "example name", "enable": False}},
+                     {"profiles": [{"name": "example name", "enable": True}]},
+                     {"name": "example name", "enable": True}])
+        evidence = capture_keyed_profile_details(fake, results, library, workers=1)
+        self.assertEqual(evidence["outcomes"], {"identity_observed": 3})
+        self.assertEqual(fake.calls[0][0].split("/")[-1], "example%20name")
+        self.assertEqual(fake.calls[0][1]["view-type"], "LIBRARY")
+        self.assertEqual(fake.calls[1][1]["object-type"], "LOCAL")
+        self.assertEqual(fake.calls[2][1]["effective"], "true")
+        lib = evidence["profiles"]["Library"][""]["dns"]["example name"]["library"]
+        self.assertFalse(lib["profile"]["enable"])
+        self.assertEqual(lib["differences"][0]["kind"], "missing_local")
+        self.assertFalse(lib["source_verified"])
+        self.assertFalse(evidence["safe_to_apply"])
+        self.assertNotIn("enable", profile)
+
+    def test_keyed_profile_rejects_ambiguous_identity_and_unsafe_selectors(self):
+        from central_tool import keyed_profile_read
+        fake = Fake([{"profiles": [{"name": "different"}]}])
+        result = keyed_profile_read(fake, "dns", "name", "expected", {}, None)
+        self.assertEqual(result["status"], "identity_unresolved")
+        for selector in ("..", "a/b", "a%2fb"):
+            self.assertEqual(keyed_profile_read(fake, "dns", "name", selector, {}, None)["status"], "invalid_selector")
+        self.assertEqual(len(fake.calls), 1)
+
     def test_configuration_audit_uses_persona_catalog(self):
         from central_tool import configuration_audit
         from unittest.mock import patch
