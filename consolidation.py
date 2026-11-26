@@ -35,13 +35,13 @@ def profile_recommendations(bundle):
     library_modules = library.get("modules", {})
     assignments = (library.get("assignments") or {}).get("rows", [])
     def add(action, persona, module, identity, sources, body, target, reference=None,
-            observed=None, blockers=(), steps=()):
+            observed=None, blockers=(), steps=(), scope_references=()):
         payload = {"action": action, "persona": persona, "module": module,
                    "identity": identity, "sources": sources, "local": body,
                    "target": target, "reference": reference,
                    "differences": field_differences(body, reference)
                    if body is not None and reference is not None else None,
-                   "observed_devices": observed or {},
+                   "observed_devices": observed or {}, "scope_references": list(scope_references),
                    "blockers": list(dict.fromkeys([*blockers, *COMMON_BLOCKERS])),
                    "steps": list(steps), "safe_to_apply": False}
         payload["id"] = hashlib.sha256(canonical(payload).encode()).hexdigest()[:24]
@@ -89,6 +89,21 @@ def profile_recommendations(bundle):
                     else:
                         state = "different"
                     observed[state].append({"scope": sid, "name": names[sid]})
+                scope_references = []
+                for scope in entry["scopes"]:
+                    if scope["kind"] == "device":
+                        continue
+                    evidence = by_scope.get(scope["id"], {}).get("effective_view", {})
+                    if evidence.get("status") != "list_parsed":
+                        state = "unknown"
+                    elif identity not in evidence["profiles"]:
+                        state = "absent"
+                    elif canonical(profile_body(evidence["profiles"][identity])) == signature:
+                        state = "matching"
+                    else:
+                        state = "different"
+                    scope_references.append({"scope": scope["id"], "kind": scope["kind"],
+                                             "name": names[scope["id"]], "effective": state})
                 global_ref = members[0][1].get("global_reference")
                 exact_global = all(row["status"] == "local_matches_global" and
                                    row.get("global_reference") is not None and
@@ -104,6 +119,12 @@ def profile_recommendations(bundle):
                     conflicts.append("Global identity has a different body.")
                 if observed["unknown"]:
                     conflicts.append("Some device effective views are unqualified.")
+                if any(s["effective"] == "unknown" for s in scope_references):
+                    conflicts.append("Some higher-scope effective views are unqualified.")
+                if any(s["effective"] == "different" for s in scope_references if s["kind"] != "global"):
+                    conflicts.append("At least one intermediate scope has a different effective body; membership and precedence must be resolved.")
+                if lib_view.get("status") != "list_parsed":
+                    conflicts.append("Library inventory for this module is unqualified; an existing profile may be present.")
                 if observed["different"] or observed["absent"]:
                     conflicts.append("Broader placement may change devices with a different or absent profile.")
                 if exact_global:
@@ -116,7 +137,7 @@ def profile_recommendations(bundle):
                     steps = ("Verify existing assignment state and compatibility.",
                              "Preview assignment of the matching Library profile at intended scopes.",
                              "Verify assignment behavior and remove redundant locals only when safe.")
-                elif len(sources) > 1 and not (len(variants[identity]) > 1 or lib_ref is not None or global_ref is not None):
+                elif len({s["scope"] for s in sources}) > 1:
                     action, target, ref = "promote_local", "Common supported Site / Group scope, or Library", None
                     steps = ("Resolve membership and lowest common scope for intended recipients.",
                              "Preview creating the identical profile at that scope, or create and assign a Library profile.",
@@ -137,8 +158,10 @@ def profile_recommendations(bundle):
                              "If approved, create a Library profile and preview exact assignments.",
                              "Verify effective configuration before removing any local definition.")
                     conflicts.append("A unique local profile may be intentional; no reuse is proven.")
-                add(action, persona, module, identity, sources, local, target, ref, observed, conflicts, steps)
+                add(action, persona, module, identity, sources, local, target, ref, observed, conflicts, steps, scope_references)
     for module, view in sorted(library_modules.items()):
+        if (library.get("assignments") or {}).get("status") != "response_received":
+            continue
         if module not in REUSABLE or view.get("status") != "list_parsed":
             continue
         for identity, raw in sorted(view["profiles"].items()):
