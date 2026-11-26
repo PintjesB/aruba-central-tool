@@ -28,6 +28,89 @@ COMMON_BLOCKERS = (
 )
 
 
+def scope_memberships(scopes):
+    """Correlate explicit IDs only, including the separate device-group path.
+
+    Central's SDK correlates device siteId/deviceGroupId and site collectionId.
+    A missing, ambiguous or unmatched ID remains unknown; no name matching.
+    Scope IDs and entity IDs are separate selectors, so aliases must be unique.
+    """
+    by_kind = defaultdict(dict)
+    for scope in scopes:
+        kind = scope["kind"]
+        sid = scope["id"]
+        metadata = scope.get("metadata") or {}
+        for key in {str(sid), str(metadata.get("id", ""))} - {""}:
+            if key.isdigit():
+                by_kind[kind].setdefault(str(int(key)), set()).add(sid)
+    def resolve(kind, metadata, key):
+        if key not in metadata:
+            return None
+        value = metadata[key]
+        if type(value) not in (str, int) or not str(value).isdigit():
+            return None
+        matches = by_kind[kind].get(str(int(value)), set())
+        return next(iter(matches)) if len(matches) == 1 else None
+    globals_ = [s["id"] for s in scopes if s["kind"] == "global"]
+    sites = {s["id"]: s for s in scopes if s["kind"] == "site"}
+    membership = {}
+    for scope in scopes:
+        if scope["kind"] != "device":
+            continue
+        metadata = scope.get("metadata") or {}
+        site = resolve("site", metadata, "siteId")
+        group = resolve("group", metadata, "deviceGroupId")
+        collection = resolve("collection", sites[site].get("metadata") or {}, "collectionId") if site else None
+        membership[scope["id"]] = {
+            "global": globals_[0] if len(globals_) == 1 else None,
+            "site": site, "group": group, "collection": collection}
+    return membership
+
+
+def placement_evidence(scopes, sources, observed, references):
+    """Preview known and unknown recipients, not a simulated deployment."""
+    membership = scope_memberships(scopes)
+    scope_by_id = {s["id"]: s for s in scopes}
+    def recipients(sid):
+        scope = scope_by_id[sid]
+        kind = scope["kind"]
+        if kind == "device":
+            return ({sid}, set()) if sid in membership else (set(), set(membership))
+        if kind not in ("global", "site", "group", "collection"):
+            return set(), set(membership)
+        return ({dev for dev, m in membership.items() if m[kind] == sid},
+                {dev for dev, m in membership.items() if m[kind] is None})
+    intended, unknown_sources = set(), set()
+    for source in sources:
+        if source["scope"] not in scope_by_id:
+            unknown_sources.update(membership)
+            continue
+        known, unknown = recipients(source["scope"])
+        intended.update(known)
+        unknown_sources.update(unknown)
+    matching = {d["scope"] for d in observed.get("matching", [])}
+    names = {s["id"]: s.get("name") or s["id"] for s in scopes}
+    def describe(ids):
+        return [{"scope": sid, "name": names.get(sid, sid)} for sid in sorted(ids)]
+    proposals = []
+    for ref in references:
+        known, unknown = recipients(ref["scope"])
+        if not intended or not intended <= known:
+            continue
+        extra = known - intended
+        coverage = "exact_observed_recipient_set" if not extra and not unknown and not unknown_sources else "additional_or_unknown_recipients"
+        proposals.append({**ref, "membership_status": coverage, "intended_devices": describe(intended),
+                          "additional_devices": describe(extra),
+                          "additional_already_matching": describe(extra & matching),
+                          "additional_not_confirmed_matching": describe(extra - matching),
+                          "unknown_membership": describe(unknown | unknown_sources),
+                          "requires_precedence_validation": True, "safe_to_apply": False})
+    preference = {"site": 0, "group": 1, "collection": 2, "global": 3}
+    return sorted(proposals, key=lambda p: (p["membership_status"] != "exact_observed_recipient_set",
+                         p["effective"] == "different", preference.get(p["kind"], 99),
+                         len(p["additional_devices"]), p["scope"]))
+
+
 def profile_recommendations(bundle):
     """Group exact local bodies; never equate observation with usage or safe removal."""
     findings = []
@@ -35,13 +118,14 @@ def profile_recommendations(bundle):
     library_modules = library.get("modules", {})
     assignments = (library.get("assignments") or {}).get("rows", [])
     def add(action, persona, module, identity, sources, body, target, reference=None,
-            observed=None, blockers=(), steps=(), scope_references=()):
+            observed=None, blockers=(), steps=(), scope_references=(), placement=()):
         payload = {"action": action, "persona": persona, "module": module,
                    "identity": identity, "sources": sources, "local": body,
                    "target": target, "reference": reference,
                    "differences": field_differences(body, reference)
                    if body is not None and reference is not None else None,
                    "observed_devices": observed or {}, "scope_references": list(scope_references),
+                   "placement_options": list(placement),
                    "blockers": list(dict.fromkeys([*blockers, *COMMON_BLOCKERS])),
                    "steps": list(steps), "safe_to_apply": False}
         payload["id"] = hashlib.sha256(canonical(payload).encode()).hexdigest()[:24]
@@ -158,7 +242,15 @@ def profile_recommendations(bundle):
                              "If approved, create a Library profile and preview exact assignments.",
                              "Verify effective configuration before removing any local definition.")
                     conflicts.append("A unique local profile may be intentional; no reuse is proven.")
-                add(action, persona, module, identity, sources, local, target, ref, observed, conflicts, steps, scope_references)
+                placements = placement_evidence(entry["scopes"], sources, observed, scope_references)
+                if action == "promote_local":
+                    exact = next((p for p in placements if p["membership_status"] == "exact_observed_recipient_set"
+                                  and p["effective"] in ("matching", "absent")), None)
+                    if exact:
+                        target = f"Review {exact['kind']} / {exact['name']}; or Library"
+                    else:
+                        conflicts.append("No common higher scope with exactly the intended observed device set is established; review exact-scope Library assignments instead.")
+                add(action, persona, module, identity, sources, local, target, ref, observed, conflicts, steps, scope_references, placements)
     for module, view in sorted(library_modules.items()):
         if (library.get("assignments") or {}).get("status") != "response_received":
             continue
