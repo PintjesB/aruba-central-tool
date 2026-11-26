@@ -118,14 +118,16 @@ def profile_recommendations(bundle):
     library_modules = library.get("modules", {})
     assignments = (library.get("assignments") or {}).get("rows", [])
     def add(action, persona, module, identity, sources, body, target, reference=None,
-            observed=None, blockers=(), steps=(), scope_references=(), placement=()):
+            observed=None, blockers=(), steps=(), scope_references=(), placement=(), fallbacks=()):
         payload = {"action": action, "persona": persona, "module": module,
                    "identity": identity, "sources": sources, "local": body,
                    "target": target, "reference": reference,
                    "differences": field_differences(body, reference)
                    if body is not None and reference is not None else None,
                    "observed_devices": observed or {}, "scope_references": list(scope_references),
-                   "placement_options": list(placement),
+                   "placement_options": list(placement), "fallbacks": list(fallbacks),
+                   "preview_selectable": action != "remove_override" or bool(fallbacks) and all(
+                       f["status"] == "matching_fallback" for f in fallbacks),
                    "blockers": list(dict.fromkeys([*blockers, *COMMON_BLOCKERS])),
                    "steps": list(steps), "safe_to_apply": False}
         payload["id"] = hashlib.sha256(canonical(payload).encode()).hexdigest()[:24]
@@ -169,7 +171,7 @@ def profile_recommendations(bundle):
                     if evidence.get("status") != "list_parsed":
                         state = "unknown"
                     elif identity not in evidence["profiles"]:
-                        state = "absent"
+                        state = "absent" if evidence.get("count_confirmed") is True else "unknown"
                     elif canonical(profile_body(evidence["profiles"][identity])) == signature:
                         state = "matching"
                     else:
@@ -183,7 +185,7 @@ def profile_recommendations(bundle):
                     if evidence.get("status") != "list_parsed":
                         state = "unknown"
                     elif identity not in evidence["profiles"]:
-                        state = "absent"
+                        state = "absent" if evidence.get("count_confirmed") is True else "unknown"
                     elif canonical(profile_body(evidence["profiles"][identity])) == signature:
                         state = "matching"
                     else:
@@ -213,11 +215,31 @@ def profile_recommendations(bundle):
                     conflicts.append("Library inventory for this module is unqualified; an existing profile may be present.")
                 if observed["different"] or observed["absent"]:
                     conflicts.append("Broader placement may change devices with a different or absent profile.")
-                if exact_global:
-                    action, target, ref = "remove_override", "Applicable inherited scope (verify)", global_ref
-                    steps = ("Resolve nearest inherited profile, including site and group precedence.",
+                from inheritance_review import nearest_fallback
+                fallbacks = []
+                for scope, row in members:
+                    if scope["scope_kind"] == "device":
+                        fallback = nearest_fallback(entry, module, scope["scope"], identity,
+                                                   row["local"], row["effective"], row.get("annotations", {}))
+                    else:
+                        fallback = {"status": "unresolved", "source": None, "blockers": [
+                            "Higher-scope removal must be checked for every affected descendant device."],
+                            "safe_to_apply": False}
+                    fallbacks.append({"scope": scope["scope"], "name": names.get(scope["scope"], scope["scope"]), **fallback})
+                exact_nearest = bool(fallbacks) and all(f["status"] == "matching_fallback" for f in fallbacks)
+                if exact_global or exact_nearest:
+                    action = "remove_override"
+                    if exact_nearest:
+                        target, ref = "Nearest observed inherited definitions", local
+                    elif any(f["status"] == "different_fallback" for f in fallbacks):
+                        target, ref = "Retain: nearer scope differs", global_ref
+                        conflicts.append("At least one device would inherit a different observed definition; removal preview is blocked.")
+                    else:
+                        target, ref = "Review Global match; fallback unverified", global_ref
+                        conflicts.append("Nearest inherited definition is not established for every source; removal preview is blocked.")
+                    steps = ("Review the observed fallback for each source and unresolved membership.",
                              "Confirm effective body and dependencies would remain unchanged.",
-                             "Preview removal of only the redundant local instances and verify each device.")
+                             "Only preview removal after all source fallbacks match; validate each device.")
                 elif exact_lib:
                     action, target, ref = "reuse_library", "Existing Library profile; exact source scopes", lib_ref
                     steps = ("Verify existing assignment state and compatibility.",
@@ -252,7 +274,7 @@ def profile_recommendations(bundle):
                         target = f"Review {exact['kind']} / {exact['name']}; or Library"
                     else:
                         conflicts.append("No common higher scope with exactly the intended observed device set is established; review exact-scope Library assignments instead.")
-                add(action, persona, module, identity, sources, local, target, ref, observed, conflicts, steps, scope_references, placements)
+                add(action, persona, module, identity, sources, local, target, ref, observed, conflicts, steps, scope_references, placements, fallbacks if action == "remove_override" else ())
     for module, view in sorted(library_modules.items()):
         if (library.get("assignments") or {}).get("status") != "response_received":
             continue

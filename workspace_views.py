@@ -72,7 +72,7 @@ def list_items(values, ordered=False):
 
 # User-facing labels describe evidence and intent, not internal action codes.
 ACTION_GUIDE = {
-    "remove_override": ("Matches Global", "Local and Global settings are identical. Check the actual inherited source before removing the local copy.", "Check inheritance, then remove if unchanged."),
+    "remove_override": ("Matches Global or nearest scope", "Local settings match Global or an observed nearest definition. Removal preview requires matching fallbacks for every source.", "Review actual inheritance before removing."),
     "promote_local": ("Repeated local profiles", "The same profile identity and settings occur at multiple scopes. Consider a common higher scope or a Library assignment.", "Choose where the shared configuration belongs."),
     "reuse_library": ("Matches Library", "An existing Library profile has the same identity and settings. Reuse it instead of maintaining another copy, if assignment and inheritance allow.", "Review assignment and removal of local copies."),
     "create_library": ("Optional Library placement", "A local definition could be reusable, but repeated use has not been established. Keeping it local may be appropriate.", "Leave local unless there is a reason to reuse it."),
@@ -82,7 +82,7 @@ ACTION_GUIDE = {
 }
 OPPORTUNITIES = ("remove_override", "promote_local", "reuse_library")
 SHORT_REASON = {
-    "remove_override": "Exact match with Global",
+    "remove_override": "Global or nearest-scope match",
     "promote_local": "Identical settings at multiple scopes",
     "reuse_library": "Exact match with an existing profile",
     "create_library": "Reuse not established",
@@ -277,7 +277,7 @@ def advisor_view(workspace, query):
         if len(sources) > 2:
             names += f" +{len(sources)-2}"
         summary = f'<strong>{e(profile)}</strong><small>{e(module_label(f["module"]))} · {e(persona_label(f["persona"]))}</small>'
-        placement = e(ACTION_GUIDE[action][2])
+        placement = e(f["target"] if action == "remove_override" else ACTION_GUIDE[action][2])
         if action == "promote_local":
             choices = [("", "Choose destination for review"), ("library", "Library / exact source scopes")]
             choices += [(p["scope"], f'{pretty(p["kind"])} / {p["name"]} · {len(p["additional_devices"])} extra, {len(p["unknown_membership"])} unknown')
@@ -290,7 +290,7 @@ def advisor_view(workspace, query):
         placement_rows = [tr(e(p["name"]), e(pretty(p["kind"])), str(len(p["intended_devices"])),
                            str(len(p["additional_devices"])), str(len(p["unknown_membership"])), status(p["effective"]))
                           for p in f["placement_options"]]
-        reference_label = "Library" if action == "reuse_library" else "Global" if action in ("remove_override", "default_review") else "Reference"
+        reference_label = "Library" if action == "reuse_library" else "Nearest inherited" if action == "remove_override" and f["preview_selectable"] else "Global" if action in ("remove_override", "default_review") else "Reference"
         comparison = ""
         if action == "default_review":
             from central_tool import vlan_comparison_evidence
@@ -305,9 +305,15 @@ def advisor_view(workspace, query):
             comparison = "".join(sections) or vlan_explanation(f["local"], f["reference"], f["local"])
         if not comparison:
             comparison = '<h3>Configuration comparison</h3>' + diff_table(f["differences"], "Local", reference_label)
+        fallback_html = ""
+        if f["fallbacks"]:
+            fallback_html = '<h3>Expected inherited definition for each source</h3>' + table(("Source", "Nearest observed scope", "Result", "Blockers"), [tr(e(x["name"]), e((x.get("source") or {}).get("name", "Unavailable")), e(pretty(x["status"])), list_items(x["blockers"])) for x in f["fallbacks"]])
+            for x in f["fallbacks"]:
+                if x.get("source"):
+                    fallback_html += '<h4>' + e(x["name"]) + '</h4>' + diff_table(x.get("differences"), "Local", "Nearest higher scope")
         details = (
-            f'<div class="review-decision"><div><strong>{e(ACTION_GUIDE[action][2])}</strong><p>{e(ACTION_GUIDE[action][1])}</p></div></div>'
-            + comparison
+            f'<div class="review-decision"><div><strong>{e(f["target"] if action == "remove_override" else ACTION_GUIDE[action][2])}</strong><p>{e(ACTION_GUIDE[action][1])}</p></div></div>'
+            + fallback_html + comparison
             + ('<h3>Destination impact</h3>' + table(("Destination", "Type", "Intended", "Additional", "Unknown", "Current"), placement_rows) if placement_rows else "")
             + '<h3>Proposed workflow</h3>' + list_items(f["steps"], ordered=True)
             + '<h3>Validation required</h3>' + list_items(f["blockers"])
@@ -321,7 +327,7 @@ def advisor_view(workspace, query):
         device_summary = f'<strong>{matching} / {sum(len(v) for v in observed.values())}</strong>' + (f'<small>{unknown} not comparable</small>' if unknown else "") if observed else '<span class="muted">Not assessed</span>'
         # Filter by row metadata; the inspector and plan payload are inert.
         rows.append(tr(
-            f'<input type="checkbox" class="choose" aria-label="Select {e(profile)}" data-plan="{e(json.dumps(f, ensure_ascii=False))}"{" disabled" if action not in OPPORTUNITIES else ""}>',
+            f'<input type="checkbox" class="choose" aria-label="Select {e(profile)}" data-plan="{e(json.dumps(f, ensure_ascii=False))}"{" disabled" if action not in OPPORTUNITIES or not f["preview_selectable"] else ""}>',
             summary, badge(short[action], "warn" if action in ("conflict", "default_review") else "info" if action in OPPORTUNITIES else "neutral") + f'<small>{e(SHORT_REASON[action])}</small>',
             f'<strong>{len(sources)}</strong><small>{e(names or "Library definition")}</small>', placement, device_summary,
             inspect(profile, details, "Review"),
@@ -402,7 +408,7 @@ function preview(){
  const chosen=selection();$('preview').replaceChildren();
  for(const f of chosen){
   const item=document.createElement('div');item.className='plan-item';
-  item.append(el('h3',f.module+' / '+f.identity),el('p',({remove_override:'Check matching Global override',promote_local:'Consolidate repeated local profiles',reuse_library:'Reuse matching Library profile'}[f.action]||f.action)+' · '+f.target));
+  item.append(el('h3',f.module+' / '+f.identity),el('p',({remove_override:'Review matching nearest inheritance',promote_local:'Consolidate repeated local profiles',reuse_library:'Reuse matching Library profile'}[f.action]||f.action)+' · '+f.target));
   const steps=document.createElement('ol');for(const s of f.steps)steps.append(el('li',s));item.append(steps);
   const blockers=document.createElement('details');blockers.append(el('summary','Validation required ('+f.blockers.length+')'));
   const ul=document.createElement('ul');for(const b of f.blockers)ul.append(el('li',b));blockers.append(ul);item.append(blockers);$('preview').append(item);
