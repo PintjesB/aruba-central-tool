@@ -84,13 +84,21 @@ def library_usage(bundle, module, identities, references):
     view = library.get("modules", {}).get(module, {})
     assignment_view = library.get("assignments") or {}
     wanted = set(identities)
+    if not wanted:
+        return {}
+    assigned, referenced = defaultdict(list), defaultdict(list)
+    for row in assignment_view.get("rows", []):
+        if row.get("profile-type") == module and str(row.get("profile-instance")) in wanted:
+            assigned[str(row["profile-instance"])].append(row)
+    for ref in references:
+        if ref["target_module"] == module and ref["target"] in wanted:
+            referenced[ref["target"]].append(ref)
     result = {}
     for identity in sorted(wanted):
-        rows = [a for a in assignment_view.get("rows", [])
-                if a.get("profile-type") == module and str(a.get("profile-instance")) == identity]
+        rows = assigned[identity]
         unique = {(str(a.get("scope-id")), str(a.get("device-function"))) for a in rows
                   if a.get("scope-id") is not None and a.get("device-function") is not None}
-        refs = [r for r in references if r["target_module"] == module and r["target"] == identity]
+        refs = referenced[identity]
         def consumer(r):
             return (r["persona"], r["scope"], r["source_module"], r["source"])
         consumers = {consumer(r) for r in refs}
@@ -107,7 +115,7 @@ def library_usage(bundle, module, identities, references):
     for persona, entry in sorted(bundle["results"].items()):
         if module not in entry["modules"]:
             continue
-        views = effective_views(entry)[module]
+        views = {s["scope"]: s.get("effective_view", {}) for s in entry["modules"][module]["scope_results"]}
         for device in (s for s in entry["scopes"] if s["kind"] == "device"):
             sid = device["id"]
             record = {"persona": persona, "scope": sid, "name": device.get("name") or sid}
@@ -396,16 +404,18 @@ def advanced_analysis(bundle):
             body.pop(key, None)
             if body:
                 groups[canonical(body)].append(identity)
-        for signature, identities in groups.items():
-            if len(identities) > 1:
-                usage = library_usage(bundle, module, identities, result["references"])
-                result["library_duplicates"].append({"module": module, "identities": sorted(identities),
-                    "usage": usage, "suggested_keep": preferred_duplicate(usage),
-                    "assignments": [a for a in assignments if a.get("profile-type") == module
-                                    and str(a.get("profile-instance")) in identities],
-                    "observed_references": [r for r in result["references"]
-                                            if r["target_module"] == module and r["target"] in identities],
-                    "unresolved_reference_count": sum(r["target_module"] == module and r["status"] == "unresolved" for r in result["references"]),
-                    "recommendation": "Review identity-independent body match and all references before merging",
-                    "safe_to_apply": False})
+        duplicate_sets = [identities for identities in groups.values() if len(identities) > 1]
+        if not duplicate_sets:
+            continue
+        all_usage = library_usage(bundle, module, [identity for identities in duplicate_sets for identity in identities], result["references"])
+        unresolved_count = sum(r["target_module"] == module and r["status"] == "unresolved" for r in result["references"])
+        for identities in duplicate_sets:
+            usage = {identity: all_usage[identity] for identity in sorted(identities)}
+            result["library_duplicates"].append({"module": module, "identities": sorted(identities),
+                "usage": usage, "suggested_keep": preferred_duplicate(usage),
+                "assignments": [a for identity in sorted(identities) for a in usage[identity]["assignments"]],
+                "observed_references": [r for identity in sorted(identities) for r in usage[identity]["references"]],
+                "unresolved_reference_count": unresolved_count,
+                "recommendation": "Review identity-independent body match and all references before merging",
+                "safe_to_apply": False})
     return result
