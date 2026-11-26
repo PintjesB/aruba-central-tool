@@ -199,7 +199,6 @@ def advanced_analysis(bundle):
               "safe_to_apply": False}
     library = bundle.get("library") or {}
     library_modules = library.get("modules", {})
-    assignments = (library.get("assignments") or {}).get("rows", [])
     for persona, entry in sorted(bundle["results"].items()):
         views = effective_views(entry)
         members = scope_memberships(entry["scopes"])
@@ -306,6 +305,10 @@ def advanced_analysis(bundle):
                             "relationship": "same_body" if canonical(other) == canonical(actual) else "different_body",
                             "effective": actual, "higher_body": other,
                             "safe_to_apply": False})
+        port_reference_index = defaultdict(list)
+        for ref in result["references"]:
+            if ref["persona"] == persona and ref["source_module"] == "ethernet-interfaces":
+                port_reference_index[(ref["scope"], ref["source"])].append(ref)
         for ports in port_groups.values():
             if len(ports) < 2:
                 continue
@@ -332,9 +335,7 @@ def advanced_analysis(bundle):
                         visibility.append({"scope": sid, "device": names[sid], "status": status})
                     library_matches.append({"identity": name, "visibility": visibility})
             port_ids = {(p["scope"], p["port"]) for p in ports}
-            dependencies = [r for r in result["references"] if r["persona"] == persona
-                            and r["source_module"] == "ethernet-interfaces"
-                            and (r["scope"], r["source"]) in port_ids]
+            dependencies = [r for key in sorted(port_ids) for r in port_reference_index[key]]
             from port_conversion_review import port_conversion_review
             result["port_groups"].append({"persona": persona, "ports": ports,
                 "conversion_review": port_conversion_review(entry, ports, settings, library_matches),
