@@ -1274,6 +1274,13 @@ CONFIG_MODULES = {
     "gw-system": ("name", GATEWAY_PERSONAS, False),
     "stp-gw": ("name", GATEWAY_PERSONAS, False),
     "auth-servers": ("name", NETWORK_PERSONAS, False),
+    # Named resources documented by HPE; capture read-only across applicable
+    # functions. Actual applicability and response qualification remain separate.
+    "aliases": ("name", NETWORK_PERSONAS, False),
+    "net-groups": ("name", NETWORK_PERSONAS, False),
+    "policies": ("name", NETWORK_PERSONAS, False),
+    "role-acls": ("name", NETWORK_PERSONAS, False),
+    "alg": ("name", NETWORK_PERSONAS, False),
     # Central NAC authentication profiles use default query parameters.
     # Keep this existing catalog entry for historical audit compatibility.
     "auth-profiles": ("auth-profile-id", NETWORK_PERSONAS, False),
@@ -1307,7 +1314,9 @@ def module_view(payload, identity, object_type="ANY"):
     if len(lists) != 1 or set(payload) - {"metadata", lists[0][0]}:
         return {"status": "schema_unresolved", "profiles": {}}
     envelope, items = lists[0]
-    for count in (metadata.get("total"), expected):
+    if "offset" in metadata and (type(metadata["offset"]) is not int or metadata["offset"] != 0):
+        return {"status": "count_mismatch", "profiles": {}}
+    for count in (metadata.get("total"), metadata.get("count"), expected):
         if count is not None and (type(count) is not int or count != len(items)):
             return {"status": "count_mismatch", "profiles": {}}
     profiles = {}
@@ -1406,6 +1415,7 @@ def read_module_view(client, module, identity, params):
         if (not isinstance(page_meta, dict) or page_meta.get("total") != total
                 or not isinstance(batch, list) or not batch
                 or page_meta.get("count", len(batch)) != len(batch)
+                or page_meta.get("offset", len(items)) != len(items)
                 or page_meta.get("count_objects_in_module", {}) != counts
                 or len(items) + len(batch) > total):
             return incomplete("count_changed")
@@ -1419,7 +1429,7 @@ def read_module_view(client, module, identity, params):
         if len(items) == total:
             if Counter(canonical(item) for item in initial) - Counter(canonical(item) for item in items):
                 return incomplete("initial_response_changed")
-            combined = {"metadata": {**meta, "count": total}, envelope: items}
+            combined = {"metadata": {**meta, "count": total, "offset": 0}, envelope: items}
             result = module_view(combined, identity, object_type)
             return {**result, "raw": combined, "initial_raw": raw, "raw_pages": pages,
                     "pagination_status": "complete"}
@@ -1647,13 +1657,81 @@ def audit_progress(callback, phase, done, total, detail):
         callback(phase, done, total, detail)
 
 
+# Documented collections whose shapes/cardinality require further qualification.
+# Survey these even if the assignment and scope-map inventories omit them.
+DOCUMENTED_RAW_COLLECTIONS = {"arc", "policy-groups", "usb"}
+
+
+def read_raw_profile_collection(client, module, params):
+    """Preserve all pages of an explicitly truncated collection without assuming identity."""
+    try:
+        raw = client.get(ALPHA + "/" + module, **params)
+    except APIError as exc:
+        if exc.status not in (400, 403, 404, 405, 406, 410, 412, 422):
+            raise
+        return {"status": "request_rejected", "http_error": exc.status}
+    result = {"status": "response_received" if raw else "empty_response", "raw": raw,
+              "collection_count_verified": False}
+    if not isinstance(raw, dict):
+        return result
+    meta = raw.get("metadata", {})
+    lists = [(k, v) for k, v in raw.items() if k != "metadata" and isinstance(v, list)]
+    if not isinstance(meta, dict) or len(lists) != 1 or set(raw) - {"metadata", lists[0][0]}:
+        return result
+    envelope, initial = lists[0]
+    total = meta.get("total")
+    if type(total) is not int:
+        return result
+    if total == len(initial) and meta.get("count", len(initial)) == len(initial) and meta.get("offset", 0) == 0:
+        return {**result, "collection_count_verified": True}
+    if total <= len(initial):
+        return {**result, "status": "count_mismatch"}
+    pages, combined, signatures = [], [], set()
+    def incomplete(reason):
+        return {**result, "status": "partial_response", "pagination_status": reason, "raw_pages": pages}
+    for _ in range(10000):
+        try:
+            page = client.get(ALPHA + "/" + module, **params, limit=100, offset=len(combined))
+        except APIError as exc:
+            if exc.status == 401:
+                raise
+            return {**incomplete("request_failed"), "http_error": exc.status}
+        except (RuntimeError, OSError, ValueError):
+            return incomplete("read_failed")
+        pages.append(page)
+        if not isinstance(page, dict) or set(page) != {"metadata", envelope}:
+            return incomplete("schema_changed")
+        batch, page_meta = page[envelope], page["metadata"]
+        if (not isinstance(batch, list) or not batch or not isinstance(page_meta, dict)
+                or page_meta.get("total") != total or page_meta.get("count", len(batch)) != len(batch)
+                or page_meta.get("offset", len(combined)) != len(combined)
+                or len(combined) + len(batch) > total):
+            return incomplete("count_or_offset_changed")
+        signature = canonical(batch)
+        if signature in signatures:
+            return incomplete("repeated_page")
+        signatures.add(signature)
+        combined.extend(batch)
+        if len(combined) == total:
+            if Counter(canonical(item) for item in initial) - Counter(canonical(item) for item in combined):
+                return incomplete("initial_response_changed")
+            if len({canonical(item) for item in combined}) != total:
+                return incomplete("duplicate_records")
+            # Retain a reconstructed collection for inspection, never qualify
+            # identities or authorize a change based on this raw count alone.
+            return {**result, "raw": {"metadata": {**meta, "count": total, "offset": 0}, envelope: combined},
+                    "initial_raw": raw, "raw_pages": pages, "pagination_status": "complete",
+                    "collection_count_verified": True}
+    return incomplete("page_limit_reached")
+
+
 def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, workers=1, progress=None):
     """Inspect observed source scopes for modules without an explicit adapter.
 
     These are raw read-only diagnostics, not qualified local/effective views.
     Module and scope selectors come only from observed resource inventories.
     """
-    unknown = set(discovery["unknown_adapter_modules"])
+    unknown = set(discovery["unknown_adapter_modules"]) | set(discovery.get("survey_modules", []))
     targets = defaultdict(set)
     for view, assignment in ((assignments, True), (scope_maps, False)):
         for row in view.get("rows", []):
@@ -1668,18 +1746,12 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                     or not re.fullmatch(r"[a-z][a-z0-9-]{0,127}", resource)
                     or not isinstance(persona, str) or persona not in NETWORK_PERSONAS | {"HYBRID_NAC"}
                     or type(sid) not in (int, str) or not re.fullmatch(r"[0-9]+", str(sid))
-                    or type(instance) not in (int, str)):
+                    or (instance is not None and type(instance) not in (int, str))):
                 continue
-            targets[(resource, persona, str(sid))].add(str(instance))
+            targets[(resource, persona, str(sid))].add("" if instance is None else str(instance))
 
     def capture(module, params):
-        try:
-            raw = client.get(ALPHA + "/" + module, **params)
-            return {"status": "response_received" if raw else "empty_response", "raw": raw}
-        except APIError as exc:
-            if exc.status not in (400, 403, 404, 405, 406, 410, 412, 422):
-                raise
-            return {"status": "request_rejected", "http_error": exc.status}
+        return read_raw_profile_collection(client, module, params)
 
     def inspect(module):
         evidence = []
@@ -2498,6 +2570,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
         "additional_assignments": assignments["additional_assignments"],
         "scope_reads": assignments["scope_read_outcomes"]}), flush=True)
     profile_types = discover_profile_types(assignments, scope_maps)
+    profile_types["survey_modules"] = sorted(DOCUMENTED_RAW_COLLECTIONS - set(CONFIG_MODULES))
     print(f"Observed profile types: {len(profile_types['modules'])}; "
           f"without adapter: {len(profile_types['unknown_adapter_modules'])}", flush=True)
     results = {}
@@ -2568,8 +2641,9 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             for (status, http), count in sorted(errors.items(), key=str):
                 print(f"    {status}{' HTTP ' + str(http) if http else ''}: {count}", flush=True)
         results[persona] = {"scopes": scopes, "modules": module_results}
-    applicable_modules = {m for entry in results.values() for m in entry["modules"]}
-    applicable_modules.add("auth-profiles")
+    # Library definitions can exist without any assignment or active device
+    # function. Always survey the entire explicitly supported Library catalog.
+    applicable_modules = set(CONFIG_MODULES)
     print("Reading tenant Library and assignments", flush=True)
     library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress)
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress)

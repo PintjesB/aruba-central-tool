@@ -778,19 +778,53 @@ def coverage_view(workspace, query):
     root, name, bundle, picker = loaded
     records = module_coverage(bundle)
     counts = Counter(r["status"] for r in records)
-    body = intro("Coverage", "Shows whether Central returned interpretable configuration. Incomplete reads do not mean configuration is absent.", picker)
-    body += metrics([("Complete module reads", counts["qualified"], "All requested scopes could be interpreted"), ("Partial module reads", counts["partial"], "Some scopes could be interpreted"), ("Unverified module reads", counts["unqualified"], "No scope evidence qualified")])
+    library = bundle.get("library") or {}
+    additional = bundle.get("unadapted_profiles") or {}
+    discovery = bundle.get("profile_type_discovery") or {}
+    unknown = set(discovery.get("unknown_adapter_modules", []))
+    survey = set(discovery.get("survey_modules", []))
+    scoped_reads = [s[key + "_view"] for entry in bundle["results"].values()
+                    for module in entry["modules"].values() for s in module["scope_results"]
+                    for key in ("local", "effective") if key + "_view" in s]
+    parsed = sum(v.get("status") == "list_parsed" for v in scoped_reads)
+    counted = sum(v.get("status") == "list_parsed" and v.get("count_confirmed") is True for v in scoped_reads)
+    body = intro("Coverage", "Identify what was collected, what could be interpreted and what remains unavailable.", picker)
+    body += '<section class="review-decision"><div><strong>Full configuration coverage is not verified</strong><p>Parsed responses do not prove that Central returned every setting, profile type or scope. Missing values remain unavailable.</p></div></section>'
+    body += metrics([("Scoped reads parsed", f"{parsed}/{len(scoped_reads)}", f"{counted} with explicit count evidence"),
+                     ("Qualified modules", f"{counts['qualified']}/{len(records)}", "All requested scopes interpretable"),
+                     ("Observed types without adapter", len(unknown), "Raw evidence only"),
+                     ("Library collections attempted", len(library.get("modules", {})) + len(additional), "Includes additional raw reads")])
+    assignments = library.get("assignments") or {}
+    scope_maps = library.get("scope_maps") or {}
+    outcomes = assignments.get("scope_read_outcomes") or {}
+    body += '<section><h2>Discovery and assignments</h2>' + table(("Source", "Status", "Observed records"), [
+        tr("Tenant assignments", status(assignments.get("status", "not_collected")), str(len(assignments.get("rows", [])))),
+        tr("Local scope maps", status(scope_maps.get("status", "not_collected")), str(len(scope_maps.get("rows", [])))),
+        tr("Scoped assignment reads", e(", ".join(f"{pretty(k)}: {v}" for k, v in sorted(outcomes.items())) or "Not collected"), str(sum(outcomes.values()))),
+        tr("Additional assignment identities", "Recovered by scoped queries", str(assignments.get("additional_assignments", "Unavailable"))),
+        tr("Unqualified device functions", e(", ".join(bundle.get("unqualified_personas", [])) or "None recorded"), str(len(bundle.get("unqualified_personas", []))))])
+    body += '<p class="note">Assignment and profile catalog completeness are not verified.</p></section>'
     rows = [tr(e(persona_label(r["persona"])), e(module_label(r["module"])), f'{r["qualified"]}/{r["total"]}', status(r["status"]),
-               f'<a href="{url(root, "report", snapshot=name, persona=r["persona"], module=r["module"], diagnostics="1")}">View evidence</a>')
+               f'<a href="{url(root, "report", snapshot=name, persona=r["persona"], module=r["module"], view="diagnostics")}">View evidence</a>')
             for r in sorted(records, key=lambda r: ({"unqualified": 0, "partial": 1, "qualified": 2}[r["status"]], r["persona"], r["module"]))]
-    body += '<section><h2>Module qualification</h2>' + table(("Device function", "Module", "Qualified scopes", "Read status", ""), rows, search=True) + '</section>'
-    discovery = bundle.get("profile_type_discovery")
-    if discovery:
-        unknown = set(discovery["unknown_adapter_modules"])
-        rows = [tr(e(module_label(m)), e(", ".join(persona_label(p) for p in ps)), badge("Adapter needed", "warn") if m in unknown else badge("Adapter available"),
-                   f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Raw evidence</a>' if m in unknown else "")
-                for m, ps in discovery["modules"].items()]
-        body += f'<section><h2>Discovered profile types · {len(unknown)} without adapters</h2>' + table(("Profile type", "Observed device functions", "Adapter", ""), rows, search=True) + '</section>'
+    body += '<section><h2>Scoped configuration</h2>' + table(("Device function", "Module", "Qualified scopes", "Read status", ""), rows, search=True) + '</section>'
+    rows = []
+    for m, v in sorted(library.get("modules", {}).items()):
+        rows.append(tr(e(module_label(m)), badge("Adapter available"), status(v.get("status", "not_collected")),
+                       str(len(v.get("profiles", {}))) if v.get("status") == "list_parsed" else "Unavailable",
+                       e("Count confirmed" if v.get("count_confirmed") else "Count unverified"),
+                       f'<a href="{url(root, "library", snapshot=name, module=m)}">Open collection</a>'))
+    for m in sorted(unknown | survey | set(additional)):
+        v = additional.get(m, {})
+        read = v.get("library", {})
+        source = "Observed type" if m in unknown else "Documented survey"
+        rows.append(tr(e(module_label(m)), badge("Raw evidence", "warn") + f'<small>{e(source)}</small>',
+                       status(read.get("status", "not_collected")), "Unavailable",
+                       e("Count confirmed" if read.get("collection_count_verified") else "Count unverified"),
+                       f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Inspect evidence</a>'))
+    body += '<section><h2>Library and additional profile collections</h2>' + table(
+        ("Profile type", "Interpretation", "Library read", "Parsed profiles", "Collection count", ""), rows, search=True) + '</section>'
+
     return page("Module coverage", body, workspace.nav(name))
 
 
