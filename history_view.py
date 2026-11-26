@@ -59,6 +59,9 @@ def drift_view(workspace, query):
             result = configuration_drift(before, bundle, confirmed=True)
         except ValueError as exc:
             return page("Configuration drift", body + '<section><p>Cannot compare these snapshots: ' + e(str(exc)) + '</p></section>', workspace.nav(name))
+        from drift_review import drift_groups
+        groups = drift_groups(result["records"], bundle)
+        result["profile_change_groups"] = groups
         counts = result["counts"]
         rows = []
         for row in result["records"]:
@@ -69,6 +72,22 @@ def drift_view(workspace, query):
                          ("Added / removed profiles", counts.get("added", 0) + counts.get("removed", 0), "Count-confirmed opposite view"),
                          ("Uncertain observations", sum(v for k, v in counts.items() if k not in ("changed", "source_changed", "added", "removed")), "Review coverage and membership"),
                          ("Common device serials", result["identity_checks"]["common_serial_count"], "Identity check, not independent tenant proof")])
+        group_rows = []
+        for group in groups:
+            evidence = group["observations"]
+            locations = table(("Function", "Scope", "View", "Change"), [
+                tr(e(persona_label(row["persona"])), e(row["scope_name"]), e(pretty(row["view"])),
+                   badge(pretty(row["status"]))) for row in evidence], search=True)
+            details = "<h3>Observed locations</h3>" + locations + "<h3>Shared observed transition</h3>" + change_detail(evidence[0])
+            details += '<p class="note">Matching transitions across scopes do not prove a common cause. Each observation remains available in the detailed change worklist.</p>'
+            group_rows.append(tr(e(module_label(group["module"])), e(group["identity"]),
+                                 badge(pretty(group["status"])) + ('<small>Field evidence gaps</small>' if group["has_field_gaps"] else ""),
+                                 str(group["effective_device_count"]), str(group["saved_scope_count"]),
+                                 str(group["higher_effective_count"]), str(group["library_count"]),
+                                 inspect(group["identity"], details, "Review impact")))
+        body += '<section><h2>Profile change groups</h2><p>Identical before/after profile transitions are grouped to reduce repeated review. Effective device counts describe captured changes, not inferred deployment or causality.</p>'
+        body += table(("Module", "Profile", "Change", "Device/function pairs", "Saved scopes", "Higher effective scopes", "Library observations", ""), group_rows, search=True) if group_rows else "<p>No comparable profile transitions.</p>"
+        body += "</section>"
         body += '<section><div class="section-head"><h2>Change worklist</h2>' + private_export(
             "configuration-drift", {"previous_snapshot": previous, "current_snapshot": name, "report": result}) + '</div>' + (table(("Function", "Scope", "Module", "View", "Profile", "Change", ""), rows, search=True) if rows else "<p>No differences in the compared views.</p>")
         body += '<p class="note">Missing fields are not explicit defaults. A changed observation is not proof of who changed it or that the configuration was deployed. Captures are not atomic; coverage remains incomplete.</p></section>'
