@@ -7,7 +7,6 @@ import sys
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
-from html import escape
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urlsplit
@@ -1173,14 +1172,21 @@ def module_view(payload, identity, object_type="ANY"):
     metadata = payload.get("metadata", {})
     if not isinstance(metadata, dict):
         return {"status": "schema_unresolved", "profiles": {}}
-    lists = [(k, v) for k, v in payload.items() if k != "metadata" and isinstance(v, list)]
-    if len(lists) != 1 or set(payload) - {"metadata", lists[0][0]}:
-        return {"status": "schema_unresolved", "profiles": {}}
-    envelope, items = lists[0]
     counts = metadata.get("count_objects_in_module", {})
     if not isinstance(counts, dict):
         return {"status": "schema_unresolved", "profiles": {}}
     expected = counts.get(object_type)
+    # An omitted list with explicit zero for the requested object type is
+    # evidence of zero returned profiles, unlike an unqualified empty object.
+    if set(payload) == {"metadata"} and type(expected) is int and expected == 0:
+        if "total" in metadata and (type(metadata["total"]) is not int or metadata["total"] != 0):
+            return {"status": "count_mismatch", "profiles": {}}
+        return {"status": "list_parsed", "profiles": {}, "envelope": None,
+                "count_confirmed": True}
+    lists = [(k, v) for k, v in payload.items() if k != "metadata" and isinstance(v, list)]
+    if len(lists) != 1 or set(payload) - {"metadata", lists[0][0]}:
+        return {"status": "schema_unresolved", "profiles": {}}
+    envelope, items = lists[0]
     for count in (metadata.get("total"), expected):
         if count is not None and (type(count) is not int or count != len(items)):
             return {"status": "count_mismatch", "profiles": {}}
@@ -1383,87 +1389,40 @@ def print_configuration_diagnostics(bundle):
             print(f"    {scope_kind} {kind} x{count}: {shape}")
 
 
+def refresh_configuration_review(bundle):
+    """Reparse saved raw views with current adapters, without network access."""
+    if bundle.get("schema") != 1 or bundle.get("kind") != "configuration_audit":
+        raise ValueError("Expected a configuration audit bundle")
+    for entry in bundle["results"].values():
+        for module, data in entry["modules"].items():
+            if module not in CONFIG_MODULES:
+                continue
+            identity, _, device_only = CONFIG_MODULES[module]
+            baseline = None
+            totals = Counter()
+            scopes = sorted(data["scope_results"], key=lambda s: s["scope_kind"] != "global")
+            for scope in scopes:
+                for kind, object_type in (("local", "LOCAL"), ("effective", "ANY")):
+                    view = scope[kind + "_view"]
+                    if "raw" in view:
+                        scope[kind + "_view"] = {**module_view(view["raw"], identity, object_type),
+                                                "raw": view["raw"]}
+                effective = scope["effective_view"]
+                if scope["scope_kind"] == "global" and effective["status"] == "list_parsed":
+                    baseline = effective["profiles"]
+                review = review_module_scope(scope["local_view"], effective, baseline,
+                                             device_only, scope["scope_kind"] == "global")
+                scope["review"] = review
+                totals["qualified_scopes" if review["qualified"] else "unqualified_scopes"] += 1
+                totals.update(row["status"] for row in review["profiles"])
+            data["summary"] = dict(totals)
+    return bundle
+
+
 def configuration_html(bundle):
-    """Generate a private, standalone, read-only browser report; no server or CDN."""
-    records = list(config_review_rows(bundle))
-    def e(value):
-        return escape(str(value), quote=True)
-    def dump(value):
-        return e(json.dumps(value, indent=2, ensure_ascii=False))
-    def option_list(values):
-        return '<option value="">All</option>' + "".join(
-            f'<option value="{e(v)}">{e(v)}</option>' for v in sorted(set(values)))
-    status_counts = Counter()
-    rows = []
-    qualified = 0
-    for persona, module, name, scope in records:
-        review = scope["review"]
-        if review["qualified"]:
-            qualified += 1
-        profiles = review["profiles"]
-        if not review["qualified"] or not profiles:
-            profiles = [{"identity": "", "status": "scope_unqualified" if not review["qualified"]
-                         else "no_profiles_observed", "local": None, "effective": None,
-                         "global_reference": None, "global_differences": None, "annotations": {}}]
-        for row in profiles:
-            status = row["status"]
-            status_counts[status] += 1
-            fields = row.get("global_differences")
-            diff_count = "Not comparable" if fields is None else str(len(fields))
-            body = {"local": row["local"], "effective": row["effective"],
-                    "global_reference": row["global_reference"], "global_differences": fields,
-                    "annotations": row["annotations"]}
-            if status == "scope_unqualified":
-                body = {"local_shape": configuration_view_shape(scope["local_view"]),
-                        "effective_shape": configuration_view_shape(scope["effective_view"]),
-                        "local_status": review["local_status"], "effective_status": review["effective_status"]}
-            cells = (persona, module, scope["scope_kind"], name, row["identity"], status, diff_count)
-            rows.append(f'<tr data-persona="{e(persona)}" data-module="{e(module)}" data-status="{e(status)}">' +
-                        "".join(f"<td>{e(value)}</td>" for value in cells) +
-                        f'<td><details><summary>View evidence</summary><pre>{dump(body)}</pre></details></td></tr>')
-    selectors = [
-        ("persona", "Device function", [p for p, _, _, _ in records]),
-        ("module", "Module", [m for _, m, _, _ in records]),
-        ("status", "Status", list(status_counts)),
-    ]
-    filters = "".join(f'<label>{label}<select id="{key}">{option_list(values)}</select></label>'
-                      for key, label, values in selectors)
-    summary = "".join(f"<li>{e(k)}: {v}</li>" for k, v in sorted(status_counts.items()))
-    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-<title>Aruba Central configuration audit</title><style>
-:root{font-family:system-ui,sans-serif;color-scheme:light dark}
-body{margin:2rem;line-height:1.45}h1{font-size:1.7rem} .notice{border:1px solid #888;padding:1rem;border-radius:6px}
-.filters{display:flex;gap:1rem;flex-wrap:wrap;margin:1.5rem 0}
-label{display:grid;gap:.25rem}input,select{font:inherit;padding:.35rem}
-table{border-collapse:collapse;width:100%;font-size:.88rem}th,td{padding:.6rem;text-align:left;border-bottom:1px solid #8886;vertical-align:top}
-th{position:sticky;top:0;background:Canvas}pre{max-width:65vw;white-space:pre-wrap;overflow-wrap:anywhere}
-summary{cursor:pointer}tr[hidden]{display:none}.table-wrap{overflow:auto}
-</style></head><body><h1>Configuration audit</h1>
-<p class="notice">Confidential local report. Read-only evidence. Global comparison is not a proven inheritance path; an unqualified scope is not an empty scope. This report may contain sensitive configuration values. Do not share it publicly.</p>
-""" + f"<p>Captured: {e(bundle.get('captured_at', 'unknown'))}. Qualified module scopes: {qualified}/{len(records)}.</p>" + (
-        "<details><summary>Finding counts</summary><ul>" + summary + "</ul></details>"
-        '<div class="filters">' + filters +
-        '<label>Search rows<input id="query" type="search" placeholder="Scope, profile or setting"></label></div>'
-        '<p id="count" aria-live="polite"></p><div class="table-wrap"><table><thead><tr>'
-        '<th>Function</th><th>Module</th><th>Scope type</th><th>Scope</th><th>Profile</th><th>Status</th>'
-        '<th>Global differences</th><th>Details</th></tr></thead><tbody>' + "".join(rows) +
-        """</tbody></table></div><script>
-const filters=['persona','module','status'];
-const query=document.getElementById('query');
-function update(){
- let shown=0;
- for(const row of document.querySelectorAll('tbody tr')){
-  const match=filters.every(k=>!document.getElementById(k).value||row.dataset[k]===document.getElementById(k).value)
-     &&row.textContent.toLowerCase().includes(query.value.toLowerCase());
-  row.hidden=!match;if(match)shown++;
- }
- document.getElementById('count').textContent=shown+' rows';
-}
-for(const k of filters)document.getElementById(k).addEventListener('change',update);
-query.addEventListener('input',update);update();
-</script></body></html>""")
+    """Generate a private offline dashboard from validated configuration evidence."""
+    from config_dashboard import render_dashboard
+    return render_dashboard(bundle, list(config_review_rows(bundle)), configuration_view_shape)
 
 
 def write_private_text(path, payload):
@@ -1723,6 +1682,7 @@ def main():
             raise ValueError("Output already exists")
         if args.command == "review-config":
             bundle = json.loads(args.audit.read_text(encoding="utf-8"))
+            bundle = refresh_configuration_review(bundle)
             html = configuration_html(bundle)
             print_configuration_diagnostics(bundle)
             write_private_text(args.output, html)

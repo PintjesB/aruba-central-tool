@@ -550,6 +550,37 @@ class Tests(unittest.TestCase):
         self.assertNotIn("CUSTOMER_SECRET", html)
         self.assertIn("default-src 'none'", html)
 
+    def test_metadata_only_zero_requires_requested_count(self):
+        from central_tool import module_view
+        payload = {"metadata": {"count_objects_in_module": {"LOCAL": 0, "SHARED": 3, "ANY": 3}}}
+        result = module_view(payload, "name", "LOCAL")
+        self.assertEqual(result["status"], "list_parsed")
+        self.assertTrue(result["count_confirmed"])
+        self.assertEqual(result["profiles"], {})
+        self.assertEqual(module_view(payload, "name", "ANY")["status"], "schema_unresolved")
+        self.assertEqual(module_view({}, "name", "LOCAL")["status"], "empty_object")
+        self.assertEqual(module_view({**payload, "metadata": {**payload["metadata"], "total": 3}},
+                                     "name", "LOCAL")["status"], "count_mismatch")
+        self.assertEqual(module_view({**payload, "profiles": [{"name": "unexpected"}]},
+                                     "name", "LOCAL")["status"], "count_mismatch")
+
+    def test_refresh_saved_config_requalifies_only_proven_empty(self):
+        from central_tool import refresh_configuration_review
+        local = {"status": "schema_unresolved", "raw": {
+            "metadata": {"count_objects_in_module": {"LOCAL": 0, "SHARED": 1, "ANY": 1}}}}
+        effective = {"status": "list_parsed", "raw": {"profiles": [
+            {"name": "a", "@": {"aruba-annotation:object_type": "SHARED",
+                                "aruba-annotation:inherited": False}}],
+            "metadata": {"count_objects_in_module": {"ANY": 1}}}}
+        scope = {"scope": "1", "scope_kind": "global", "local_view": local, "effective_view": effective}
+        module = {"scope_results": [scope]}
+        bundle = {"schema": 1, "kind": "configuration_audit", "results": {
+            "ACCESS_SWITCH": {"modules": {"roles": module}}}}
+        refresh_configuration_review(bundle)
+        self.assertTrue(scope["review"]["qualified"])
+        self.assertEqual(scope["review"]["profiles"][0]["status"], "shared")
+        self.assertEqual(module["summary"]["qualified_scopes"], 1)
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
