@@ -59,6 +59,8 @@ Do not assume all modules support every scope. In particular HPE's VLAN guidance
 
 ## Priority 2: guided change planner
 
+Laboratory-only initial VLAN write adapter implemented in `vlan_change.py`: exact device-local removal, higher-scope local creation, Library creation/reuse and assignment, fresh-plan approval digest, phased verification, persistent journal and guarded compensating rollback. Simulation tests cover successful paths, drift, SVI/unknown-field blocks, rollback and uncertain responses. Production qualification, browser integration and broader module/port/Library identity writes remain pending; no live writes were tested.
+
 - [x] Select candidates individually or by exact repeated-profile group, preserving all observed source scopes.
 - [x] Preview candidate destination scope membership from captured IDs, distinguishing intended, additional and unknown recipients; verified effective blast radius and protected-exception handling remain pending.
 - [ ] Choose reuse existing Library profile, create Library profile plus assign, create supported local profile at a higher scope, or remove redundant override.
