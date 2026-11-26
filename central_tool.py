@@ -2107,8 +2107,15 @@ def keyed_profile_contracts():
 
 def keyed_profile_read(client, module, identity_key, identity, params, collection_profile):
     """Retain keyed evidence separately; do not promote or rewrite collection data."""
+    # Only a documented Ethernet interface key may contain path separators,
+    # and only in the numeric member/slot/port form. Encode it as one segment.
+    # Do not generalize to arbitrary slashes, pre-encoded names or traversal.
+    valid_port = (module == "ethernet-interfaces" and identity_key == "name"
+                  and isinstance(identity, str)
+                  and re.fullmatch(r"[0-9]{1,4}/[0-9]{1,4}/[0-9]{1,4}", identity) is not None)
     if (not isinstance(identity, str) or not identity.strip() or len(identity) > 512
-            or identity in (".", "..") or any(c in identity for c in ("/", "\\", "%"))
+            or identity in (".", "..") or any(c in identity for c in ("\\", "%"))
+            or ("/" in identity and not valid_port)
             or any(ord(c) < 32 or ord(c) == 127 for c in identity)):
         return {"status": "invalid_selector", "safe_to_apply": False}
     try:
