@@ -257,6 +257,25 @@ class Workspace:
             body += (f'<tr><td>{e(row["persona"])}</td><td>{e(row["module"])}</td>'
                      f'<td>{row["qualified"]}/{row["total"]}</td><td>{e(row["status"])}</td>'
                      f'<td><a href="{e(href)}">Inspect evidence</a></td></tr>')
+        observed = bundle.get("profile_type_discovery")
+        discovery = ""
+        if observed is not None:
+            library = bundle.get("library", {})
+            unknown = set(observed["unknown_adapter_modules"])
+            observed_rows = "".join(
+                f'<tr><td>{e(module)}</td><td>{e(", ".join(personas))}</td>'
+                f'<td>{e("Adapter needed" if module in unknown else "Adapter available")}</td></tr>'
+                for module, personas in observed["modules"].items())
+            assignments = library.get("assignments") or {}
+            maps = library.get("scope_maps") or {}
+            discovery = (f'<section><h2>Observed tenant profile types</h2>'
+                         f'<p>Assignments: {e(assignments.get("status", "unknown"))}. '
+                         f'Scope maps: {e(maps.get("status", "unknown"))}. '
+                         f'{len(unknown)} observed types need adapters; '
+                         f'{observed["unresolved_records"]} records could not be classified. '
+                         'These inventories do not establish complete coverage.</p>'
+                         '<table><thead><tr><th>Profile type</th><th>Observed device functions</th>'
+                         '<th>Adapter</th></tr></thead><tbody>' + observed_rows + '</tbody></table></section>')
         return page("Module coverage", '<section><h2>Configuration module qualification</h2>'
                     '<p>Fully qualified modules first. Partial modules retain their valid scope evidence; '
                     'unqualified scopes are diagnostics only. Qualification is not permission to modify configuration.</p>'
@@ -264,7 +283,7 @@ class Workspace:
                     + options([(p.name, p.name) for p in files], name)
                     + '</select></label><button>Open</button></form><table><thead><tr><th>Function</th><th>Module</th>'
                     '<th>Qualified scopes</th><th>Status</th><th>Evidence</th></tr></thead><tbody>'
-                    + body + '</tbody></table></section>', self.nav())
+                    + body + '</tbody></table></section>' + discovery, self.nav())
 
     def report(self, query):
         from central_tool import configuration_html, refresh_configuration_review
