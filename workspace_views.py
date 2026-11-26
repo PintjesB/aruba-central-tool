@@ -37,6 +37,34 @@ def select(name, values, selected="", label=None):
         for key, value in values) + '</select></label>'
 
 
+def scope_filter_form(root, route, snapshot, bundle, persona, fields, submit="Apply filters", extra_fields=()):
+    """Single GET form; dependent selectors change locally with device function."""
+    options_by_persona = {}
+    for function, entry in sorted(bundle["results"].items()):
+        options_by_persona[function] = {name: choices(entry) for name, _, _, choices in fields}
+    controls = select("persona", [(p, persona_label(p)) for p in options_by_persona], persona, "Device function")
+    for name, label, selected, _ in fields:
+        controls += select(name, options_by_persona[persona][name], selected, label)
+    for name, label, selected, choices in extra_fields:
+        controls += select(name, choices, selected, label)
+    return (f'<form class="filter-bar" method="get" action="{e(root + route)}" data-scope-filters="{e(json.dumps(options_by_persona))}">'
+            f'<input type="hidden" name="snapshot" value="{e(snapshot)}">' + controls
+            + f'<button type="submit">{e(submit)}</button>'
+            + f'<a class="button reset-link" href="{url(root, route, snapshot=snapshot)}">Reset</a></form>')
+
+
+def device_options(entry, placeholder="All devices"):
+    return [("", placeholder)] + sorted(
+        [(s["id"], s.get("name") or s["id"]) for s in entry["scopes"] if s["kind"] == "device"],
+        key=lambda pair: pair[1].casefold())
+
+
+def module_options(entry, placeholder="All modules", comparable=False):
+    return [("", placeholder)] + sorted(
+        [(m, module_label(m)) for m, data in entry["modules"].items()
+         if not comparable or not data.get("device_scope_only")], key=lambda pair: pair[1].casefold())
+
+
 def list_items(values, ordered=False):
     tag = "ol" if ordered else "ul"
     return f"<{tag}>" + "".join(f"<li>{e(v)}</li>" for v in values) + f"</{tag}>" if values else '<p class="muted">None observed.</p>'
@@ -658,9 +686,12 @@ def comparison_view(workspace, query):
     left, right, module = query.get("left", ""), query.get("right", ""), query.get("module", "")
     if module and module not in entry["modules"]:
         raise ValueError("Unknown module")
-    choose = f'<form method="get" action="{root}compare"><input type="hidden" name="snapshot" value="{e(name)}">' + select("persona", [(p, persona_label(p)) for p in personas], persona, "Device function") + '<button type="submit" class="quiet">Load devices</button></form>'
-    controls = f'<form method="get" action="{root}compare"><input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="persona" value="{e(persona)}">' + select("left", [("", "Select device")] + devices, left, "Reference device") + select("right", [("", "Select device")] + devices, right, "Compare with") + select("module", [("", "Reusable modules")] + [(m, module_label(m)) for m in sorted(entry["modules"])], module, "Module") + '<button type="submit">Compare</button></form>'
-    body = intro("Compare devices", "Show configuration differences, not identical settings.", picker) + '<section>' + choose + '<hr>' + controls + '<p class="note">Infrastructure is excluded unless a specific module is selected.</p></section>'
+    controls = scope_filter_form(root, "compare", name, bundle, persona, (
+        ("left", "Reference device", left, lambda entry: device_options(entry, "Select device")),
+        ("right", "Compare with", right, lambda entry: device_options(entry, "Select device")),
+        ("module", "Module", module, lambda entry: module_options(entry, "Reusable modules"))),
+        submit="Compare")
+    body = intro("Compare devices", "Compare two devices using captured configuration.", picker) + '<section class="filter-section">' + controls + '<p class="filter-hint">Infrastructure modules are excluded unless selected explicitly.</p></section>'
     if left and right:
         if left == right:
             body += '<section class="empty">Select two different devices.</section>'
@@ -729,9 +760,13 @@ def explorer_view(workspace, query):
     mode = query.get("view", "diagnostics" if query.get("diagnostics") else "all" if scope else "local")
     if mode not in ("all", "local", "diagnostics"):
         raise ValueError("Unknown view")
-    scope_names = [(s["id"], f'{pretty(s["kind"])} / {s.get("name") or s["id"]}') for s in entry["scopes"]]
-    controls = f'<form method="get" action="{root}report"><input type="hidden" name="snapshot" value="{e(name)}">' + select("persona", [(p, persona_label(p)) for p in personas], persona, "Function") + '<button type="submit" class="quiet">Load function</button></form><hr>'
-    controls += f'<form method="get" action="{root}report"><input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="persona" value="{e(persona)}">' + select("module", [("", "All modules")] + [(m, module_label(m)) for m in modules], module, "Module") + select("scope", [("", "All scopes")] + scope_names, scope, "Scope") + select("view", [("local", "Local profiles"), ("all", "All captured profiles"), ("diagnostics", "Incomplete API results")], mode, "Configuration to show") + '<button type="submit">Show</button></form>'
+    controls = scope_filter_form(root, "report", name, bundle, persona, (
+        ("module", "Module", module, module_options),
+        ("scope", "Scope", scope, lambda entry: [("", "All scopes")] + sorted(
+            [(s["id"], f'{pretty(s["kind"])} / {s.get("name") or s["id"]}') for s in entry["scopes"]],
+            key=lambda pair: pair[1].casefold()))),
+        submit="Show", extra_fields=(("view", "View", mode, [("local", "Local profiles"), ("all", "All captured profiles"),
+                                  ("diagnostics", "Incomplete API results")]),))
     rows = []
     records = [r for r in config_review_rows(bundle) if r[0] == persona and (not module or r[1] == module) and (not scope or r[3]["scope"] == scope)]
     for _, mod, scope_name, view in records:
@@ -768,7 +803,7 @@ def explorer_view(workspace, query):
             rows.append(tr(f'<strong>{e(scope_name)}</strong><small>{e(pretty(view["scope_kind"]))}</small>', e(module_label(mod)), e(title),
                            badge(profile_state_label(r["status"]), "good" if r["status"] in ("inherited", "shared", "local_matches_global") else "warn" if r["status"] in ("source_conflict", "local_differs_from_global", "local_effective_mismatch") else "neutral"), inspect(title, detail)))
     q = sum(v["review"]["qualified"] for _, _, _, v in records)
-    body = intro("Configuration", "Inspect captured profiles at a selected scope or module.", picker) + '<section>' + controls + '</section>'
+    body = intro("Configuration", "Inspect captured profiles at a selected scope or module.", picker) + '<section class="filter-section">' + controls + '</section>'
     body += f'<section><h2>{len(rows)} records</h2><p class="muted">{q}/{len(records)} selected scope views qualified.</p>' + table(("Scope", "Module", "Profile", "Source / state", ""), rows, search=True) + '</section>'
     body += f'<p class="note">For grouped consolidation recommendations, open <a href="{url(root, "advisor", snapshot=name)}">Consolidation</a>. Global comparison does not establish inheritance or safe removal.</p>'
     # Preserve the standalone report and CSV export through a separate optional route.
