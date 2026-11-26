@@ -226,7 +226,7 @@ def overrides_view(workspace, query):
             extra += vlan_instance_context(bundle, persona, sources, f["identity"]) + operational_vlan_context(bundle, persona, sources, f["identity"])
         higher_differences = [v["name"] for v in f["chain"] if v["state"].startswith("Observed differences") and v.get("kind") != "global"]
         inheritance_warning = ('<p class="note"><strong>Higher-scope exception:</strong> observed differences at '
-                               + e(", ".join(higher_differences)) + '. A Global match alone is not enough to remove this override.</p>') if higher_differences else ""
+                               + e(", ".join(higher_differences)) + '. A Global match alone is not enough to remove this override.</p>') if higher_differences and f["fallback"]["status"] != "matching_fallback" else ""
         fallback = f["fallback"]
         fallback_html = '<h3>Expected fallback after removing device-local copy</h3>'
         if fallback["source"]:
@@ -280,7 +280,7 @@ def overrides_view(workspace, query):
                             ("remaining_fields", "Unresolved field occurrences"))] +
         [tr(e(field), e(", ".join(f"{key}: {value}" for key, value in outcomes.items())))
          for field, outcomes in sorted(diagnostics["feature_cli"].items())]) + '</details>'
-    body = (intro("Device overrides", "Find unnecessary device-local copies of Global configuration. Review genuine exceptions separately.", picker)
+    body = (intro("Device overrides", "Find device-local copies that match Global or the observed nearest higher-scope definition. Review genuine exceptions separately.", picker)
             + '<section class="worklist"><div class="worklist-controls">' + filters + '</div>'
             + '<div class="worklist-summary"><h2>Device-local configuration</h2>' + result_summary + '</div>'
             + '<p class="filter-hint">Global matches are not proof of redundancy. Nearest-scope matches use the observed precedence chain. Removal readiness is assessed separately.</p>'
