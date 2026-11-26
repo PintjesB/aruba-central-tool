@@ -69,11 +69,16 @@ def library_usage(bundle, module, identities, references):
         unique = {(str(a.get("scope-id")), str(a.get("device-function"))) for a in rows
                   if a.get("scope-id") is not None and a.get("device-function") is not None}
         refs = [r for r in references if r["target_module"] == module and r["target"] == identity]
-        consumers = {(r["persona"], r["scope"], r["source_module"], r["source"]) for r in refs}
+        def consumer(r):
+            return (r["persona"], r["scope"], r["source_module"], r["source"])
+        consumers = {consumer(r) for r in refs}
+        definitions = {consumer(r) for r in refs if r.get("source_view") in ("saved", "library")}
+        effective = {consumer(r) for r in refs if r.get("source_view", "effective") == "effective"}
         result[identity] = {"identity": identity, "assignment_count": len(unique),
                             "assignment_status": assignment_view.get("status", "not_collected"),
                             "assignments": rows, "reference_count": len(consumers),
-                            "reference_devices": len({(r["persona"], r["scope"]) for r in refs if r.get("source_scope_kind", "device") == "device"}),
+                            "definition_reference_count": len(definitions), "effective_reference_count": len(effective),
+                            "reference_devices": len({(r["persona"], r["scope"]) for r in refs if r.get("source_scope_kind", "device") == "device" and r.get("source_view", "effective") == "effective"}),
                             "references": refs, "shared_devices": [], "matching_other_devices": [],
                             "different_devices": [], "unknown_devices": [], "compared_devices": 0,
                             "coverage_complete": False}
@@ -112,11 +117,47 @@ def preferred_duplicate(usage):
     # Do not add incomparable metrics together. Prefer more explicit consumers,
     # then more observed shared deployments, then more assignments.
     def score(u):
-        return (u["reference_count"], len(u["shared_devices"]), u["assignment_count"])
+        return (u.get("definition_reference_count", 0), u["assignment_count"], u["reference_count"], len(u["shared_devices"]))
     ordered = sorted(usage.values(), key=score, reverse=True)
-    if len(ordered) < 2 or score(ordered[0]) == score(ordered[1]) or score(ordered[0]) == (0, 0, 0):
+    if len(ordered) < 2 or score(ordered[0]) == score(ordered[1]) or not any(score(ordered[0])):
         return None
     return ordered[0]["identity"]
+
+
+def duplicate_migration_preview(module, usage, keep):
+    """A concrete review worklist, never executable or complete."""
+    if keep not in usage:
+        raise ValueError("Choose an observed duplicate profile")
+    def assignment_keys(u):
+        return {(str(a["scope-id"]), str(a["device-function"])) for a in u["assignments"]
+                if type(a.get("scope-id")) in (str, int) and isinstance(a.get("device-function"), str)
+                and a["device-function"]}
+    retained = assignment_keys(usage[keep])
+    assignments, definitions, impacts = [], [], []
+    seen = set()
+    for identity, u in sorted(usage.items()):
+        if identity == keep:
+            continue
+        for sid, persona in sorted(assignment_keys(u)):
+            assignments.append({"from": identity, "to": keep, "scope": sid, "persona": persona,
+                                "action": "verify_existing_assignment" if (sid, persona) in retained else "review_target_assignment"})
+        for ref in u["references"]:
+            evidence = {**ref, "from": identity, "to": keep}
+            key = canonical(evidence)
+            if key in seen:
+                continue
+            seen.add(key)
+            if ref.get("source_view") in ("saved", "library"):
+                definitions.append(evidence)
+            else:
+                impacts.append(evidence)
+    return {"module": module, "retain": keep, "assignments": assignments, "saved_references": definitions,
+            "effective_references": impacts,
+            "target_conflicts": usage[keep]["different_devices"], "target_unknown_reads": usage[keep]["unknown_devices"],
+            "blockers": ["Verify all assignments and reverse references, including unadapted modules.",
+                         "Verify the retained profile is visible and equivalent on every affected device.",
+                         "Do not delete the old names until fresh effective configuration and references are verified."],
+            "safe_to_apply": False, "complete": False}
 
 
 def advanced_analysis(bundle):
@@ -140,7 +181,7 @@ def advanced_analysis(bundle):
                 status = ("unresolved" if identity is None or target_view.get("status") != "list_parsed"
                           else "observed" if identity in target_view["profiles"] else "not_observed")
                 result["references"].append({"persona": persona, "device": names[sid], "scope": sid,
-                    "source_module": source_module, "source": source, "target_module": target,
+                    "source_module": source_module, "source": source, "source_view": "effective", "source_scope_kind": "device", "target_module": target,
                     "target": identity, "path": list(path), "status": status})
             for module in sorted(views):
                 view = get(module)
@@ -293,7 +334,7 @@ def advanced_analysis(bundle):
                 state = ("unresolved" if target_id is None or view.get("status") != "list_parsed"
                          else "definition_observed" if target_id in view["profiles"] else "not_observed")
                 result["references"].append({"persona": persona, "scope": sid, "device": name,
-                    "source_scope_kind": kind, "source_module": module, "source": identity,
+                    "source_scope_kind": kind, "source_view": "library" if kind == "library" else "saved", "source_module": module, "source": identity,
                     "target_module": target, "target": target_id, "path": list(path), "status": state})
     for persona, entry in sorted(bundle["results"].items()):
         views = effective_views(entry)
@@ -303,7 +344,7 @@ def advanced_analysis(bundle):
                 sid = scope["scope"]
                 meta = scopes.get(sid)
                 local = scope.get("local_view", {})
-                if not meta or meta["kind"] == "device" or local.get("status") != "list_parsed":
+                if not meta or local.get("status") != "list_parsed":
                     continue
                 definition_refs(persona, sid, meta.get("name") or sid, meta["kind"], module,
                                 local["profiles"], {m: v.get(sid, {}) for m, v in views.items()})
@@ -319,6 +360,9 @@ def advanced_analysis(bundle):
         key = CONFIG_MODULES[module][0]
         groups = defaultdict(list)
         for identity, raw in view["profiles"].items():
+            ann = raw.get("@", {})
+            if isinstance(ann, dict) and ann.get("aruba-annotation:is_default") is True:
+                continue
             if not isinstance(raw.get(key), str) or raw[key] != identity:
                 continue
             body = profile_body(raw)
