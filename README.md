@@ -68,6 +68,10 @@ Use a separate directory per customer. The application does not independently ve
 
 New captures retry ambiguous committed local responses with an unfiltered annotated committed view. Recovery requires complete count evidence and explicit non-inherited LOCAL or SHARED annotations on every returned object; conflicting or bare empty responses remain unqualified. Shared Library profiles are read once per applicable non-device-only module, with a separate assignment capture. Central NAC authentication profiles use the default tenant-level query, not per-device or per-persona queries. Library records and assignment responses are review evidence, not proof of assignment completeness or write authorization.
 
+### Tenant-driven profile type discovery
+
+The extended catalog adds DNS, NTP, SNMP, SNMP traps, logging, system information, MAC authentication, QoS queues, multicast membership, DHCP pools and gateway system/STP profiles, plus authentication servers. Applicability is a candidate adapter until live views qualify. Configuration assignments and the vendor SDK's read-only scope-maps evidence are captured once per audit to discover profile types and explicitly observed device functions. Missing or rejected scope-map responses remain unknown; observed modules without an identity adapter are reported separately, never queried using guessed identifiers. This catalog is not exhaustive. See the [PyCentral scope-map implementation](https://github.com/aruba/pycentral/blob/v2/pycentral/scopes/scope_maps.py) and [HPE configuration API reference](https://developer.arubanetworks.com/new-central-config/reference/).
+
 ## Safety boundary
 
 No configuration mutation API calls exist yet. Only OAuth token issuance uses POST. Candidate findings are not executable plans. The API is v1alpha1 and real tenant response shapes, group access, annotation semantics, and Classic/New configuration authority must be validated before enabling writes. Scope IDs are strings, not floating-point numbers.
