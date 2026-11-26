@@ -5,6 +5,8 @@ import os
 import re
 import sys
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,31 +71,53 @@ class Central:
         self.client_id = client_id
         self.client_secret = client_secret
         self.expires = float("inf") if token else 0
-        self.opener = build_opener(NoRedirect())
+        self._http = threading.local()
+        self._token_lock = threading.Lock()
+        self._rate_lock = threading.Lock()
+        self._retry_at = 0.0
+
+    def _wait_rate_limit(self):
+        while True:
+            with self._rate_lock:
+                delay = self._retry_at - time.monotonic()
+            if delay <= 0:
+                return
+            time.sleep(delay)
 
     def _request(self, request, label):
+        if not hasattr(self._http, "opener"):
+            self._http.opener = build_opener(NoRedirect())
         for attempt in range(4):
+            if request.get_method() == "GET":
+                self._wait_rate_limit()
             try:
-                with self.opener.open(request, timeout=30) as response:
+                with self._http.opener.open(request, timeout=30) as response:
                     return json.load(response)
             except HTTPError as exc:
                 if request.get_method() == "GET" and exc.code in (429, 500, 502, 503, 504) and attempt < 3:
                     delay = exc.headers.get("Retry-After", "")
                     if delay.isdigit() and int(delay) > 60:
                         raise RuntimeError(f"{label}: rate-limit delay exceeds retry budget") from None
-                    time.sleep(int(delay) if delay.isdigit() else 2 ** attempt)
+                    seconds = int(delay) if delay.isdigit() else 2 ** attempt
+                    if exc.code == 429:
+                        with self._rate_lock:
+                            self._retry_at = max(self._retry_at, time.monotonic() + seconds)
+                        self._wait_rate_limit()
+                    else:
+                        time.sleep(seconds)
                     continue
                 raise APIError(label, exc.code) from None
 
     def _token(self):
-        if time.monotonic() >= self.expires:
-            body = urlencode({"grant_type": "client_credentials", "client_id": self.client_id,
-                              "client_secret": self.client_secret}).encode()
-            result = self._request(Request(TOKEN_URL, data=body, headers={
-                "Content-Type": "application/x-www-form-urlencoded"}), "OAuth")
-            self.token = result["access_token"]
-            self.expires = time.monotonic() + max(0, int(result["expires_in"]) - 60)
-        return self.token
+        with self._token_lock:
+            if time.monotonic() >= self.expires:
+                body = urlencode({"grant_type": "client_credentials", "client_id": self.client_id,
+                                  "client_secret": self.client_secret}).encode()
+                result = self._request(Request(TOKEN_URL, data=body, headers={
+                    "Content-Type": "application/x-www-form-urlencoded"}), "OAuth")
+                self.token = result["access_token"]
+                self.expires = time.monotonic() + max(0, int(result["expires_in"]) - 60)
+            return self.token
 
     def get(self, path, **params):
         query = urlencode(params)
@@ -1388,7 +1412,40 @@ def qualify_observed_identities(evidence):
     return results
 
 
-def inspect_unadapted_profiles(client, discovery, assignments, scope_maps):
+AUDIT_WORKERS = 4
+
+
+def ordered_parallel(items, function, workers=1, completed=None):
+    """Bound concurrent reads; preserve input order and propagate failures."""
+    items = list(items)
+    if workers == 1 or len(items) <= 1:
+        result = []
+        for item in items:
+            result.append(function(item))
+            if completed:
+                completed(len(result), len(items))
+        return result
+    result = [None] * len(items)
+    with ThreadPoolExecutor(max_workers=min(AUDIT_WORKERS, workers, len(items))) as pool:
+        pending = {pool.submit(function, item): index for index, item in enumerate(items)}
+        try:
+            for count, future in enumerate(as_completed(pending), 1):
+                result[pending[future]] = future.result()
+                if completed:
+                    completed(count, len(items))
+        except BaseException:
+            for future in pending:
+                future.cancel()
+            raise
+    return result
+
+
+def audit_progress(callback, phase, done, total, detail):
+    if callback:
+        callback(phase, done, total, detail)
+
+
+def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, workers=1, progress=None):
     """Inspect observed source scopes for modules without an explicit adapter.
 
     These are raw read-only diagnostics, not qualified local/effective views.
@@ -1422,8 +1479,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps):
                 raise
             return {"status": "request_rejected", "http_error": exc.status}
 
-    result = {}
-    for module in sorted(unknown):
+    def inspect(module):
         evidence = []
         for (m, persona, sid), instances in sorted(targets.items()):
             if m != module:
@@ -1434,25 +1490,31 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps):
             evidence.append({"persona": persona, "scope": sid,
                              "observed_instances": sorted(instances), "committed": committed,
                              "effective": effective})
-        result[module] = {"status": "unqualified_adapter", "source_views": evidence,
-                          "library": capture(module, {"view-type": "LIBRARY", "detailed": "true"}),
-                          "safe_to_apply": False}
-        result[module]["identity_evidence"] = qualify_observed_identities(result[module])
+        result = {"status": "unqualified_adapter", "source_views": evidence,
+                  "library": capture(module, {"view-type": "LIBRARY", "detailed": "true"}),
+                  "safe_to_apply": False}
+        result["identity_evidence"] = qualify_observed_identities(result)
         print(f"  Unadapted profile type: source views={len(evidence)}", flush=True)
-    return result
+        return module, result
+    audit_progress(progress, "Additional profile types", 0, len(unknown), "Inspecting discovered modules")
+    return dict(ordered_parallel(sorted(unknown), inspect, workers,
+                lambda done, total: audit_progress(progress, "Additional profile types", done, total,
+                                                   "Inspecting discovered modules")))
 
 
-def library_inventory(client, modules, assignment_view=None, scope_map_view=None):
+def library_inventory(client, modules, assignment_view=None, scope_map_view=None, workers=1, progress=None):
     """Read tenant-wide shared profiles once per module and preserve assignment evidence."""
-    results = {}
-    for module in sorted(modules):
-        identity, _, device_only = CONFIG_MODULES[module]
-        if device_only:
-            continue
+    applicable = sorted(m for m in modules if not CONFIG_MODULES[m][2])
+    def read(module):
+        identity, _, _ = CONFIG_MODULES[module]
         params = {} if module == "auth-profiles" else {"view-type": "LIBRARY", "detailed": "true"}
         view = read_module_view(client, module, identity, params)
-        results[module] = view
         print(f"  Library {module}: {view['status']}; profiles={len(view['profiles'])}", flush=True)
+        return module, view
+    audit_progress(progress, "Library", 0, len(applicable), "Reading shared profiles")
+    results = dict(ordered_parallel(applicable, read, workers,
+                   lambda done, total: audit_progress(progress, "Library", done, total,
+                                                      "Reading shared profiles")))
     if assignment_view is None:
         assignment_view = profile_inventory_view(client, "config-assignments", "config-assignment")
     return {"modules": results, "assignments": assignment_view,
@@ -1520,8 +1582,9 @@ def review_module_scope(local, effective, baseline, device_only=False, is_global
     return result
 
 
-def configuration_audit(client, selected_persona=None):
-    """Inventory-driven broader read-only audit; raw data and values stay local."""
+def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None):
+    """Inventory-driven read-only audit with bounded parallel scope reads."""
+    audit_progress(progress, "Discovery", 0, 0, "Reading device inventory and assignments")
     devices = inventory(client)
     records = inventory_capabilities(devices)
     personas = sorted({r["identity"]["persona"] for r in records})
@@ -1538,6 +1601,7 @@ def configuration_audit(client, selected_persona=None):
           f"without adapter: {len(profile_types['unknown_adapter_modules'])}", flush=True)
     results = {}
     unqualified = []
+    plans = []
     for persona in personas:
         modules = {m: spec for m, spec in CONFIG_MODULES.items()
                    if m != "auth-profiles" and (persona in spec[1]
@@ -1545,7 +1609,13 @@ def configuration_audit(client, selected_persona=None):
         if not modules:
             unqualified.append(persona)
             continue
+        audit_progress(progress, "Discovery", 0, 0, f"Discovering {persona} scopes")
         scopes, _ = discover_scopes(client, persona, devices)
+        plans.append((persona, modules, scopes))
+    total_scopes = sum(sum(not spec[2] or s["kind"] == "device" for s in scopes)
+                       for _, modules, scopes in plans for spec in modules.values())
+    completed_scopes = 0
+    for persona, modules, scopes in plans:
         module_results = {}
         print(f"Configuration audit: {persona}; scopes={len(scopes)}; modules={len(modules)}", flush=True)
         for module, (identity, _, device_only) in modules.items():
@@ -1553,14 +1623,23 @@ def configuration_audit(client, selected_persona=None):
             baseline = None
             totals = Counter()
             applicable = [s for s in scopes if not device_only or s["kind"] == "device"]
-            for scope in applicable:
+            detail = f"{persona} / {module}"
+            audit_progress(progress, "Configuration scopes", completed_scopes, total_scopes, detail)
+            def read_scope(scope):
                 params = {"view-type": "LOCAL", "scope-id": scope["id"], "device-function": persona}
                 local = read_module_view(client, module, identity, {**params, "object-type": "LOCAL",
                                                                     "effective": "false", "detailed": "false"})
                 local = recover_local_view(client, module, identity, params, local)
                 effective = read_module_view(client, module, identity, {**params, "effective": "true", "detailed": "true"})
+                return scope, local, effective
+            captured = ordered_parallel(applicable, read_scope, workers,
+                        lambda done, total: audit_progress(progress, "Configuration scopes",
+                                                          completed_scopes + done, total_scopes, detail))
+            completed_scopes += len(captured)
+            for scope, _, effective in captured:
                 if scope["kind"] == "global" and effective["status"] == "list_parsed":
                     baseline = effective["profiles"]
+            for scope, local, effective in captured:
                 review = review_module_scope(local, effective, baseline, device_only, scope["kind"] == "global")
                 totals["qualified_scopes" if review["qualified"] else "unqualified_scopes"] += 1
                 totals.update(row["status"] for row in review["profiles"])
@@ -1582,8 +1661,8 @@ def configuration_audit(client, selected_persona=None):
     applicable_modules = {m for entry in results.values() for m in entry["modules"]}
     applicable_modules.add("auth-profiles")
     print("Reading tenant Library and assignments", flush=True)
-    library = library_inventory(client, applicable_modules, assignments, scope_maps)
-    unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps)
+    library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress)
+    unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress)
     print(f"Configuration audit coverage: personas reviewed={len(results)}; "
           f"personas without adapter={len(unqualified)}; migration authorized=no")
     return {"schema": 1, "kind": "configuration_audit", "region": client.base,
@@ -1951,9 +2030,10 @@ def main():
                     preferred = args.region_file.read_text(encoding="utf-8-sig").strip()
                 client = Central(preferred or EU_REGIONS[0], os.getenv("CENTRAL_ACCESS_TOKEN"),
                                  os.getenv("CENTRAL_CLIENT_ID"), os.getenv("CENTRAL_CLIENT_SECRET"))
-                def refresh():
+                def refresh(progress=None):
+                    audit_progress(progress, "Connection", 0, 0, "Authenticating and detecting region")
                     detect_region(client, preferred)
-                    return configuration_audit(client)
+                    return configuration_audit(client, progress=progress)
             serve(args.directory, refresh=refresh, open_browser=not args.no_browser)
             return 0
         if args.output.exists():
