@@ -1151,6 +1151,60 @@ def compare_vlan_views(before, after):
                          if canonical(old[vid]) != canonical(new[vid])]}
 
 
+def vlan_assignment_evidence(snapshot, vid, scope_id):
+    """Find exact endpoint/ID assignments without assuming ancestor relationships."""
+    raw = snapshot.get("assignments_raw")
+    if not isinstance(raw, dict) or not isinstance(raw.get("config-assignment"), list):
+        return {"status": "unavailable", "matches": []}
+    matches = [row for row in raw["config-assignment"] if isinstance(row, dict)
+               and row.get("profile-type") == "layer2-vlan"
+               and row.get("device-function") == snapshot["persona"]
+               and parse_reference_ids(row.get("profile-instance")) == {vid}]
+    global_id = next(s["id"] for s in snapshot["scopes"] if s["kind"] == "global")
+    return {"status": "exact_assignment_matches" if matches else "no_exact_assignment_match",
+            "matches": matches,
+            "global_assignment": any(row.get("scope-id") == global_id for row in matches),
+            "same_scope_assignment": any(row.get("scope-id") == scope_id for row in matches),
+            "inheritance_verified": False}
+
+
+def observed_vlan_record(bundle, persona, sid, vid):
+    entries = bundle["results"][persona].get("dependencies", {}).get("devices", [])
+    matches = [entry for entry in entries if entry.get("scope_id") == sid]
+    if len(matches) != 1:
+        return None
+    evidence = matches[0].get("operational_vlans", {})
+    if evidence.get("status") != "response_received":
+        return None
+    payload = evidence.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    lists = [v for k, v in payload.items() if k != "metadata" and isinstance(v, list)]
+    if len(lists) != 1 or len(lists[0]) >= 1000:
+        return None
+    records = [item for item in lists[0] if isinstance(item, dict)
+               and parse_reference_ids(item.get("id")) == {vid}]
+    return records[0] if len(records) == 1 else None
+
+
+def removal_evidence(previous, current, persona, sid, vid, before, after):
+    if before is None or after is None:
+        return {"effective_assessment": "not_comparable", "observed_fields": {},
+                "behavior_preserved_verified": False}
+    assessment = assess_vlan_reference(before, after)
+    old = observed_vlan_record(previous, persona, sid, vid)
+    new = observed_vlan_record(current, persona, sid, vid)
+    observed = {}
+    for field in ("name", "taggedPorts", "untaggedPorts", "voice", "ipv4", "status", "type"):
+        if old is None or new is None or field not in old or field not in new:
+            observed[field] = "not_comparable"
+        else:
+            observed[field] = "unchanged" if canonical(old[field]) == canonical(new[field]) else "changed"
+    return {"effective_assessment": assessment["classification"],
+            "effective_differences": assessment["differences"], "observed_fields": observed,
+            "multicast_operational_verified": False, "behavior_preserved_verified": False}
+
+
 def compare_audits(previous, current):
     """Compare captured bodies, not presumed device behavior or inferred causality."""
     old, new = audit_snapshots(previous), audit_snapshots(current)
@@ -1187,7 +1241,10 @@ def compare_audits(previous, current):
                         status = "effective_body_unchanged"
                     else:
                         status = "effective_body_changed"
-                    removals.append({"vlan": vid, "status": status})
+                    evidence = removal_evidence(previous, current, persona, sid, vid,
+                                                before_effective.get(vid), after_effective.get(vid))
+                    removals.append({"vlan": vid, "status": status, "evidence": evidence,
+                                     "current_assignment_evidence": vlan_assignment_evidence(b, vid, sid)})
                 changes.append({"scope": sid, "kind": y[sid]["kind"], "local": local,
                                 "effective": effective, "local_removal_outcomes": removals})
         results[persona] = {"added_scopes": sorted(y.keys() - x.keys()),
@@ -1225,12 +1282,19 @@ def offline_audit_review(bundle, previous=None):
                              "reference_body": target,
                              "reference_differences": field_differences(row["profile"], target) if target is not None else None,
                              "proposed_review": row["proposed_review"],
+                             "assignment_evidence": vlan_assignment_evidence(snapshot, vid, row["scope"]),
                              "blockers": row["dependency_blockers"],
                              "reference_candidate_modules": row["reference_candidate_modules"],
                              "effective_after_change_verified": False, "executable": False})
         results[persona] = {"review": review, "previews": previews}
         print(f"Offline review: {persona}")
         print(f"  Reference previews: {len(previews)}; executable: 0")
+        print("  Assignment evidence (profile counts):")
+        for label, count in sorted(Counter(
+                "global_assignment_observed" if p["assignment_evidence"].get("global_assignment")
+                else "same_scope_assignment_observed" if p["assignment_evidence"].get("same_scope_assignment")
+                else p["assignment_evidence"]["status"] for p in previews).items()):
+            print(f"    {label}: {count}")
         for action, count in sorted(Counter(p["proposed_review"] for p in previews).items()):
             print(f"  {action}: {count}")
     data = {"schema": 1, "kind": "offline_audit_review", "region": bundle["region"],
@@ -1253,6 +1317,15 @@ def offline_audit_review(bundle, previous=None):
             for status, count in sorted(Counter(r["status"] for s in change["scope_changes"]
                     for r in s["local_removal_outcomes"]).items()):
                 print(f"    local removal: {status} x{count}")
+            removals = [r for s in change["scope_changes"] for r in s["local_removal_outcomes"]]
+            for index, removal in enumerate(removals, 1):
+                evidence = removal["evidence"]
+                print(f"    Removal {index}: {evidence['effective_assessment']}")
+                for diff in evidence.get("effective_differences", []):
+                    print(f"      {safe_difference_path(diff['path'])}: {diff['kind']} ({diff['assessment']})")
+                for field, status in sorted(evidence["observed_fields"].items()):
+                    print(f"      monitoring {field}: {status}")
+                print("      multicast and behavior preservation: not verified")
     return data
 
 
