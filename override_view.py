@@ -107,7 +107,17 @@ def device_override_rows(bundle, persona):
                     elif identity not in view["profiles"]:
                         text = "Profile not returned"
                     else:
-                        text = "Saved body matches" if canonical(profile_body(view["profiles"][identity])) == canonical(local) else "Saved body differs"
+                        inherited = profile_body(view["profiles"][identity])
+                        inherited_fields = comparison_fields(evidence["comparison"] if evidence else row["effective"], inherited,
+                                                             vlan=module == "layer2-vlan",
+                                                             conflicts=evidence["conflicts"] if evidence else ())
+                        comparison_counts = inherited_fields["counts"]
+                        text = ("Observed differences" if comparison_counts["different"] else
+                                "Conflicting observations" if comparison_counts["conflict"] else
+                                "No observed differences" if comparison_counts["matching"] else "Insufficient evidence")
+                        text += " · " + ", ".join(f"{comparison_counts[key]} {label}" for key, label in
+                            (("matching", "match"), ("different", "different"), ("unavailable", "unavailable"), ("conflict", "conflict"))
+                            if comparison_counts[key])
                     chain.append({"name": names[ancestor], "state": text, "kind": kind})
                 ann = row.get("annotations", {})
                 direct = ann.get("aruba-annotation:object_type") == "LOCAL" and ann.get("aruba-annotation:inherited") is False
@@ -181,13 +191,16 @@ def overrides_view(workspace, query):
         if f["module"] == "layer2-vlan":
             sources = [{"kind": "device", "scope": f["device"], "name": f["device_name"]}]
             extra += vlan_instance_context(bundle, persona, sources, f["identity"]) + operational_vlan_context(bundle, persona, sources, f["identity"])
+        higher_differences = [v["name"] for v in f["chain"] if v["state"].startswith("Observed differences") and v.get("kind") != "global"]
+        inheritance_warning = ('<p class="note"><strong>Higher-scope exception:</strong> observed differences at '
+                               + e(", ".join(higher_differences)) + '. A Global match alone is not enough to remove this override.</p>') if higher_differences else ""
         detail = ('<div class="review-decision"><div>' + badge(RESULTS[state], "warn" if state in ("different", "omitted", "source_uncertain") else "info" if state in ("partial_match", "effective_match") else "neutral")
                   + '<p><strong>Next step:</strong> ' + e(next_step) + '.</p></div><div class="review-context"><small>Device</small><strong>'
                   + e(f["device_name"]) + '</strong></div></div>'
-                  + comparison
+                  + inheritance_warning + comparison
                   + '<details><summary>Inheritance and higher scopes</summary>'
-                  + table(("Scope", "Saved local vs captured scope body"), [tr(e(v["name"]), e(v["state"])) for v in f["chain"]])
-                  + '<p class="note">Captured bodies can differ because fields are omitted. These are not verified effective differences. Verify inheritance and dependencies before removal.</p></details>'
+                  + table(("Scope", "Observed device vs scope settings"), [tr(e(v["name"]), e(v["state"])) for v in f["chain"]])
+                  + '<p class="note">Scope membership does not establish inheritance precedence. Compare the actual inherited source and dependencies before removal.</p></details>'
                   + '<details><summary>Source evidence</summary>' + extra + raw(p) + '</details>')
         if f["candidate"]:
             detail += f'<p><a href="{url(root, "advisor", snapshot=name, finding="remove_override", module=f["module"], persona=persona, scope=f["device"], identity=f["identity"])}">Open matching consolidation preview</a></p>'
@@ -221,7 +234,7 @@ def overrides_view(workspace, query):
     body = (intro("Device overrides", "Find saved device-level configuration and compare it directly with Global.", picker)
             + '<section class="worklist"><div class="worklist-controls">' + filters + '</div>'
             + '<div class="worklist-summary"><h2>Device-local configuration</h2>' + result_summary + '</div>'
-            + '<p class="filter-hint">Potential cleanup includes matching observed settings, even when Central leaves other fields unavailable. It is a review queue, not permission to remove overrides.</p>'
+            + '<p class="filter-hint">Potential cleanup is based on observed matching settings. Unavailable fields and inheritance remain verification requirements before removal.</p>'
             + table(("Device", "Profile / configuration", "Assessment", ""), rows, search=True, style="override-table")
             + f'<p class="filter-hint">{len(missing)} device/module reads unavailable. VLAN 1 is protected; device-only interfaces are excluded. Review only.</p></section>'
             + report)
