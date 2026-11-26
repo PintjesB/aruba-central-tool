@@ -105,7 +105,17 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
         source = (evidence or {}).get('sources', {}).get(source_key + '.' + '.'.join(map(str, path)))
         if source is None and source_key == 'comparison':
             source = (evidence or {}).get('sources', {}).get('effective.' + '.'.join(map(str, path)))
-        return e(json.dumps(value, ensure_ascii=False)) + (f'<small>{e(source)}</small>' if source else '')
+        if isinstance(value, dict) and set(value) in ({"enable"}, {"snooping"}) and type(next(iter(value.values()))) is bool:
+            value = next(iter(value.values()))
+        if type(value) is bool:
+            display = "Enabled" if value else "Disabled"
+        elif value is None:
+            display = "Null"
+        elif isinstance(value, str):
+            display = value
+        else:
+            display = json.dumps(value, ensure_ascii=False)
+        return e(display) + (f'<small>{e(source)}</small>' if source else '')
     def meaning(d):
         if evidence is not None:
             matches = [v for v in (evidence["differences"] or []) if v["path"] == d["path"]]
@@ -119,11 +129,19 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
             return "No difference in captured values" if effective is not None else "Saved and reference values match"
         return ASSESSMENT_LABELS.get(d["assessment"], pretty(d["assessment"]))
     conflict = ('<p class="note">Conflicting observations: ' + e(', '.join(evidence['conflicts'])) + '. Resolve before changing configuration.</p>') if evidence and evidence['conflicts'] else ''
-    return '<h3>VLAN settings comparison</h3>' + table(
-        ("Setting", "Saved locally", "Effective at source / observed", "Global / reference", "Meaning"),
-        [tr(e(".".join(map(str, d["path"]))), observed_cell(local, d["path"], "local"), observed_cell(effective, d["path"], "comparison"), observed_cell(reference, d["path"], "reference"),
+    labels = {"vlan": "VLAN ID", "name": "Name", "enable": "Administrative state",
+              "voice-enable": "Voice VLAN", "igmp": "IGMP snooping", "mld": "MLD snooping",
+              "dhcpv4-snooping": "DHCPv4 snooping", "dhcpv6-snooping": "DHCPv6 snooping",
+              "is-l3-vlan": "Layer 3 VLAN"}
+    def field_label(path):
+        if len(path) == 1 or (len(path) == 2 and path[0] in labels and path[1] in ("enable", "snooping")):
+            return labels.get(path[0], pretty(path[0]))
+        return ".".join(map(str, path))
+    return table(
+        ("Setting", "Saved locally", "Effective at source", "Global / reference", "Result"),
+        [tr(e(field_label(d["path"])), observed_cell(local, d["path"], "local"), observed_cell(effective, d["path"], "comparison"), observed_cell(reference, d["path"], "reference"),
             e(meaning(d)))
-         for _, d in sorted(comparisons.items())]) + conflict + '<p class="note">Not returned does not mean disabled or equal to the default. Effective values use Central configuration and independently observed switch data where identified. They do not prove that an omitted setting was explicitly saved locally. Without switch evidence, Central effective settings are not a live switch CLI or traffic measurement.</p>'
+         for _, d in sorted(comparisons.items())]) + conflict + '<p class="note">Not returned does not mean disabled. Effective settings are not a live switch CLI measurement unless a switch source is identified.</p>'
 
 
 def vlan_instance_context(bundle, persona, sources, identity):

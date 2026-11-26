@@ -134,12 +134,15 @@ def overrides_view(workspace, query):
         comparison = diff_table(p["global_differences"], "Device local", "Global")
         if f["module"] == "layer2-vlan" and p["global_reference"] is not None:
             comparison = vlan_explanation(p["local"], p["global_reference"], p["effective"], f["evidence"]) or comparison
-        detail = ('<h3>Comparison result</h3><p>' + e(RESULTS[state]) + '. ' + e(next_step) + '.</p>'
-                  + '<h3>Device local vs Global</h3>' + comparison
-                  + '<h3>Saved device settings</h3>' + property_table(p["local"])
-                  + '<h3>Effective device settings in Central</h3>' + property_table(p["effective"])
-                  + '<h3>Global settings</h3>' + property_table(p["global_reference"])
-                  + ((vlan_instance_context(bundle, persona, [{"kind": "device", "scope": f["device"], "name": f["device_name"]}], f["identity"]) + operational_vlan_context(bundle, persona, [{"kind": "device", "scope": f["device"], "name": f["device_name"]}], f["identity"])) if f["module"] == "layer2-vlan" else "")
+        extra = ('<h3>Saved device settings</h3>' + property_table(p["local"])
+                 + '<h3>Effective device settings in Central</h3>' + property_table(p["effective"])
+                 + '<h3>Global settings</h3>' + property_table(p["global_reference"]))
+        if f["module"] == "layer2-vlan":
+            sources = [{"kind": "device", "scope": f["device"], "name": f["device_name"]}]
+            extra += vlan_instance_context(bundle, persona, sources, f["identity"]) + operational_vlan_context(bundle, persona, sources, f["identity"])
+        detail = ('<p><strong>' + e(RESULTS[state]) + '</strong> · ' + e(next_step) + '.</p>'
+                  + comparison
+                  + '<details><summary>Source evidence</summary>' + extra + '</details>'
                   + '<h3>Applicable higher scopes (captured effective settings)</h3>'
                   + table(("Scope", "Comparison with local"), [tr(e(v["name"]), e(v["state"])) for v in f["chain"]])
                   + '<p class="note">A Global match alone does not prove that removing the override preserves configuration. Verify the inherited source, dependencies and rollback first.</p>'
