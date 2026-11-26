@@ -2,7 +2,7 @@
 from collections import defaultdict
 import hashlib
 
-from central_tool import canonical, field_differences, profile_body, assess_vlan_reference
+from central_tool import canonical, field_differences, profile_body, assess_vlan_reference, PERSONAS
 
 # Full device/system identity, physical interfaces and routed topology are
 # deliberately excluded from generic reusable-profile promotion.
@@ -144,6 +144,8 @@ def profile_recommendations(bundle):
                     if row["local"] is None or row["status"] in (
                             "default_profile", "source_conflict", "local_effective_mismatch"):
                         continue
+                    if module == "layer2-vlan" and persona in PERSONAS and row["identity"] == "1":
+                        continue  # Protected default VLAN; inspect separately, never recommend migration.
                     if scope["scope_kind"] == "global":
                         continue
                     if row["effective"] is None or canonical(row["local"]) != canonical(row["effective"]):
@@ -257,6 +259,8 @@ def profile_recommendations(bundle):
         if module not in REUSABLE or view.get("status") != "list_parsed":
             continue
         for identity, raw in sorted(view["profiles"].items()):
+            if (module == "layer2-vlan" and identity == "1") or (isinstance(raw.get("@"), dict) and raw["@"].get("aruba-annotation:is_default") is True):
+                continue
             matches = [a for a in assignments if a.get("profile-type") == module
                        and type(a.get("profile-instance")) in (str, int)
                        and str(a["profile-instance"]) == identity]

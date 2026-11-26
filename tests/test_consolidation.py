@@ -291,3 +291,31 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("Not collected in this snapshot", operational_vlan_context({}, "ACCESS_SWITCH", sources, "1"))
         data["operational_vlans"]["ACCESS_SWITCH"]["1"]["payload"]["vlans"].append({"id": 1})
         self.assertEqual(configuration_operational_vlan(data, "ACCESS_SWITCH", "1", "1")["status"], "identity_unresolved")
+
+    def test_vlan_one_is_protected_and_missing_fields_not_actual_difference(self):
+        from central_tool import refresh_configuration_review
+        from override_view import device_override_rows
+        from workspace_views import vlan_instance_context
+        data = fixture()
+        views = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]
+        views[0]["effective_view"]["profiles"]["1"] = {"vlan": 1, "name": "DEFAULT_VLAN_1", "enable": True}
+        views[0]["effective_view"]["profiles"]["70"] = {"vlan": 70, "name": "Example", "enable": True}
+        for key in ("local_view", "effective_view"):
+            views[2][key]["profiles"]["1"] = {"vlan": 1}
+            views[2][key]["profiles"]["70"] = {"vlan": 70}
+        data["library"]["modules"]["layer2-vlan"]["profiles"]["1"] = {"vlan": 1, "name": "DEFAULT_VLAN_1"}
+        refresh_configuration_review(data)
+        findings, _ = device_override_rows(data, "ACCESS_SWITCH")
+        by_id = {f["identity"]: f for f in findings if f["module"] == "layer2-vlan" and f["device"] == "3"}
+        self.assertEqual(by_id["1"]["result"], "protected")
+        self.assertFalse(by_id["1"]["candidate"])
+        self.assertEqual(by_id["70"]["result"], "omitted")
+        self.assertFalse(any(f["identity"] == "1" for f in profile_recommendations(data)))
+        data["vlan_instance_details"] = {"ACCESS_SWITCH": {"3": {"1": {
+            "local": {"status": "source_unverified"},
+            "effective": {"status": "observed", "profile": {"vlan": 1, "name": "Observed by ID"}}}}}}
+        html = vlan_instance_context(data, "ACCESS_SWITCH", [{"kind": "device", "scope": "3", "name": "A"}], "1")
+        self.assertIn("Observed by ID", html)
+        self.assertIn("Local source not confirmed", html)
+        self.assertIn("Not returned", html)
+        self.assertIn("original snapshot", html)
