@@ -3506,6 +3506,9 @@ def main():
                 dependencies = json.loads(args.dependencies.read_text(encoding="utf-8"))
                 data = dependency_review(snapshot, dependencies, data)
         write_private(args.output, data)
+        if args.command == "config-audit" and args.checkpoint:
+            from collection_checkpoint import mark_complete
+            mark_complete(args.checkpoint)
         if args.command == "report":
             print_review_summary(data)
             if "dependency_review" in data:
