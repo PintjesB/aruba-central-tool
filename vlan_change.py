@@ -75,6 +75,8 @@ def assignment_tuple(row):
 
 
 def capture(client, persona, vid, sources):
+    require(persona in PERSONAS and vid.isdigit() and 2 <= int(vid) <= 4094
+            and all(isinstance(s, str) and s.isdigit() for s in sources), "Invalid scope or VLAN selectors")
     snapshot = scan(client, persona)
     scopes = snapshot["scopes"]
     membership = explicit_memberships(scopes)
@@ -130,9 +132,13 @@ def direct_assignment(state, sid, vid):
     return [sid, state["persona"], "layer2-vlan", vid]
 
 
+def exact(left, right):
+    return canonical(left) == canonical(right)
+
+
 def direct_local(state, sid, vid, body):
     ann = state["annotations"][sid].get(vid, {})
-    return (state["local"][sid].get(vid) == body and state["effective"][sid].get(vid) == body
+    return (exact(state["local"][sid].get(vid), body) and exact(state["effective"][sid].get(vid), body)
             and ann.get("aruba-annotation:inherited") is False
             and ann.get("aruba-annotation:object_type") == "LOCAL"
             and ann.get("aruba-annotation:is_default") is False)
@@ -154,7 +160,7 @@ def inherited_reference(state, sid, vid, body, skip=None):
         effective = state["effective"][ancestor].get(vid)
         if effective is None:
             continue
-        require(effective == body, "Applicable higher scope contains a different VLAN body")
+        require(exact(effective, body), "Applicable higher scope contains a different VLAN body")
         ann = state["annotations"][ancestor].get(vid, {})
         if direct_local(state, ancestor, vid, body):
             found = True
@@ -162,7 +168,7 @@ def inherited_reference(state, sid, vid, body, skip=None):
               and ann.get("aruba-annotation:object_type") == "SHARED"
               and ann.get("aruba-annotation:inherited") is False
               and ann.get("aruba-annotation:is_default") is False
-              and state["library"].get(vid) == body):
+              and exact(state["library"].get(vid), body)):
             found = True
     return found
 
@@ -200,7 +206,7 @@ def prepare(state, mode, sources, target=None):
         for sid in sources:
             inherited_reference(state, sid, vid, body, skip=target)
         current = state["effective"][target].get(vid)
-        require(current is None or current == body, "Destination effective VLAN conflicts")
+        require(current is None or exact(current, body), "Destination effective VLAN conflicts")
         if mode == "promote":
             require(direct_assignment(state, target, vid) not in state["assignments"], "Destination has direct Library assignment")
             if not direct_local(state, target, vid, body):
@@ -209,14 +215,14 @@ def prepare(state, mode, sources, target=None):
         else:
             require(vid not in state["local"][target], "Destination already contains a local VLAN")
             existing = state["library"].get(vid)
-            require(existing is None or existing == body, "Existing Library VLAN differs")
+            require(existing is None or exact(existing, body), "Existing Library VLAN differs")
             if existing is None:
                 ops.append({"kind": "create_shared", "body": body})
             if direct_assignment(state, target, vid) not in state["assignments"]:
                 require(current is None, "Destination already inherits a VLAN; review assignment precedence manually")
                 ops.append({"kind": "assign", "scope": target})
             else:
-                require(existing == body and current == body, "Existing Library assignment is not confirmed")
+                require(exact(existing, body) and exact(current, body), "Existing Library assignment is not confirmed")
     ops += [{"kind": "delete_local", "scope": sid, "body": body} for sid in sources]
     return {"schema": 1, "kind": "lab_vlan_plan", "mode": mode, "sources": sources,
             "target": target, "region": state["region"], "persona": state["persona"],
@@ -322,8 +328,8 @@ def execute(client, plan, journal, *, reader=capture, attempts=3, pause=time.sle
         current = None
         for i in range(attempts):
             current = read()
-            if direct_state(current) == direct_state(expected_state):
-                if (not preserve_devices or device_state(current) == device_state(baseline)) and (predicate is None or predicate(current)):
+            if exact(direct_state(current), direct_state(expected_state)):
+                if (not preserve_devices or exact(device_state(current), device_state(baseline))) and (predicate is None or predicate(current)):
                     return current, True
             if i + 1 < attempts:
                 pause(2)
@@ -331,8 +337,8 @@ def execute(client, plan, journal, *, reader=capture, attempts=3, pause=time.sle
     try:
         for op in plan["operations"]:
             current = read()
-            require(direct_state(current) == direct_state(expected)
-                    and device_state(current) == device_state(baseline), "Drift before mutation")
+            require(exact(direct_state(current), direct_state(expected))
+                    and exact(device_state(current), device_state(baseline)), "Drift before mutation")
             if op["kind"] == "delete_local":
                 require(direct_local(current, op["scope"], vid, op["body"]),
                         "Source is no longer the expected direct local profile")
@@ -360,7 +366,7 @@ def execute(client, plan, journal, *, reader=capture, attempts=3, pause=time.sle
                     ann = current["annotations"][op["scope"]].get(vid, {})
                     return (ann.get("aruba-annotation:object_type") == "SHARED"
                             and ann.get("aruba-annotation:inherited") is False
-                            and current["effective"][op["scope"]].get(vid) == current["library"].get(vid))
+                            and exact(current["effective"][op["scope"]].get(vid), current["library"].get(vid)))
                 return True
             current, ok = confirm(expected, predicate=postcondition)
             if not ok:
@@ -373,7 +379,7 @@ def execute(client, plan, journal, *, reader=capture, attempts=3, pause=time.sle
         try:
             for op in reversed(applied):
                 current = read()
-                require(direct_state(current) == direct_state(expected), "Unknown drift; cannot safely compensate")
+                require(exact(direct_state(current), direct_state(expected)), "Unknown drift; cannot safely compensate")
                 undo = inverse(op)
                 after = transition(expected, undo)
                 journal.record("rollback_pending", operation=undo)
