@@ -100,6 +100,10 @@ To qualify in an isolated lab only, review the private plan and its SHA256, then
 
 Contracts: [create VLAN](https://developer.arubanetworks.com/new-central-config/reference/createlayer2vlanl2vlanbyid), [delete VLAN](https://developer.arubanetworks.com/new-central-config/reference/deletelayer2vlanl2vlanbyid), [Library assignment and unassignment](https://developer.arubanetworks.com/new-central/docs/working-with-library-profiles), [inheritance](https://arubanetworking.hpe.com/techdocs/VSG/docs/002-central/central-020-config-model/). Simulated transaction tests are not live API qualification.
 
+### Workspace navigation
+
+The browser workspace opens on an overview of the selected audit. Use the sidebar to switch between Consolidation, Engineering review, Configuration, Inventory, Library, Compare and Coverage. The selected snapshot is preserved in navigation links. Consolidation is task-first, with grouped recommendations, filters, pagination, a side inspector, a selection bar and non-executable preview export. Engineering findings have separate views for repeated port settings, shadowed configuration, duplicate Library profiles, unresolved reference evidence and observed references. Configuration, Library and Compare show compact tables with structured details and optional raw evidence. Coverage is a separate diagnostic view. The original full evidence report and CSV export remain available from Configuration. Theme changes affect the current page only. All assets are local, and the browser remains read-only.
+
 ## Safety boundary
 
 No configuration mutation API calls exist yet. Only OAuth token issuance uses POST. Candidate findings are not executable plans. The API is v1alpha1 and real tenant response shapes, group access, annotation semantics, and Classic/New configuration authority must be validated before enabling writes. Scope IDs are strings, not floating-point numbers.
