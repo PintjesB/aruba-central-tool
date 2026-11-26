@@ -45,6 +45,27 @@ def pretty(value):
     return str(value).replace("_", " ").replace("-", " ").capitalize()
 
 
+PROFILE_STATES = {
+    "default_profile": "Central default profile",
+    "local_matches_global": "Local copy matches Global",
+    "local_differs_from_global": "Local settings differ from Global",
+    "local_without_global_match": "No matching Global profile",
+    "global_reference_unverified": "Global comparison unavailable",
+    "device_local_profile": "Device-specific configuration",
+    "global_local_profile": "Defined locally at Global",
+    "inherited": "Inherited from a higher scope",
+    "shared": "Shared Library profile",
+    "source_conflict": "Source information disagrees",
+    "local_effective_mismatch": "Saved and effective settings differ",
+    "effective_source_unverified": "Effective source unknown",
+    "effective_only_unverified": "Effective settings only",
+}
+
+
+def profile_state_label(value):
+    return PROFILE_STATES.get(value, pretty(value))
+
+
 def raw(value, label="Technical evidence"):
     return f'<details class="raw"><summary>{e(label)}</summary><pre>{e(json.dumps(value, indent=2, ensure_ascii=False))}</pre></details>'
 
@@ -59,7 +80,11 @@ def status(value):
             else "neutral")
     labels = {"list_parsed": "Retrieved", "response_received": "Retrieved", "empty_object": "Unverified empty",
               "not_observed": "Not observed", "exact_match": "Identical", "different_body": "Different",
-              "schema_unresolved": "Schema unresolved", "unqualified": "Not qualified"}
+              "schema_unresolved": "Response format not recognized", "unqualified": "Not qualified",
+              "qualified": "Complete", "partial": "Partial read", "absent": "Profile not returned",
+              "unknown": "Cannot compare", "matching": "Identical settings", "different": "Different settings",
+              "left_only": "Only on reference device", "right_only": "Only on compared device",
+              "request_rejected": "API request rejected", "count_mismatch": "API counts disagree"}
     return badge(labels.get(value, pretty(value)), tone)
 
 
@@ -93,7 +118,7 @@ def diff_table(fields, left="Local", right="Reference"):
     if not fields:
         return '<p class="inline-good">Captured configuration bodies are identical.</p>'
     def value(d, key):
-        return '<code>' + e(json.dumps(d[key], ensure_ascii=False)) + '</code>' if key in d else '<span class="muted">Absent</span>'
+        return '<code>' + e(json.dumps(d[key], ensure_ascii=False)) + '</code>' if key in d else '<span class="muted">Not returned</span>'
     return table(("Setting", left, right), [tr(e(".".join(map(str, f["path"])) or "(root)"),
                 value(f, "local_value"), value(f, "reference_value")) for f in fields])
 
