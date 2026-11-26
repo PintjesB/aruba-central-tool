@@ -181,3 +181,17 @@ class AdvancedTests(unittest.TestCase):
         self.assertTrue(rows["4"]["uncertain_membership"])
         self.assertFalse(rows["2"]["uncertain_membership"])
         self.assertFalse(plan["safe_to_apply"])
+
+
+    def test_documented_port_security_dependencies(self):
+        from advanced_review import explicit_references
+        body = {"profile-name": "Access", "aaa-profile": "dot1x", "fault-monitor-profile": "link",
+                "macsec-policy": "secure", "mka-policy": "keys", "nd-snooping-profile": "ipv6",
+                "dfp-profile": "fingerprint"}
+        refs = {(module, name) for module, name, _ in explicit_references(body, module="sw-port-profiles")}
+        self.assertEqual(refs, {("aaa-profile", "dot1x"), ("fault-monitor", "link"),
+                                ("macsec", "secure"), ("mka", "keys"),
+                                ("nd-snooping", "ipv6"), ("devicefingerprinting-profile", "fingerprint")})
+        self.assertEqual(list(explicit_references({"profile-name": "fingerprint"}, module="devicefingerprinting-interface")),
+                         [("devicefingerprinting-profile", "fingerprint", ("profile-name",))])
+        self.assertFalse(list(explicit_references({"aaa-profile": "dot1x"}, module="unqualified")))
