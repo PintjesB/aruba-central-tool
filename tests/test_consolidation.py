@@ -214,11 +214,11 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("does not prove", ACTION_GUIDE["unassigned_library"][1])
         self.assertIn("Keeping it local", ACTION_GUIDE["create_library"][1])
         html = vlan_explanation({"vlan": 10, "name": "Test"}, {"vlan": 10, "name": "Test", "enable": True})
-        self.assertIn("May equal documented default", html)
+        self.assertIn("Cannot compare: value unavailable", html)
         self.assertIn("Not returned", html)
         self.assertIn("does not mean disabled", html)
         html = vlan_explanation({"vlan": 10, "is-l3-vlan": True}, {"vlan": 10})
-        self.assertIn("routed VLAN interface", html)
+        self.assertIn("Cannot compare: value unavailable", html)
         import tempfile
         import json
         from pathlib import Path
@@ -298,6 +298,23 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("Enabled", html)
         self.assertIn("Same", html)
         self.assertIn("Not returned", html)
+
+    def test_vlan_comparison_marks_settings_omitted_by_all_sources_unavailable(self):
+        from workspace_views import vlan_explanation
+        html = vlan_explanation({"vlan": 10}, {"vlan": 10}, {"vlan": 10})
+        for label in ("IGMP snooping", "MLD snooping", "Voice VLAN",
+                      "DHCPv4 snooping", "DHCPv6 snooping"):
+            row = html.split("<td>" + label + "</td>", 1)[1].split("</tr>", 1)[0]
+            self.assertIn("Not returned", row)
+            self.assertEqual(row.count(">Unavailable<"), 2)
+            self.assertIn("Cannot compare: value unavailable", row)
+            self.assertNotIn(">Disabled<", row)
+            self.assertNotIn("matches reference", row)
+        html = vlan_explanation({"vlan": 10}, {"vlan": 10, "igmp": {"snooping": False}},
+                                {"vlan": 10, "igmp": {"snooping": False}})
+        row = html.split("<td>IGMP snooping</td>", 1)[1].split("</tr>", 1)[0]
+        self.assertEqual(row.count(">Disabled<"), 2)
+        self.assertNotIn(">Unavailable<", row)
 
     def test_protected_vlan_is_included_in_missing_field_diagnostics(self):
         from central_tool import refresh_configuration_review, vlan_evidence_summary

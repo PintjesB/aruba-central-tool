@@ -91,8 +91,20 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
     for key in sorted(set().union(*(b.keys() for b in (saved, local, effective, reference) if isinstance(b, dict)))):
         if not any(path and path[0] == key for path in comparisons):
             comparisons[(key,)] = {"path": [key], "assessment": "matching"}
-    if not comparisons:
-        return ""
+    # Always expose the known VLAN settings, including when every source omits
+    # them. An absent value is not a disabled setting or an equality result.
+    for key in ("name", "enable", "voice-enable", "igmp", "mld", "dhcpv4-snooping", "dhcpv6-snooping"):
+        if not any(path and path[0] == key for path in comparisons):
+            comparisons[(key,)] = {"path": [key], "assessment": "unavailable"}
+    def has_value(body, path):
+        for key in path:
+            if isinstance(body, dict) and key in body:
+                body = body[key]
+            elif isinstance(body, list) and isinstance(key, int) and 0 <= key < len(body):
+                body = body[key]
+            else:
+                return False
+        return body is not None
     def observed_cell(body, path, source_key):
         value = body
         for key in path:
@@ -103,8 +115,8 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
             else:
                 if (source_key == "comparison" and path[0] in ("igmp", "mld")
                         and (evidence or {}).get("feature_status", {}).get(path[0]) == "no_multicast_interfaces"):
-                    return '<span class="muted">Not verified</span><small>No routed multicast interfaces; Layer 2 snooping not reported</small>'
-                return '<span class="muted">Not returned</span>' if body is not None else '<span class="muted">Not captured</span>'
+                    return '<span class="muted">Unavailable</span><small>Layer 2 snooping not reported by Central</small>'
+                return '<span class="muted">Not returned</span>' if source_key == "local" else '<span class="muted">Unavailable</span>'
         source = (evidence or {}).get('sources', {}).get(source_key + '.' + '.'.join(map(str, path)))
         if source is None and source_key == 'comparison':
             source = (evidence or {}).get('sources', {}).get('effective.' + '.'.join(map(str, path)))
@@ -113,13 +125,15 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
         if type(value) is bool:
             display = "Enabled" if value else "Disabled"
         elif value is None:
-            display = "Null"
+            display = "Unavailable"
         elif isinstance(value, str):
             display = value
         else:
             display = json.dumps(value, ensure_ascii=False)
         return e(display) + (f'<small>{e(source)}</small>' if source else '')
     def meaning(d):
+        if not has_value(effective, d["path"]) or not has_value(reference, d["path"]):
+            return "Cannot compare: value unavailable"
         if evidence is not None:
             matches = [v for v in (evidence["differences"] or []) if v["path"] == d["path"]]
             if evidence["conflicts"]:
@@ -144,7 +158,7 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
         ("Setting", "Saved locally", "Effective at source", "Global / reference", "Result"),
         [tr(e(field_label(d["path"])), observed_cell(local, d["path"], "local"), observed_cell(effective, d["path"], "comparison"), observed_cell(reference, d["path"], "reference"),
             e(meaning(d)))
-         for _, d in sorted(comparisons.items())]) + conflict + '<p class="note">Not returned does not mean disabled. Effective settings are not a live switch CLI measurement unless a switch source is identified.</p>'
+         for _, d in sorted(comparisons.items())]) + conflict + '<p class="note">Unavailable means Central did not provide a verified value. Not returned locally does not mean disabled. Effective settings are not a live switch CLI measurement unless a switch source is identified.</p>'
 
 
 def vlan_instance_context(bundle, persona, sources, identity):

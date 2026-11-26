@@ -13,6 +13,17 @@ Reduce configuration duplication and unnecessary scope overrides in New Central 
 - [ ] Establish profile schema, identity, cardinality (additive versus replacement), default semantics, applicability and references for each supported module. Read-only inference must not authorize writes.
 - [ ] Preserve snapshots and compare changes within a verified tenant. Report incomplete scope and assignment coverage explicitly.
 
+## Central-only retrieval boundary
+
+**Current decision:** use only Aruba Central APIs, including its documented configuration, monitoring and troubleshooting endpoints. Do not introduce direct switch SSH, native AOS-CX REST, device credentials or connectivity requirements.
+
+- [x] Verify retrieval of VLAN voice state, DHCPv4 and DHCPv6 snooping on a sampled switch (29/29 VLANs). Retain actual observed values and their sources; broader tenant coverage still requires validation.
+- [x] Recognize valid empty IGMP/MLD routed-interface responses without treating them as Layer 2 snooping state.
+- [ ] **Deferred: complete VLAN IGMP and MLD snooping retrieval through Central.** The tested Central command allowlist does not expose the snooping-specific commands, and supported multicast commands returned no routed-interface records. Configuration reads did not supply the missing fields. Revisit when Central exposes a suitable API, command or documented default-expansion mechanism.
+- [ ] Track other unavailable configuration fields and module types during Central-only coverage work. Qualify each newly available source before using its values.
+
+Show unknown effective/reference values as **Unavailable**, including settings omitted by every source. Keep omitted saved-local fields distinct from verified disabled values. Never infer a default, match, or safe override removal from missing evidence. Direct-device access remains outside the current scope; reconsider only if explicitly approved.
+
 ## Priority 1: consolidation advisor
 
 Implemented: offline recommendations for C01/C02 (Global-match review), C03 (VLAN default review), C04/C08 (conflicting bodies), C05/C06 (exact repeated locals), C07 (exact Library reuse), and C10 (no observed assignments). The advisor shows captured higher-scope and device coverage, supports selection and exports non-executable previews. Captured site, collection and group ID correlations now support proposed target selection and observed recipient previews; unknown or ambiguous IDs are retained. Actual inheritance, complete membership and dependency safety, and all live write operations remain pending. C09 (Library identity-independent matches), C11 (repeated port settings), C13 (direct-device shadowing), and C15 (explicit VLAN and switch port-profile reference evidence) have read-only engineering review implementations. Engineering review also compares matching reusable switch port profiles and per-device visibility, previews exact port mappings, correlates group/site/collection/global shadowing where direct winning source and membership evidence agree, and includes observed references for duplicate Library identities. Semantic identity consolidation, port conversion and exhaustive reference coverage remain pending. C12, C14 and C16-C18 remain planned.
