@@ -4,7 +4,7 @@ from collections import Counter
 from urllib.parse import urlencode
 
 from workspace_ui import (e, page, intro, metrics, snapshot_picker, module_label,
-                          persona_label, pretty, status, badge, raw, table, tr,
+                          persona_label, pretty, status, badge, raw, table, tr, profile_state_label,
                           inspect, diff_table, property_table)
 
 
@@ -42,28 +42,60 @@ def list_items(values, ordered=False):
     return f"<{tag}>" + "".join(f"<li>{e(v)}</li>" for v in values) + f"</{tag}>" if values else '<p class="muted">None observed.</p>'
 
 
+# User-facing labels describe evidence and intent, not internal action codes.
+ACTION_GUIDE = {
+    "remove_override": ("Matches Global", "Local and Global settings are identical. Check the actual inherited source before removing the local copy.", "Check inheritance, then remove if unchanged."),
+    "promote_local": ("Repeated local profiles", "The same profile identity and settings occur at multiple scopes. Consider a common higher scope or a Library assignment.", "Choose where the shared configuration belongs."),
+    "reuse_library": ("Matches Library", "An existing Library profile has the same identity and settings. Reuse it instead of maintaining another copy, if assignment and inheritance allow.", "Review assignment and removal of local copies."),
+    "create_library": ("Optional Library placement", "A local definition could be reusable, but repeated use has not been established. Keeping it local may be appropriate.", "Leave local unless there is a reason to reuse it."),
+    "conflict": ("Different definitions", "The same profile identity has different settings in the captured configuration. The difference may be intentional.", "Compare settings and retain intentional exceptions."),
+    "default_review": ("VLAN settings to verify", "The VLAN comparison includes omitted fields, possible defaults or Layer 3 indicators. Equal network behavior is not established.", "Verify the differences before considering removal."),
+    "unassigned_library": ("No assignment observed", "The captured assignment records contain no matching entry. This does not prove the profile is unused or safe to delete.", "Check references and intended future use; retain by default."),
+}
+OPPORTUNITIES = ("remove_override", "promote_local", "reuse_library")
+ASSESSMENT_LABELS = {
+    "documented_default_candidate": "May equal documented default",
+    "verify_multicast_default": "Verify multicast snooping behavior on this firmware",
+    "verify_l3_state": "Check whether a routed VLAN interface exists",
+    "unresolved_alias": "Check alternate API field",
+    "unresolved_omission": "Meaning of omitted field not established",
+    "explicit_difference": "Explicit setting difference",
+}
+
+
+def vlan_explanation(local, reference):
+    from central_tool import assess_vlan_reference
+    if local is None or reference is None:
+        return ""
+    assessment = assess_vlan_reference(local, reference)
+    if not assessment["differences"]:
+        return ""
+    def cell(d, key):
+        return e(json.dumps(d[key], ensure_ascii=False)) if key in d else '<span class="muted">Not returned</span>'
+    return '<h3>Why these VLAN settings differ</h3>' + table(
+        ("Setting", "Local", "Reference", "Meaning"),
+        [tr(e(".".join(map(str, d["path"]))), cell(d, "local_value"), cell(d, "reference_value"),
+            e(ASSESSMENT_LABELS.get(d["assessment"], pretty(d["assessment"]))))
+         for d in assessment["differences"]]) + '<p class="note">Not returned does not mean disabled or equal to the default.</p>'
+
+
 def advisor_view(workspace, query):
-    from consolidation import LABELS, profile_recommendations
+    from consolidation import profile_recommendations
     loaded, empty = load(workspace, query, "Consolidation advisor", "advisor")
     if empty:
         return empty
     root, name, bundle, picker = loaded
     findings = profile_recommendations(bundle)
-    # Short, task-oriented labels. Keep the full recommendation in the inspector.
-    groups = [
-        ("remove_override", "Remove override"),
-        ("promote_local", "Consolidate"),
-        ("reuse_library", "Reuse Library"),
-        ("create_library", "Create Library"),
-        ("conflict", "Conflicts"),
-        ("default_review", "Default differences"),
-        ("unassigned_library", "Unassigned Library"),
-    ]
-    short = dict(groups)
+    short = {key: value[0] for key, value in ACTION_GUIDE.items()}
     counts = Counter(f["action"] for f in findings)
+    group_counts = [("opportunities", "Consolidation opportunities", sum(counts[k] for k in OPPORTUNITIES)),
+                    ("review", "Settings to review", counts["conflict"] + counts["default_review"]),
+                    ("optional", "Optional Library review", counts["create_library"] + counts["unassigned_library"]),
+                    ("", "All findings", len(findings))]
     tabs = '<div class="tabs" id="action-tabs" aria-label="Recommendation type">' + "".join(
         f'<button type="button" data-action="{e(key)}" aria-pressed="false">{e(label)} <span>{count}</span></button>'
-        for key, label, count in [("", "All", len(findings))] + [(k, v, counts[k]) for k, v in groups]) + "</div>"
+        for key, label, count in group_counts) + "</div>"
+    category_help = '<p id="category-help" class="note" aria-live="polite">Start with identical Global or Library profiles and repeated local definitions. All changes still require verification.</p>'
     rows = []
     for f in findings:
         action = f["action"]
@@ -74,22 +106,27 @@ def advisor_view(workspace, query):
         if len(sources) > 2:
             names += f" +{len(sources)-2}"
         summary = f'<strong>{e(profile)}</strong><small>{e(module_label(f["module"]))} · {e(persona_label(f["persona"]))}</small>'
-        placement = e(f["target"])
+        placement = e(ACTION_GUIDE[action][2])
         if action == "promote_local":
             choices = [("", "Choose destination for review"), ("library", "Library / exact source scopes")]
             choices += [(p["scope"], f'{pretty(p["kind"])} / {p["name"]} · {len(p["additional_devices"])} extra, {len(p["unknown_membership"])} unknown')
                         for p in f["placement_options"]]
             placement = '<select class="destination" aria-label="Proposed destination">' + "".join(
                 f'<option value="{e(key)}">{e(value)}</option>' for key, value in choices) + '</select>'
-        source_table = table(("Scope", "Type", "Finding"), [tr(e(s["name"]), e(pretty(s["kind"])), e(pretty(s["status"]))) for s in sources]) if sources else '<p class="muted">Library definition.</p>'
+        source_table = table(("Scope", "Type", "Finding"), [tr(e(s["name"]), e(pretty(s["kind"])), e(profile_state_label(s["status"]))) for s in sources]) if sources else '<p class="muted">Library definition.</p>'
         device_rows = [tr(e(d["name"]), status(k)) for k in ("matching", "different", "absent", "unknown") for d in observed.get(k, [])]
         scope_rows = [tr(e(s["name"]), e(pretty(s["kind"])), status(s["effective"])) for s in f["scope_references"]]
         placement_rows = [tr(e(p["name"]), e(pretty(p["kind"])), str(len(p["intended_devices"])),
                            str(len(p["additional_devices"])), str(len(p["unknown_membership"])), status(p["effective"]))
                           for p in f["placement_options"]]
+        reference_label = "Library" if action == "reuse_library" else "Global" if action in ("remove_override", "default_review") else "Reference"
+        comparison = (vlan_explanation(f["local"], f["reference"]) if action == "default_review" else "")
+        if not comparison:
+            comparison = '<h3>Configuration comparison</h3>' + diff_table(f["differences"], "Local", reference_label)
         details = (
-            f'<p>{e(LABELS[action])}</p><p class="note">Review only. This recommendation is not approved for execution.</p>'
-            '<h3>Configuration comparison</h3>' + diff_table(f["differences"]) +
+            f'<h3>Why this appears</h3><p>{e(ACTION_GUIDE[action][1])}</p>'
+            f'<h3>What to do</h3><p>{e(ACTION_GUIDE[action][2])}</p>'
+            + comparison +
             '<h3>Local scopes</h3>' + source_table +
             ('<h3>Observed device configuration</h3>' + table(("Device", "Profile state"), device_rows) if device_rows else "") +
             ('<h3>Higher-scope configuration</h3>' + table(("Scope", "Type", "Effective body"), scope_rows) if scope_rows else "") +
@@ -101,8 +138,8 @@ def advisor_view(workspace, query):
         device_summary = f'<strong>{matching}</strong><small>{unknown} unknown</small>' if observed else '<span class="muted">Not assessed</span>'
         # Filter by row metadata; the inspector and plan payload are inert.
         rows.append(tr(
-            f'<input type="checkbox" class="choose" aria-label="Select {e(profile)}" data-plan="{e(json.dumps(f, ensure_ascii=False))}">',
-            summary, badge(short[action], "warn" if action in ("conflict", "default_review") else "info"),
+            f'<input type="checkbox" class="choose" aria-label="Select {e(profile)}" data-plan="{e(json.dumps(f, ensure_ascii=False))}"{" disabled" if action not in OPPORTUNITIES else ""}>',
+            summary, badge(short[action], "warn" if action in ("conflict", "default_review") else "info" if action in OPPORTUNITIES else "neutral") + f'<small>{e(ACTION_GUIDE[action][1])}</small>',
             f'<strong>{len(sources)}</strong><small>{e(names or "Library")}</small>', placement, device_summary,
             inspect(profile, details, "Review"),
             attrs=f' data-action="{e(action)}" data-module="{e(f["module"])}" data-persona="{e(f["persona"])}" data-search="{e(profile+" "+str([s["name"] for s in sources]))}"'))
@@ -110,9 +147,10 @@ def advisor_view(workspace, query):
         '<div class="toolbar advisor-filters">'
         + select("module", [("", "All modules")] + [(m, module_label(m)) for m in sorted({f["module"] for f in findings})], label="Module")
         + select("persona", [("", "All functions")] + [(p, persona_label(p)) for p in sorted({f["persona"] for f in findings})], label="Device function")
+        + select("finding-type", [("", "All types")] + [(k, v[0]) for k, v in ACTION_GUIDE.items()], label="Finding type")
         + '<label class="searchbox">Search<input id="search" type="search" placeholder="Profile or scope"></label>'
         '<button id="clear" type="button" class="quiet">Reset</button></div>')
-    listing = '<div id="advisor-table">' + table(("Select", "Profile", "Action", "Local scopes", "Destination", "Matching devices", ""), rows) + '</div>'
+    listing = '<div id="advisor-table">' + table(("Select", "Profile", "Why flagged", "Local copies", "Suggested next step", "Devices with identical settings", ""), rows) + '</div>'
     bar = ('<div class="selection-bar"><div><strong id="selected" aria-live="polite">0 selected</strong>'
            '<small>Preview only · no Central writes</small></div><div class="selection-actions">'
            '<button id="select-visible" type="button">Select filtered</button><button id="clear-selection" type="button">Clear</button>'
@@ -124,7 +162,7 @@ def advisor_view(workspace, query):
               '</div></dialog>')
     return page("Consolidation advisor", intro("Consolidation", "Choose a task, inspect the evidence, and prepare a change preview.", picker)
                 + '<section><div id="snapshot-label" hidden data-snapshot="' + e(name) + '"></div>'
-                + tabs + filters + '<div class="table-toolbar"><span id="visible-count" class="muted" aria-live="polite"></span>'
+                + tabs + category_help + filters + '<div class="table-toolbar"><span id="visible-count" class="muted" aria-live="polite"></span>'
                 '<div><button id="advisor-prev" type="button">Previous</button> <span id="advisor-page" class="muted"></span> '
                 '<button id="advisor-next" type="button">Next</button></div></div>'
                 + listing + '<p id="advisor-empty" class="empty" hidden>No matching recommendations.</p></section>'
@@ -143,21 +181,24 @@ ADVISOR_JS = r"""
 'use strict';
 const $=id=>document.getElementById(id), rows=Array.from($('advisor-table').querySelectorAll('tbody > tr'));
 const checks=rows.map(r=>r.querySelector('.choose')), actions=Array.from($('action-tabs').querySelectorAll('[data-action]'));
-let action='', page=0, filtered=[];const size=30;
+const categories={opportunities:['remove_override','promote_local','reuse_library'],review:['conflict','default_review'],optional:['create_library','unassigned_library']};
+const explanations={opportunities:'Start here: exact matches and repeated local profiles. Verify inheritance and destination impact before changing anything.',review:'These differences need interpretation. They are not necessarily errors or redundant settings.',optional:'Housekeeping only. Keep local profiles and Library definitions unless reuse or cleanup is justified.','':'All captured findings, including optional housekeeping and differences.'};
+let action='opportunities', page=0, filtered=[];const size=30;
 function filter(reset=true){
  if(reset)page=0;
  const q=$('search').value.toLowerCase().trim();
- filtered=rows.filter(r=>(!action||r.dataset.action===action)&&(!$('module').value||r.dataset.module===$('module').value)&&(!$('persona').value||r.dataset.persona===$('persona').value)&&((r.dataset.search+' '+r.textContent).toLowerCase().includes(q)));
+ filtered=rows.filter(r=>(!action||categories[action].includes(r.dataset.action))&&(!$('finding-type').value||r.dataset.action===$('finding-type').value)&&(!$('module').value||r.dataset.module===$('module').value)&&(!$('persona').value||r.dataset.persona===$('persona').value)&&((r.dataset.search+' '+r.textContent).toLowerCase().includes(q)));
  const pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.min(page,pages-1);
  const visible=new Set(filtered.slice(page*size,(page+1)*size));
  for(const r of rows)r.hidden=!visible.has(r);
  $('visible-count').textContent=filtered.length+' of '+rows.length+' recommendations';
  $('advisor-page').textContent=(page+1)+' / '+pages;$('advisor-prev').disabled=page===0;$('advisor-next').disabled=page+1>=pages;
  $('advisor-empty').hidden=filtered.length>0;
+ $('category-help').textContent=explanations[action];
  for(const b of actions)b.setAttribute('aria-pressed',String(b.dataset.action===action));
 }
 function selection(){
- const chosen=checks.filter(c=>c.checked).map(c=>{
+ const chosen=checks.filter(c=>c.checked&&!c.disabled).map(c=>{
   const f=JSON.parse(c.dataset.plan), field=c.closest('tr').querySelector('.destination');
   if(field){
    const v=field.value;
@@ -178,21 +219,21 @@ function preview(){
  const chosen=selection();$('preview').replaceChildren();
  for(const f of chosen){
   const item=document.createElement('div');item.className='plan-item';
-  item.append(el('h3',f.module+' / '+f.identity),el('p',f.action.replaceAll('_',' ')+' · '+f.target));
+  item.append(el('h3',f.module+' / '+f.identity),el('p',({remove_override:'Check matching Global override',promote_local:'Consolidate repeated local profiles',reuse_library:'Reuse matching Library profile'}[f.action]||f.action)+' · '+f.target));
   const steps=document.createElement('ol');for(const s of f.steps)steps.append(el('li',s));item.append(steps);
   const blockers=document.createElement('details');blockers.append(el('summary','Validation required ('+f.blockers.length+')'));
   const ul=document.createElement('ul');for(const b of f.blockers)ul.append(el('li',b));blockers.append(ul);item.append(blockers);$('preview').append(item);
  }
  if(chosen.some(f=>f.action==='promote_local'&&!f.selected_destination))$('preview').append(el('p','Select a destination for each consolidation recommendation before exporting.'));
 }
-for(const b of actions)b.addEventListener('click',()=>{action=b.dataset.action;filter();});
-for(const k of ['module','persona'])$(k).addEventListener('change',()=>filter());
+for(const b of actions)b.addEventListener('click',()=>{action=b.dataset.action;$('finding-type').value='';filter();});
+for(const k of ['module','persona','finding-type'])$(k).addEventListener('change',()=>filter());
 $('search').addEventListener('input',()=>filter());
-$('clear').addEventListener('click',()=>{action='';$('module').value='';$('persona').value='';$('search').value='';filter();});
+$('clear').addEventListener('click',()=>{action='opportunities';$('finding-type').value='';$('module').value='';$('persona').value='';$('search').value='';filter();});
 $('advisor-prev').addEventListener('click',()=>{page--;filter(false);});$('advisor-next').addEventListener('click',()=>{page++;filter(false);});
 for(const c of checks)c.addEventListener('change',selection);
 for(const field of document.querySelectorAll('.destination'))field.addEventListener('change',selection);
-$('select-visible').addEventListener('click',()=>{for(const r of filtered)r.querySelector('.choose').checked=true;selection();});
+$('select-visible').addEventListener('click',()=>{for(const r of filtered){const check=r.querySelector('.choose');if(!check.disabled)check.checked=true;}selection();});
 $('clear-selection').addEventListener('click',()=>{for(const c of checks)c.checked=false;selection();});
 $('open-preview').addEventListener('click',()=>{preview();$('plan-dialog').showModal();});
 $('close-preview').addEventListener('click',()=>$('plan-dialog').close());
@@ -389,12 +430,12 @@ def coverage_view(workspace, query):
     root, name, bundle, picker = loaded
     records = module_coverage(bundle)
     counts = Counter(r["status"] for r in records)
-    body = intro("Coverage", "Collection diagnostics are separate from engineering recommendations.", picker)
-    body += metrics([("Qualified", counts["qualified"], "All captured scopes qualified"), ("Partial", counts["partial"], "Some qualified scopes"), ("Unqualified", counts["unqualified"], "Evidence incomplete")])
+    body = intro("Coverage", "Shows whether Central returned interpretable configuration. Incomplete reads do not mean configuration is absent.", picker)
+    body += metrics([("Complete module reads", counts["qualified"], "All requested scopes could be interpreted"), ("Partial module reads", counts["partial"], "Some scopes could be interpreted"), ("Unverified module reads", counts["unqualified"], "No scope evidence qualified")])
     rows = [tr(e(persona_label(r["persona"])), e(module_label(r["module"])), f'{r["qualified"]}/{r["total"]}', status(r["status"]),
                f'<a href="{url(root, "report", snapshot=name, persona=r["persona"], module=r["module"], diagnostics="1")}">View evidence</a>')
             for r in sorted(records, key=lambda r: ({"qualified": 0, "partial": 1, "unqualified": 2}[r["status"]], r["persona"], r["module"]))]
-    body += '<section><h2>Module qualification</h2>' + table(("Device function", "Module", "Qualified scopes", "State", ""), rows, search=True) + '</section>'
+    body += '<section><h2>Module qualification</h2>' + table(("Device function", "Module", "Qualified scopes", "Read status", ""), rows, search=True) + '</section>'
     discovery = bundle.get("profile_type_discovery")
     if discovery:
         unknown = set(discovery["unknown_adapter_modules"])
@@ -407,7 +448,6 @@ def coverage_view(workspace, query):
 
 def explorer_view(workspace, query):
     from central_tool import config_review_rows, configuration_view_shape
-    from config_dashboard import LABELS
     loaded, empty = load(workspace, query, "Configuration explorer", "report")
     if empty:
         return empty
@@ -431,7 +471,7 @@ def explorer_view(workspace, query):
         raise ValueError("Unknown view")
     scope_names = [(s["id"], f'{pretty(s["kind"])} / {s.get("name") or s["id"]}') for s in entry["scopes"]]
     controls = f'<form method="get" action="{root}report"><input type="hidden" name="snapshot" value="{e(name)}">' + select("persona", [(p, persona_label(p)) for p in personas], persona, "Function") + '<button type="submit" class="quiet">Load function</button></form><hr>'
-    controls += f'<form method="get" action="{root}report"><input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="persona" value="{e(persona)}">' + select("module", [("", "All modules")] + [(m, module_label(m)) for m in modules], module, "Module") + select("scope", [("", "All scopes")] + scope_names, scope, "Scope") + select("view", [("local", "Local profiles"), ("all", "All qualified profiles"), ("diagnostics", "Unqualified scopes")], mode, "View") + '<button type="submit">Show</button></form>'
+    controls += f'<form method="get" action="{root}report"><input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="persona" value="{e(persona)}">' + select("module", [("", "All modules")] + [(m, module_label(m)) for m in modules], module, "Module") + select("scope", [("", "All scopes")] + scope_names, scope, "Scope") + select("view", [("local", "Local profiles"), ("all", "All qualified profiles"), ("diagnostics", "Incomplete API results")], mode, "Configuration to show") + '<button type="submit">Show</button></form>'
     rows = []
     records = [r for r in config_review_rows(bundle) if r[0] == persona and (not module or r[1] == module) and (not scope or r[3]["scope"] == scope)]
     for _, mod, scope_name, view in records:
@@ -448,7 +488,7 @@ def explorer_view(workspace, query):
             title = title_profile(r["identity"], r["local"] or r["effective"])
             detail = '<h3>Global comparison</h3>' + diff_table(r["global_differences"], "Local", "Global") + '<h3>Effective settings</h3>' + property_table(r["effective"]) + raw(r)
             rows.append(tr(f'<strong>{e(scope_name)}</strong><small>{e(pretty(view["scope_kind"]))}</small>', e(module_label(mod)), e(title),
-                           badge(LABELS.get(r["status"], pretty(r["status"])), "good" if r["status"] in ("inherited", "shared", "local_matches_global") else "warn" if r["status"] in ("source_conflict", "local_differs_from_global", "local_effective_mismatch") else "neutral"), inspect(title, detail)))
+                           badge(profile_state_label(r["status"]), "good" if r["status"] in ("inherited", "shared", "local_matches_global") else "warn" if r["status"] in ("source_conflict", "local_differs_from_global", "local_effective_mismatch") else "neutral"), inspect(title, detail)))
     q = sum(v["review"]["qualified"] for _, _, _, v in records)
     body = intro("Configuration", "Inspect captured profiles at a selected scope or module.", picker) + '<section>' + controls + '</section>'
     body += f'<section><h2>{len(rows)} records</h2><p class="muted">{q}/{len(records)} selected scope views qualified.</p>' + table(("Scope", "Module", "Profile", "Source / state", ""), rows, search=True) + '</section>'
