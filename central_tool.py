@@ -2997,8 +2997,10 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     checkpoint = None
     if checkpoint_path is not None:
         from collection_checkpoint import ScopeCheckpoint, qualification_manifest
-        checkpoint = ScopeCheckpoint(checkpoint_path, qualification_manifest(client.base, plans, records,
-                                     [client.revision, deep_catalog, selected_persona]), resume=resume)
+        revision = [client.revision, deep_catalog, selected_persona]
+        manifest = qualification_manifest(client.base, plans, records, revision)
+        legacy = [qualification_manifest(client.base, plans, records, revision, legacy=True)] if resume else []
+        checkpoint = ScopeCheckpoint(checkpoint_path, manifest, resume=resume, compatible_manifests=legacy)
     elif resume:
         raise ValueError("Resume requires an explicit checkpoint path")
     total_scopes = sum(sum(not spec[2] or s["kind"] == "device" for s in scopes)

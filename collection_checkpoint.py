@@ -13,19 +13,31 @@ def fingerprint(value):
     return hashlib.sha256(canonical(value).encode("utf-8")).hexdigest()
 
 
-def qualification_manifest(region, plans, inventory, revision):
-    from central_tool import health_serial
+def qualification_manifest(region, plans, inventory, revision, *, legacy=False):
+    from central_tool import health_serial, device_identity
     serials = sorted({s for record in inventory if (s := health_serial(record.get("inventory")))})
     globals_ = sorted({str(scope["id"]) for _, _, scopes in plans for scope in scopes if scope["kind"] == "global"})
     if not serials or len(globals_) != 1:
         raise ValueError("Cannot qualify resume: missing inventory serials or unique Global identity")
-    # Include actual scope identity and membership, adapter keys and catalog.
-    # No credentials, access tokens or customer names are written in the manifest.
+    # Bind the relevant identity, membership and model/firmware data, not
+    # changing operational timestamps, counters or connection state.
+    def stable_identity(row):
+        row = row or {}
+        keys = ("id", "scopeId", "scopeID", "siteId", "deviceGroupId", "collectionId",
+                "serial", "serialNumber", "conductorSerialNumber", "deviceFunction",
+                "device-function", "persona", "model", "modelName", "deviceModel",
+                "firmwareVersion", "softwareVersion", "firmware")
+        return {key: row[key] for key in keys if key in row}
     topology = [(persona, sorted((m, spec[0], spec[2]) for m, spec in modules.items()),
-                 sorted((str(s["id"]), s["kind"], fingerprint(s.get("metadata") or {})) for s in scopes))
+                 sorted((str(s["id"]), s["kind"], fingerprint((s.get("metadata") or {}) if legacy else stable_identity(s.get("metadata")))) for s in scopes))
                 for persona, modules, scopes in plans]
-    return fingerprint({"region": region, "global": globals_, "serials": serials,
-                        "topology": topology, "revision": revision, "schema": 1})
+    payload = {"region": region, "global": globals_, "serials": serials,
+               "topology": topology, "revision": revision, "schema": 1 if legacy else 2}
+    if not legacy:
+        # Include unadapted inventory identities as well as adapted scopes.
+        payload["inventory"] = sorted(fingerprint({"identity": stable_identity(record.get("inventory")),
+                                      "capabilities": device_identity(record.get("inventory") or {})}) for record in inventory)
+    return fingerprint(payload)
 
 
 class ScopeCheckpoint:
@@ -34,7 +46,7 @@ class ScopeCheckpoint:
     Successful pairs are immutable within the run. Failed/incomplete pairs are
     reread. Discovery and other collection phases always run live.
     """
-    def __init__(self, path, manifest, *, resume=False, now=None):
+    def __init__(self, path, manifest, *, resume=False, now=None, compatible_manifests=()):
         self.path = Path(path)
         self.lock = threading.Lock()
         self.now = now or (lambda: datetime.now(timezone.utc))
@@ -62,12 +74,13 @@ class ScopeCheckpoint:
                            "created_at": self.created, "complete": False}),))
             else:
                 data = json.loads(db.execute("SELECT payload FROM manifest").fetchone()[0])
-                if data.get("schema") != 1 or data.get("manifest") != manifest or data.get("complete") is not False:
+                if data.get("schema") != 1 or data.get("manifest") not in (manifest, *compatible_manifests) or data.get("complete") is not False:
                     raise ValueError("Checkpoint does not match current discovered inventory or is complete")
                 created = datetime.fromisoformat(data["created_at"])
                 if created.tzinfo is None or not timedelta(0) <= self.now() - created <= timedelta(hours=24):
                     raise ValueError("Checkpoint expired; start a fresh audit")
                 self.created = data["created_at"]
+                self.manifest = data["manifest"]
                 self.pairs = db.execute("SELECT COUNT(*) FROM pairs").fetchone()[0]
             db.execute("CREATE TABLE IF NOT EXISTS observations (key TEXT PRIMARY KEY, phase TEXT NOT NULL, payload TEXT NOT NULL)")
             self.extra_saved = dict(db.execute("SELECT phase, COUNT(*) FROM observations GROUP BY phase"))
@@ -172,6 +185,6 @@ def available_checkpoints(directory, now=None):
                                    "pairs": db.execute("SELECT COUNT(*) FROM pairs").fetchone()[0]})
             finally:
                 db.close()
-        except (sqlite3.Error, OSError, ValueError, KeyError, TypeError):
+        except (sqlite3.Error, OSError, ValueError, KeyError, TypeError, AttributeError):
             continue
     return sorted(result, key=lambda row: row["created_at"], reverse=True)

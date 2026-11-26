@@ -89,3 +89,30 @@ class CheckpointTests(unittest.TestCase):
             mark_complete(path)
             self.assertEqual(available_checkpoints(directory), [])
             self.assertNotIn(path.name, Workspace(directory).home())
+
+
+    def test_manifest_ignores_volatile_observations_but_not_identity_changes(self):
+        device = {"scopeId": "2", "serial": "A", "siteId": "3", "deviceFunction": "ACCESS_SWITCH",
+                  "model": "6200", "firmwareVersion": "10.15", "lastSeen": "yesterday", "status": "up"}
+        plans = [("ACCESS_SWITCH", {"layer2-vlan": ("vlan", {"ACCESS_SWITCH"}, False)},
+                  [{"id": "1", "kind": "global"}, {"id": "2", "kind": "device", "metadata": device}])]
+        inventory = [{"inventory": device}]
+        stable = qualification_manifest("region", plans, inventory, "catalog")
+        legacy = qualification_manifest("region", plans, inventory, "catalog", legacy=True)
+        device.update(lastSeen="today", status="down")
+        self.assertEqual(stable, qualification_manifest("region", plans, inventory, "catalog"))
+        self.assertNotEqual(legacy, qualification_manifest("region", plans, inventory, "catalog", legacy=True))
+        device["firmwareVersion"] = "10.16"
+        self.assertNotEqual(stable, qualification_manifest("region", plans, inventory, "catalog"))
+        device["firmwareVersion"] = "10.15"
+        device["siteId"] = "4"
+        self.assertNotEqual(stable, qualification_manifest("region", plans, inventory, "catalog"))
+
+    def test_legacy_compatibility_requires_exact_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "checkpoint.db"
+            ScopeCheckpoint(path, "legacy")
+            with self.assertRaises(ValueError):
+                ScopeCheckpoint(path, "new", resume=True, compatible_manifests=["different"])
+            resumed = ScopeCheckpoint(path, "new", resume=True, compatible_manifests=["legacy"])
+            self.assertEqual(resumed.manifest, "legacy")
