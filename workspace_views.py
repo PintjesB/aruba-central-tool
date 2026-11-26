@@ -575,12 +575,13 @@ def engineering_view(workspace, query):
                       for identity, u in usage.items()]
         choose_keep = '<label>Profile to retain<select data-keep>' + '<option value="">Choose a profile</option>' + "".join(f'<option value="{e(identity)}"{" selected" if identity == keep else ""}>{e(identity)}</option>' for identity in usage) + '</select></label>'
         preview_data = {identity: {"assignments": usage_cells(u)[0], "shared_devices": len(u["shared_devices"]), "referencing_objects": u["reference_count"], "unknown_reads": len(u["unknown_devices"])} for identity, u in usage.items()}
-        detail = ('<h3>Choose the profile to retain</h3>'
-                  + '<p>Prefer the profile with more observed referencing objects, then shared device deployments, then scope assignments. This can reduce migration work; it is not permission to delete another profile.</p>'
+        unresolved = r["unresolved_reference_count"]
+        detail = ('<div class="review-decision"><div><strong>Choose the canonical Library profile</strong><p>Use observed references and assignments to estimate migration work. No profile is proven safe to delete.</p></div></div>'
                   + table(("Profile", "Assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Suggestion"), comparison)
-                  + f'<div data-duplicate-preview data-usage="{e(json.dumps(preview_data))}">{choose_keep}<div data-migration-summary aria-live="polite">Choose a profile to preview the observed migration workload.</div><p class="note">Review only. No assignments, references or profiles will be changed.</p></div>'
+                  + f'<div data-duplicate-preview data-usage="{e(json.dumps(preview_data))}"><h3>Migration preview</h3>{choose_keep}<div data-migration-summary aria-live="polite">Choose a profile to preview the observed migration workload.</div></div>'
+                  + (f'<p class="note"><strong>{unresolved} unresolved reference observations in this module.</strong> Their target identities are not established; they may affect this migration.</p>' if unresolved else "")
                   + "".join(f'<details><summary>{e(identity)} · Where it is used</summary>{usage_detail(u)}</details>' for identity, u in usage.items())
-                  + '<h3>Before consolidating</h3><ol><li>Choose the canonical name based on usage and naming standards.</li><li>Move assignments and references to that name.</li><li>Verify effective configuration and complete reverse references before deleting the old profile.</li></ol>'
+                  + '<details><summary>Validation before consolidation</summary><ol><li>Choose the canonical name based on usage and naming standards.</li><li>Move assignments and references to that name.</li><li>Verify effective configuration and complete reverse references before deleting the old profile.</li></ol></details>'
                   + raw(r))
         # One decision per duplicate group. Keep all per-profile usage counts
         # aligned, rather than repeating the same review button for every member.
@@ -622,14 +623,19 @@ function update(panel){
  heading.textContent=keep?'Retain '+keep+'. Review migration from these other names:':'Choose a profile to preview the observed migration workload.';
  target.append(heading);
  if(!keep)return;
- const list=document.createElement('ul');
+ const wrap=document.createElement('div');wrap.className='table-scroll';
+ const table=document.createElement('table');
+ const head=table.createTHead().insertRow();
+ for(const label of ['Migrate from','Assignments','Shared devices','References','Unknown reads']){
+  const cell=document.createElement('th');cell.scope='col';cell.textContent=label;head.append(cell);
+ }
+ const body=table.createTBody();
  for(const [name,u] of Object.entries(usage)){
   if(name===keep)continue;
-  const item=document.createElement('li');
-  item.textContent=name+': '+u.assignments+' observed assignments, '+u.shared_devices+' matching shared devices, '+u.referencing_objects+' referencing objects, '+u.unknown_reads+' incomplete device reads.';
-  list.append(item);
+  const row=body.insertRow();
+  for(const value of [name,u.assignments,u.shared_devices,u.referencing_objects,u.unknown_reads])row.insertCell().textContent=String(value);
  }
- target.append(list);
+ wrap.append(table);target.append(wrap);
 }
 document.addEventListener('change',event=>{
  if(event.target.matches('[data-keep]'))update(event.target.closest('[data-duplicate-preview]'));
@@ -670,6 +676,8 @@ def library_view(workspace, query):
         link = url(root, "library", snapshot=name, module=key)
         rows.append(tr(f'<a href="{link}">{e(module_label(key))}</a>', str(len(view["profiles"])), status(view["status"])))
     body = intro("Library", "Shared profiles and their observed assignments.", picker)
+    if not module:
+        body += f'<p><a class="button" href="{url(root, "advanced", snapshot=name, workflow="duplicates")}">Review duplicate Library profiles</a></p>'
     if not module:
         body += '<section><h2>Profile collections</h2>' + table(("Module", "Profiles", "State"), rows, search=True) + '</section>'
     else:
