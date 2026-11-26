@@ -581,6 +581,24 @@ class Tests(unittest.TestCase):
         self.assertEqual(scope["review"]["profiles"][0]["status"], "shared")
         self.assertEqual(module["summary"]["qualified_scopes"], 1)
 
+    def test_dashboard_distinguishes_infrastructure_and_exact_repeat_groups(self):
+        from config_dashboard import finding_category, repeated_local_profiles
+        def record(module, sid, body, status="local_differs_from_global", persona="ACCESS_SWITCH"):
+            row = {"identity": "10", "status": status, "local": body}
+            return persona, module, sid, {"scope": sid, "scope_kind": "device",
+                   "review": {"qualified": True, "profiles": [row]}}
+        a = record("layer2-vlan", "a", {"vlan": 10, "name": "Example"})
+        b = record("layer2-vlan", "b", {"name": "Example", "vlan": 10})
+        c = record("layer2-vlan", "c", {"vlan": 10, "name": "Different"})
+        d = record("ethernet-interfaces", "d", {"vlan": 10, "name": "Example"})
+        e = record("ethernet-interfaces", "e", {"vlan": 10, "name": "Example"})
+        other = record("layer2-vlan", "f", {"vlan": 10, "name": "Example"}, persona="CORE_SWITCH")
+        groups = repeated_local_profiles([a, a, b, c, d, e, other])
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(set(next(iter(groups.values()))), {"a", "b"})
+        self.assertEqual(finding_category(d[1], d[3], d[3]["review"]["profiles"][0]), "infrastructure")
+        self.assertEqual(finding_category(a[1], a[3], a[3]["review"]["profiles"][0]), "candidate")
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
