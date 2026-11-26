@@ -60,7 +60,7 @@ def module_coverage(bundle):
     return result
 
 
-def credential_refresh(client_id, client_secret, region):
+def credential_refresh(client_id, client_secret, region, *, deep_catalog=False):
     """One-shot credentials captured in a worker closure, not a workspace or file."""
     from central_tool import Central, EU_REGIONS, detect_region, configuration_audit, audit_progress
     if region and region not in EU_REGIONS:
@@ -72,7 +72,7 @@ def credential_refresh(client_id, client_secret, region):
         try:
             audit_progress(progress, "Connection", 0, 0, "Authenticating and detecting region")
             detect_region(client, region or None)
-            return configuration_audit(client, progress=progress)
+            return configuration_audit(client, progress=progress, deep_catalog=deep_catalog)
         finally:
             client.client_id = None
             client.client_secret = None
@@ -247,7 +247,9 @@ class Workspace:
                    + options([("", "Detect EU region")] + [(r, urlsplit(r).hostname.split(".")[0].upper()) for r in EU_REGIONS])
                    + '</select></label><label>Client ID<input name="client_id" type="text" required maxlength="1024" autocomplete="off"></label>'
                    '<label>Client secret<input name="client_secret" type="password" required maxlength="4096" autocomplete="new-password"></label>'
+                   '<label>Collection depth<select name="depth"><option value="deep">Deep catalog (all discovered scopes)</option><option value="standard">Standard (observed functions and Global)</option></select></label>'
                    f'<button type="submit"{disabled}>Connect and refresh</button></form>'
+                   '<p><small>Deep collection can take substantially longer on large tenants. API coverage gaps and rejected reads remain visible.</small></p>'
                    '<p><small>Credentials are used only for this audit, in process memory. '
                    'They are not saved or returned by the application. Decline browser password-saving prompts.</small></p>')
         if self.refresh is not None:
@@ -540,7 +542,7 @@ def handler_for(workspace):
                     raise ValueError("Invalid form")
                 self.connection.settimeout(10)
                 values = parse_qs(self.rfile.read(length).decode("utf-8"),
-                                  keep_blank_values=True, strict_parsing=True, max_num_fields=4)
+                                  keep_blank_values=True, strict_parsing=True, max_num_fields=5)
                 if any(len(v) != 1 for v in values.values()):
                     raise ValueError("Invalid form")
                 token = values.pop("csrf", [""])[0]
@@ -548,9 +550,11 @@ def handler_for(workspace):
                     self.reply("Forbidden: stale or invalid form token. Reopen the application.", 403)
                     return
                 if self.path == root + "credentials":
-                    if set(values) != {"client_id", "client_secret", "region"}:
+                    depth = values.pop("depth", ["standard"])[0]
+                    if set(values) != {"client_id", "client_secret", "region"} or depth not in ("standard", "deep"):
                         raise ValueError("Invalid credential form")
-                    refresh = credential_refresh(values["client_id"][0], values["client_secret"][0], values["region"][0])
+                    refresh = credential_refresh(values["client_id"][0], values["client_secret"][0], values["region"][0],
+                                                 deep_catalog=depth == "deep")
                     values.clear()
                     started = workspace.start_refresh(refresh)
                 else:
