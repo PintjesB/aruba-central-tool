@@ -4,6 +4,8 @@ from advanced_review import advanced_analysis
 from assignment_review import assignment_review
 from consolidation import profile_recommendations
 from policy_variants import policy_variants
+from policy_rule_review import policy_rule_groups
+from policy_sequence_review import policy_sequence_reviews
 
 
 def assessment(bundle):
@@ -13,6 +15,8 @@ def assessment(bundle):
     engineering = advanced_analysis(bundle)
     assignments = assignment_review(bundle)
     variants = policy_variants(bundle)
+    rules = policy_rule_groups(bundle)
+    sequences = policy_sequence_reviews(bundle)
     coverage = Counter()
     for entry in bundle["results"].values():
         for module in entry["modules"].values():
@@ -39,5 +43,15 @@ def assessment(bundle):
                 "unknown_scopes": sum(not row["scope_resolved"] for row in assignments["rows"]),
                 "invalid": len(assignments["invalid_rows"])},
             "variants": {"groups": len(variants), "explicit": sum(v["status"] == "explicit_differences" for v in variants)},
+            "policy_rules": {"groups": len(rules), "groups_with_findings": sum(bool(row["findings"]) for row in rules),
+                "observations": sum(len(row["findings"]) for row in rules),
+                "groups_with_unsupported_rules": sum(bool(row["unsupported_rules"]) or row["status"] == "rule_schema_unqualified" for row in rules),
+                "unqualified_order": sum(not row["order_verified"] for row in rules),
+                "truncated": sum(row["truncated"] for row in rules)},
+            "policy_sequences": {"captures": len(sequences),
+                "unqualified_order": sum(row["status"] != "order_observed" for row in sequences),
+                "unqualified_targets": sum(ref["status"] != "rules_observed" for row in sequences for ref in row["references"]),
+                "cross_policy_candidates": sum(len(row["findings"]) for row in sequences),
+                "truncated": sum(row["truncated"] for row in sequences)},
             "checkpoint": bundle.get("collection_checkpoint", {}), "captured_at": bundle.get("captured_at"),
             "complete": False, "safe_to_apply": False}
