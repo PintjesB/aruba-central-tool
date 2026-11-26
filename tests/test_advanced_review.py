@@ -62,3 +62,40 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual({f["higher_scope"] for f in findings}, {"Site", "Global"})
         scopes[-1]["metadata"].pop("deviceGroupId")
         self.assertEqual(advanced_analysis(data)["shadowed"], [])
+
+    def test_library_usage_separates_names_assignments_and_consumers(self):
+        from advanced_review import library_usage, preferred_duplicate
+        shared = {"aruba-annotation:object_type": "SHARED", "aruba-annotation:inherited": True}
+        local = {"aruba-annotation:object_type": "LOCAL"}
+        profiles = {"a": {"profile-name": "a", "enable": True},
+                    "b": {"profile-name": "b", "enable": True}}
+        scopes = [{"id": "1", "kind": "device", "name": "A"},
+                  {"id": "2", "kind": "device", "name": "B"},
+                  {"id": "3", "kind": "device", "name": "Unknown"}]
+        assignments = [{"scope-id": "10", "device-function": "ACCESS_SWITCH",
+                        "profile-type": "sw-port-profiles", "profile-instance": "a"}]
+        data = {"results": {"ACCESS_SWITCH": {"scopes": scopes, "modules": {
+            "sw-port-profiles": {"scope_results": [
+                {"scope": "1", "effective_view": view({"a": {**profiles["a"], "@": shared},
+                                                       "b": {**profiles["b"], "@": local}})},
+                {"scope": "2", "effective_view": view({"a": {**profiles["a"], "@": shared}})},
+                {"scope": "3", "effective_view": {"status": "empty_object", "profiles": {}}}]}}}},
+            "library": {"modules": {"sw-port-profiles": view(profiles)},
+                        "assignments": {"status": "response_received", "rows": assignments * 2}}}
+        ref = {"persona": "ACCESS_SWITCH", "scope": "1", "device": "A",
+               "source_module": "ethernet-interfaces", "source": "1/1/1",
+               "target_module": "sw-port-profiles", "target": "a"}
+        refs = [{**ref, "path": ["sw-profile"]}, {**ref, "path": ["other"]},
+                {**ref, "source": "1/1/2", "path": ["sw-profile"]},
+                {**ref, "target": "b", "path": ["sw-profile"]}]
+        usage = library_usage(data, "sw-port-profiles", profiles, refs)
+        self.assertEqual(usage["a"]["assignment_count"], 1)
+        self.assertEqual(usage["a"]["reference_count"], 2)
+        self.assertEqual(len(usage["a"]["shared_devices"]), 2)
+        self.assertEqual(len(usage["b"]["matching_other_devices"]), 1)
+        self.assertEqual(len(usage["b"]["shared_devices"]), 0)
+        self.assertEqual(len(usage["a"]["unknown_devices"]), 1)
+        self.assertFalse(usage["a"]["coverage_complete"])
+        self.assertEqual(preferred_duplicate(usage), "a")
+        data["library"]["assignments"]["status"] = "request_rejected"
+        self.assertIsNone(preferred_duplicate(library_usage(data, "sw-port-profiles", profiles, refs)))
