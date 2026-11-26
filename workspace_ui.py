@@ -191,7 +191,7 @@ def navigation(root, snapshot=None):
         ("System", (("coverage", "Coverage"),))):
         links.append(f'<div class="nav-group"><span>{e(group)}</span>')
         for route, label in items:
-            links.append(f'<a data-nav="{e(label)}" href="{e(root + route + suffix)}">'
+            links.append(f'<a data-nav="{e(label)}" aria-label="{e(label)}" title="{e(label)}" href="{e(root + route + suffix)}">'
                          f'{icon(route or "overview")}<span class="nav-label">{e(label)}</span></a>')
         links.append('</div>')
     return "".join(links)
@@ -206,15 +206,16 @@ def page(title, content, nav="", extra_css=""):
             f'<title>{e(active)} · Central Workspace</title><style>{extra_css}\n{CSS}</style></head>'
             '<body class="app-shell"><a class="skip-link" href="#main-content">Skip to content</a>'
             '<aside class="sidebar" id="workspace-sidebar"><div class="brand"><span class="brand-mark">' + icon("brand") + '</span>'
-            '<div><strong>Central<span class="brand-accent">.</span></strong><small>Configuration intelligence</small></div></div>'
+            '<div><strong>Central<span class="brand-accent">.</span></strong><small>Configuration intelligence</small></div>'
+            '<button class="nav-close icon-button" id="workspace-nav-close" type="button" aria-label="Close navigation">' + icon("close") + '</button></div>'
             f'<nav aria-label="Main navigation">{nav}</nav>'
             '<div class="nav-footer">' + icon("shield") + '<div><strong>Read-only workspace</strong><small>Private local data</small></div></div></aside>'
             '<div class="app-body"><header class="topbar"><div class="topbar-left">'
             '<button id="workspace-menu" class="icon-button" type="button" aria-label="Toggle navigation" aria-controls="workspace-sidebar" aria-expanded="false">' + icon("menu") + '</button>'
             '<span class="breadcrumb">Workspace</span>' + icon("chevron") + f'<strong>{e(active)}</strong></div>'
             '<div class="topbar-actions"><div id="snapshot-slot"></div>'
-            '<button id="workspace-command" class="command-trigger" type="button" aria-haspopup="dialog">' + icon("search") + '<span>Quick navigation</span><kbd>Ctrl K</kbd></button>'
-            '<button id="workspace-theme" class="icon-button" type="button" aria-label="Switch color theme" aria-pressed="false">' + icon("moon") + '</button></div></header>'
+            '<button id="workspace-command" class="command-trigger" type="button" aria-label="Quick navigation" aria-haspopup="dialog">' + icon("search") + '<span>Quick navigation</span><kbd>Ctrl K</kbd></button>'
+            '<button id="workspace-theme" class="icon-button" type="button" aria-label="Switch color theme" aria-pressed="false">' + '<span class="theme-moon">' + icon("moon") + '</span><span class="theme-sun">' + icon("sun") + '</span></button></div></header>'
             f'<main id="main-content">{content}</main></div>'
             '<dialog class="inspector" id="workspace-inspector" aria-labelledby="workspace-inspector-title"><div class="inspector-head">'
             '<div><small>Configuration review</small><h2 id="workspace-inspector-title"></h2></div>'
@@ -267,6 +268,9 @@ body.app-shell { margin: 0; background: var(--bg); color: var(--text);
 .brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px;
   background: #2b5346; color: #a6f3d4; flex: none; }
 .brand-mark .ui-icon { width: 25px; height: 25px; }
+.nav-close { display: none !important; }
+.theme-sun { display: none; } #workspace-theme[data-mode=dark] .theme-sun { display: inline-flex; }
+#workspace-theme[data-mode=dark] .theme-moon { display: none; }
 .nav-group { margin: 0 0 24px; }
 .nav-group > span { display: block; font-size: 10px; font-weight: 650; letter-spacing: .1em;
   text-transform: uppercase; padding: 0 12px 7px; color: var(--nav-muted); }
@@ -297,7 +301,7 @@ body.app-shell { margin: 0; background: var(--bg); color: var(--text);
 .snapshot-picker select { max-width: 210px; min-width: 0; font-weight: 600; font-size: 12px; }
 .command-trigger { gap: 8px; color: var(--muted); background: var(--bg); }
 .command-trigger .ui-icon { width: 15px; height: 15px; }
-kbd { font: 10px/1.4 inherit; font-family: system-ui,sans-serif; border: 1px solid var(--line);
+kbd { font: 10px/1.4 system-ui,sans-serif; border: 1px solid var(--line);
   border-radius: 4px; padding: 2px 4px; color: var(--muted); background: var(--surface); }
 .icon-button { width: 36px; height: 36px; padding: 8px; background: transparent; }
 .icon-button .ui-icon { width: 18px; height: 18px; }
@@ -471,6 +475,9 @@ html:has(.inspector[open]),html:has(.command-palette[open]),html.inspector-open 
   body.app-shell,.compact-nav body.app-shell { display: block; }
   .app-shell .sidebar { position: fixed; top: 0; left: 0; width: 236px; height: 100dvh; transform: translateX(-100%); visibility: hidden; z-index: 20; box-shadow: 0 0 40px #0004; }
   .mobile-nav .sidebar { transform: none; visibility: visible; }
+  .mobile-nav .brand { padding-left: 0; padding-right: 0; gap: 7px; }
+  .mobile-nav .nav-close { display: inline-flex !important; width: 28px; min-height: 28px; height: 28px; margin-left: auto; color: #d8e9e0; border-color: var(--nav-line); }
+  .mobile-nav .nav-close:hover { background: var(--nav-active); }
   .mobile-nav .sidebar .brand > div,.mobile-nav .sidebar .nav-label,.mobile-nav .sidebar .nav-group > span,.mobile-nav .sidebar .nav-footer > div { display: block; }
   .mobile-nav .sidebar nav a { justify-content: flex-start; padding: 10px 11px; }
   .mobile-nav .sidebar .nav-footer { justify-content: flex-start; }
@@ -536,6 +543,7 @@ menu.addEventListener('click',()=>{
  shell.classList.toggle(mobile.matches?'mobile-nav':'compact-nav');
  syncMenu();
 });
+document.getElementById('workspace-nav-close').addEventListener('click',()=>{shell.classList.remove('mobile-nav');syncMenu();menu.focus();});
 mobile.addEventListener('change',()=>{shell.classList.remove('mobile-nav');syncMenu();});
 syncMenu();
 const picker=document.querySelector('.page-intro .snapshot-picker');
