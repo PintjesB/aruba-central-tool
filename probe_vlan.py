@@ -3,7 +3,7 @@ import getpass
 import json
 import os
 
-from central_tool import APIError, Central, EU_REGIONS, VLAN_FEATURE_COMMANDS, detect_region, supported_show_commands, extract_command_output, parse_vlan_running_config, parse_show_vlan, parse_vlan_feature
+from central_tool import APIError, Central, EU_REGIONS, VLAN_FEATURE_COMMANDS, detect_region, supported_show_commands, extract_command_output, parse_vlan_running_config, parse_show_vlan, parse_vlan_feature, VLAN_FEATURE_ALTERNATIVES, parse_multicast_interface_output, probe_operational_vlans
 
 
 def main():
@@ -21,7 +21,7 @@ def main():
     except (RuntimeError, OSError, ValueError):
         print("Command list unavailable", flush=True)
     ids = set()
-    commands = ["show vlan", *VLAN_FEATURE_COMMANDS.values()]
+    commands = ["show vlan", *VLAN_FEATURE_COMMANDS.values(), *VLAN_FEATURE_ALTERNATIVES.values()]
     for command in commands:
         if allowed and command not in allowed:
             print(command + ": not listed", flush=True)
@@ -34,6 +34,10 @@ def main():
                     parsed = parse_show_vlan(response["result"])
                     ids = set(parsed.get("vlans", {}))
                     result = {"status": parsed["status"], "vlans": len(ids)}
+                elif command in VLAN_FEATURE_ALTERNATIVES.values():
+                    field = next(k for k, v in VLAN_FEATURE_ALTERNATIVES.items() if v == command)
+                    values = parse_multicast_interface_output(extract_command_output(response["result"], command), field, ids)
+                    result = {"status": ("observed" if set(values) == ids else "partial") if values else "schema_unresolved", "vlans": len(values)}
                 else:
                     field = next(k for k, v in VLAN_FEATURE_COMMANDS.items() if v == command)
                     parsed = parse_vlan_feature(response["result"], field, ids)
@@ -43,6 +47,18 @@ def main():
             print(command + ": HTTP error " + str(exc.status), flush=True)
         except (RuntimeError, OSError, ValueError):
             print(command + ": read failed", flush=True)
+    try:
+        monitoring = probe_operational_vlans(client, {"serial": serial})
+        payload = monitoring.get("payload", {})
+        voice = {}
+        for item in payload.get("vlans", []) if isinstance(payload, dict) else []:
+            if isinstance(item, dict):
+                value = item.get("voice")
+                label = str(value).lower() if type(value) is bool or (isinstance(value, str) and value.lower() in ("enabled", "disabled")) else "unknown"
+                voice[label] = voice.get(label, 0) + 1
+        print("Monitoring voice states:", json.dumps({"status": monitoring["status"], "counts": voice}), flush=True)
+    except (RuntimeError, OSError, ValueError):
+        print("Monitoring voice states: read failed", flush=True)
     config_command = next((cmd for cmd in ("show running-config all", "show running-config") if cmd in allowed), None)
     if config_command:
         try:
