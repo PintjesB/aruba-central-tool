@@ -826,6 +826,846 @@
         "limit",
         "offset"
       ]
+    },
+    {
+      "group": "Configuration Health",
+      "name": "Returns summary of configuration health for devices.",
+      "id": "beedc40c-3d02-4712-9ac2-bd77958c484a",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/config-health/devices",
+      "query": [
+        "limit",
+        "offset",
+        "sort",
+        "filter",
+        "search"
+      ]
+    },
+    {
+      "group": "Configuration Health",
+      "name": "Returns active configuration issues for a device.",
+      "id": "e47ac994-aef5-46d5-999b-0e99432423e6",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/config-health/active-issue",
+      "query": [
+        "serial"
+      ]
+    },
+    {
+      "group": "Extensions",
+      "name": "Read vsphere-instances",
+      "id": "b94cd9a7-55d6-4308-9b7d-af18af290813",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/vsphere-instances",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Firmware Policy",
+      "name": "Read firmware policy configuration.",
+      "id": "a5119ca6-e360-4cc3-9965-6b63115e6837",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/firmware-compliance",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "High Availability",
+      "name": "Read vsx profiles",
+      "id": "875943e9-2193-4ff4-9351-0e43d13aa057",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/vsx-profiles",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "High Availability",
+      "name": "Read vsx by name",
+      "id": "fce04fee-ef2b-4307-9b78-a0e2bd1d6d35",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/vsx-profiles/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "High Availability",
+      "name": "Read existing stack configurations",
+      "id": "cbd4772f-97fa-458b-a7bc-fd30ebb2345e",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/stacks/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing configuration at the system level",
+      "id": "345c632f-b01d-4390-9e91-bd2905d1404d",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/lacp",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read configured mirror-endpoints associated with profile.",
+      "id": "45e65f93-e58c-4c3b-9c0e-0716ab58056e",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/mirror-endpoint/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read configured mirror-endpoints.",
+      "id": "c1472093-f33d-436d-bfdf-6da1582749b9",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/mirror-endpoint",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing CDP configuration.",
+      "id": "accb4cf1-d379-4196-8f48-7a543725fc03",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/cdp",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing CDP configuration for given name.",
+      "id": "dbbfe129-3c1d-4aaf-b01f-f3959a68580c",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/cdp/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing sFlow Configuration.",
+      "id": "35e702ba-b8d2-4257-8156-6d241efdc13d",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/sflow/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read configured sFlow Configuration",
+      "id": "ae0cf587-76fb-48a7-86bd-0ba702a8d5b3",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/sflow",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read Device-Profile configuration.",
+      "id": "8f1343d5-2c3d-450b-b6be-ff53fe8169d0",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/device-profile",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing Device-Profile configuration.",
+      "id": "e1c9ac59-4920-4e14-a2c1-873a0e8dc339",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/device-profile/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read associated Static MACs & their configuration.",
+      "id": "81357e49-dbce-450b-8f81-2896a1713033",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/static-macs/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read Static MAC profiles.",
+      "id": "d80c93bd-db1a-4c84-b1e6-df544e848f65",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/static-macs",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing UFD Configuration for given name.",
+      "id": "e006cd2c-0497-4354-bc15-c704741ed785",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/ufd/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing UFD Configuration.",
+      "id": "ed9c794f-7102-450c-aa0e-f9eb4a6541f0",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/ufd",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read VLAN interface configurations",
+      "id": "4376f84b-1954-411b-8d6d-cd491dc660a2",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/vlan-interfaces/:id",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read VLAN interface(s) configurations",
+      "id": "88141354-de92-4f8e-b145-236300ba90b5",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/vlan-interfaces",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read sub-interface(s) configurations",
+      "id": "6cea84b1-5a06-4a4e-a095-d0d922612f7e",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/sub-interfaces",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read sub-interface configurations",
+      "id": "71adf7dd-743a-428e-834f-7dd220c5d8f7",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/sub-interfaces/:parent-name-id",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing Interface Profile Configuration.",
+      "id": "e89cfa83-ffdc-4c0c-9e87-06ccbbbbf293",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/interface-profiles",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing Interface Profile Configuration for given name.",
+      "id": "fa656896-a958-4d70-90d3-79f41a90f4a7",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/interface-profiles/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read list of Ethernet Interface configurations",
+      "id": "35f7243a-4dd6-4f96-bc1a-2df1ad075405",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/ethernet-interfaces",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing Ethernet Interface instance configuration",
+      "id": "9be5c3ac-fb4f-4ca9-a719-8e5c7c86c916",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/ethernet-interfaces/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read DHCP Client configurations",
+      "id": "7ef218a2-c9b8-4156-a6d0-4e1effd2bfbb",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/dhcp-client",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read profile for DHCP Client configurations",
+      "id": "93b912c3-f44e-4a79-8a80-172c32bee890",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/dhcp-client/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing fault monitor profile configurations",
+      "id": "10d238bd-026a-444c-99e5-f3ac61fa5383",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/fault-monitor/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read configured fault monitor profiles",
+      "id": "7829be5c-8f14-4c8d-8f84-6bc0349e91fe",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/fault-monitor",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing uplink parameters",
+      "id": "e6f4d311-17ea-4387-99a0-a433adb933a4",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/ap-uplinks",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read the existing uplink profile",
+      "id": "ec30a249-fbbb-4c71-bd53-2914b85f2026",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/ap-uplinks/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read profile for Management interface configurations",
+      "id": "285789e3-4f25-4296-a036-c14dedcba9f6",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/mgmt-interfaces/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read Management interface configurations",
+      "id": "ad971ecd-788f-4c55-b08c-4ab50fd588a1",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/mgmt-interfaces",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read configured mirror sessions.",
+      "id": "2fba53d4-5121-4e5b-abc1-2a3d791408f4",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/mirrors",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read configured mirror session associated with profile.",
+      "id": "8042ada8-611c-4ee5-a5b3-fc3515483962",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/mirrors/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read configured gateway port profiles",
+      "id": "2411a1dd-67f1-46c8-8893-82f877dae27a",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/gw-port-profiles",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing gateway port profile configurations",
+      "id": "9dad7b8b-3ccf-4ce0-b848-000b423212c8",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/gw-port-profiles/:profile-name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing LLDP configuration for given name.",
+      "id": "525c7193-c639-4eca-9407-cb7bc7c6adef",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/lldp/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing LLDP configuration.",
+      "id": "aff0acd5-0900-4636-9f37-057c6defe0d9",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/lldp",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read port channel(s) interface configurations",
+      "id": "103b3e78-d93f-42a1-8f38-f5187387a48c",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/portchannels",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read port channel interface configurations",
+      "id": "5213a441-f94b-41dd-854e-414ae58072e5",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/portchannels/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing switch port profile configurations",
+      "id": "194a5601-4a94-4291-b79e-3365ae3eddef",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/sw-port-profiles/:profile-name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read configured switch port profiles",
+      "id": "92aeb216-53f8-44d4-be15-d4b1c2a6ca3b",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/sw-port-profiles",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read existing port profile configuration",
+      "id": "3e56064b-e007-41bf-b962-3d240a705192",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/ap-port-profiles/:profile-name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read configured port profiles",
+      "id": "b12a4601-71c7-473d-8e2e-ab21795bb0d7",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/ap-port-profiles",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read loopback interface(s) configurations",
+      "id": "f13a5394-6d34-4bf0-adc7-6f6204b3bde2",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/loopback-interfaces",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces",
+      "name": "Read loopback interface configurations",
+      "id": "f8d25303-387e-4a41-810d-daa7a07a5efb",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/loopback-interfaces/:id",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
     }
   ],
   "folder_outcomes": {
@@ -852,6 +1692,30 @@
     "Config Management": {
       "status": "read",
       "get_count": 4
+    },
+    "Configuration Health": {
+      "status": "read",
+      "get_count": 2
+    },
+    "Extensions": {
+      "status": "read",
+      "get_count": 1
+    },
+    "Firmware Policy": {
+      "status": "read",
+      "get_count": 1
+    },
+    "Gateway Clustering Orchestration": {
+      "status": "read",
+      "get_count": 0
+    },
+    "High Availability": {
+      "status": "read",
+      "get_count": 3
+    },
+    "Interfaces": {
+      "status": "read",
+      "get_count": 43
     }
   }
 }
