@@ -353,7 +353,8 @@ if(panel.dataset.state==='running')poll();
             coverage = " / ".join(f"{len(observed.get(k, []))} {k}" for k in
                                   ("matching", "different", "absent", "unknown")) if observed else "Not assessed"
             details = {"source_profiles": f["sources"], "local": f["local"], "reference": f["reference"],
-                       "differences": f["differences"], "observed_devices": observed}
+                       "differences": f["differences"], "observed_devices": observed,
+                       "scope_references": f["scope_references"]}
             rows.append(
                 f'<tr data-action="{e(f["action"])}" data-module="{e(f["module"])}" data-persona="{e(f["persona"])}">'
                 f'<td><input type="checkbox" class="choose" aria-label="Select recommendation" data-plan="{e(json.dumps(f, ensure_ascii=False))}"></td>'
