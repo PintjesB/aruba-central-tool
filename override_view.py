@@ -116,11 +116,12 @@ def overrides_view(workspace, query):
         if state == "identical" and not f["candidate"]:
             next_step = "Verify direct source and module support; do not remove yet"
         comparison = diff_table(p["global_differences"], "Device local", "Global")
-        if f["module"] == "layer2-vlan" and state == "different":
-            comparison = vlan_explanation(p["local"], p["global_reference"]) or comparison
+        if f["module"] == "layer2-vlan" and p["global_reference"] is not None and state in ("different", "source_uncertain"):
+            comparison = vlan_explanation(p["local"], p["global_reference"], p["effective"]) or comparison
         detail = ('<h3>Comparison result</h3><p>' + e(RESULTS[state]) + '. ' + e(next_step) + '.</p>'
                   + '<h3>Device local vs Global</h3>' + comparison
                   + '<h3>Saved device settings</h3>' + property_table(p["local"])
+                  + '<h3>Effective device settings in Central</h3>' + property_table(p["effective"])
                   + '<h3>Global settings</h3>' + property_table(p["global_reference"])
                   + '<h3>Applicable higher scopes (captured effective settings)</h3>'
                   + table(("Scope", "Comparison with local"), [tr(e(v["name"]), e(v["state"])) for v in f["chain"]])
