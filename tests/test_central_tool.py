@@ -68,15 +68,33 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(inventory(client)), 2)
         self.assertEqual(client.calls[1][1]["next"], "2")
 
-    def test_vlan_pagination_uses_ten_and_explicit_offset(self):
-        first = [{"vlan": n} for n in range(1, 11)]
-        second = [{"vlan": 11}]
-        client = Fake([{"l2-vlan": first, "metadata": {}},
-                       {"l2-vlan": second, "metadata": {}},
-                       {"l2-vlan": [], "metadata": {}}])
-        self.assertEqual(vlan_rows(client, **{"view-type": "LIBRARY"}), first + second)
+    def test_vlan_pagination_stops_at_nested_total(self):
+        pages = [[{"vlan": n} for n in range(start, end)]
+                 for start, end in ((1, 11), (11, 21), (21, 30))]
+        client = Fake([{"l2-vlan": page, "metadata": {"total": 29,
+                       "count": len(page), "offset": offset, "default_profiles_count": 1}}
+                       for page, offset in zip(pages, (10, 20, 29))])
+        self.assertEqual(vlan_rows(client, **{"view-type": "LIBRARY"}), sum(pages, []))
         self.assertEqual([p["limit"] for _, p in client.calls], [10, 10, 10])
-        self.assertEqual([p["offset"] for _, p in client.calls], [0, 10, 11])
+        self.assertEqual([p["offset"] for _, p in client.calls], [0, 10, 20])
+
+    def test_vlan_library_empty(self):
+        client = Fake([{"l2-vlan": [], "metadata": {"total": 0, "count": 0, "offset": 0}}])
+        self.assertEqual(vlan_rows(client, **{"view-type": "LIBRARY"}), [])
+
+    def test_vlan_library_inconsistent_metadata_fails(self):
+        client = Fake([{"l2-vlan": [{"vlan": 1}], "metadata":
+                       {"total": 29, "count": 1, "offset": 10}}])
+        with self.assertRaisesRegex(RuntimeError, "Inconsistent"):
+            vlan_rows(client, **{"view-type": "LIBRARY"})
+
+    def test_vlan_scoped_reads_unpaginated(self):
+        data = [{"vlan": n} for n in range(1, 23)]
+        client = Fake([{"l2-vlan": data, "metadata":
+                       {"count_objects_in_module": {"LOCAL": 1, "SHARED": 21, "ANY": 22}}}])
+        self.assertEqual(vlan_rows(client, **{"view-type": "LOCAL", "effective": "true"}), data)
+        self.assertNotIn("limit", client.calls[0][1])
+        self.assertNotIn("offset", client.calls[0][1])
 
     def test_vlan_error_has_safe_parameters(self):
         class Reject:
@@ -85,7 +103,7 @@ class Tests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as error:
             vlan_rows(Reject(), **{"view-type": "LOCAL", "scope-id": "123456789"})
         message = str(error.exception)
-        self.assertIn("limit=10, offset=0", message)
+        self.assertIn("HTTP 400", message)
         self.assertIn("LOCAL", message)
         self.assertNotIn("123456789", message)
 
