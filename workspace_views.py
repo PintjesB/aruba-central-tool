@@ -446,7 +446,7 @@ def usage_detail(usage):
             + '<h3>Assigned at</h3>' + table(("Scope", "Device function"), [
                 tr(e(a.get("scope-name", a.get("scope-id", "Unknown"))), e(persona_label(a.get("device-function", "")))) for a in usage["assignments"]])
             + '<h3>Devices with matching shared configuration</h3>' + list_items([d["name"] for d in usage["shared_devices"]])
-            + '<h3>Configuration references</h3>' + table(("Device", "Module", "Object"), [
+            + '<h3>Configuration references</h3>' + table(("Source scope", "Module", "Object"), [
                 tr(e(r["device"]), e(module_label(r["source_module"])), e(r["source"])) for r in usage["references"]])
             + '<p class="note">These are separate observations, not traffic usage. Zero observed references does not prove a profile is unused. Reference coverage is incomplete.</p>')
 
@@ -594,13 +594,13 @@ def engineering_view(workspace, query):
                        inspect(", ".join(r["identities"]), detail, "Plan consolidation")))
     panel("duplicates", "Duplicate Library profiles", "Compare observed usage for each name before choosing which profile to retain. Suggested names are based on observed migration effort, not safe deletion.",
           ("Module", "Profiles and observed usage", ""), rows, len(rows))
-    for key, label, records in (("references", "Reference review", [r for r in data["references"] if r["status"] != "observed"]),
-                                ("resolved", "Observed references", [r for r in data["references"] if r["status"] == "observed"])):
+    for key, label, records in (("references", "Reference review", [r for r in data["references"] if r["status"] not in ("observed", "definition_observed")]),
+                                ("resolved", "Observed references", [r for r in data["references"] if r["status"] in ("observed", "definition_observed")])):
         rows = [tr(e(r["device"]), f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
                    f'{e(module_label(r["target_module"]))}<small>{e(r["target"] if r["target"] is not None else "Unknown")}</small>',
-                   status(r["status"]), e("Keep reference; verify before profile removal" if r["status"] == "observed" else "Verify target profile and scope" if r["status"] == "not_observed" else "Collect or interpret missing reference evidence"), inspect("Reference evidence", property_table(r))) for r in records]
+                   status(r["status"]), e("Keep reference; verify before profile removal" if r["status"] in ("observed", "definition_observed") else "Verify target profile and scope" if r["status"] == "not_observed" else "Collect or interpret missing reference evidence"), inspect("Reference evidence", property_table(r))) for r in records]
         panel(key, label, "Observed references are not a complete dependency graph. Not observed does not prove a broken dependency.",
-              ("Device", "Source", "Target", "State", "Suggested next step", ""), rows, len(rows))
+              ("Source scope", "Source", "Target", "State", "Suggested next step", ""), rows, len(rows))
     selected = query.get("workflow", "")
     if selected not in {p[0] for p in panels}:
         selected = next((key for key in ("duplicates", "ports", "shadow", "references") if any(p[0] == key and p[2] for p in panels)), "ports")
