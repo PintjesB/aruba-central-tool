@@ -368,7 +368,7 @@ def advanced_analysis(bundle):
     for module, view in sorted(library.get("modules", {}).items()):
         # Identity is semantic for numeric VLAN IDs and SSIDs. Report equivalent
         # named bodies only; never assume interchangeability.
-        if module in ("layer2-vlan", "vlan-interfaces", "wlan-ssids") or module not in CONFIG_MODULES or view.get("status") != "list_parsed":
+        if module in ("layer2-vlan", "vlan-interfaces", "wlan-ssids", "ospfv2", "ospfv3", "bgp", "stp", "stp-gw") or module not in CONFIG_MODULES or view.get("status") != "list_parsed":
             continue
         key = CONFIG_MODULES[module][0]
         groups = defaultdict(list)
