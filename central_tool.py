@@ -396,6 +396,56 @@ def safe_difference_path(path):
     return ".".join(part if part in PUBLIC_VLAN_FIELDS else "[other-field]" for part in path) or "[root]"
 
 
+# Documented New Central VLAN profile defaults. These are review hints,
+# not proof of identical deployment on a particular model or firmware.
+# https://developer.arubanetworks.com/new-central-config/reference/replacelayer2vlanl2vlanbyid
+# https://arubanetworking.hpe.com/techdocs/new-central/content/cfg/profiles/vlan-prof.htm
+VLAN_DEFAULT_HINTS = {
+    ("enable",): True,
+    ("voice-enable",): False,
+    ("dhcpv4-snooping",): {"enable": False},
+    ("dhcpv6-snooping",): {"enable": False},
+    ("dhcpv4-snooping", "enable"): False,
+    ("dhcpv6-snooping", "enable"): False,
+}
+
+
+def classify_vlan_difference(diff, left, right):
+    """Classify evidence without silently substituting values in either profile."""
+    path = tuple(diff["path"])
+    kind = diff["kind"]
+    if path == ("is-l3-vlan",):
+        # GET-only field. Null is not assumed false; verify the SVI separately.
+        return "verify_l3_state"
+    if kind in ("missing_local", "missing_reference"):
+        value = diff.get("reference_value") if kind == "missing_local" else diff.get("local_value")
+        if path in VLAN_DEFAULT_HINTS and canonical(value) == canonical(VLAN_DEFAULT_HINTS[path]):
+            if path == ("voice-enable",) and ("voice-enable-alias" in left or "voice-enable-alias" in right):
+                return "unresolved_alias"
+            return "documented_default_candidate"
+        if path and path[0] in ("igmp", "mld"):
+            return "verify_multicast_default"
+        return "unresolved_omission"
+    return "explicit_difference"
+
+
+def assess_vlan_reference(left, right):
+    if right is None:
+        return {"classification": "no_reference_profile", "differences": []}
+    differences = field_differences(left, right)
+    classified = [{**d, "assessment": classify_vlan_difference(d, left, right)} for d in differences]
+    kinds = {d["assessment"] for d in classified}
+    if not kinds:
+        status = "exact_match"
+    elif "explicit_difference" in kinds:
+        status = "explicit_difference"
+    elif kinds == {"documented_default_candidate"}:
+        status = "documented_defaults_only"
+    else:
+        status = "requires_validation"
+    return {"classification": status, "differences": classified}
+
+
 def review_local_profiles(scopes, baseline, library):
     """Review each local definition, including singletons, without proposing writes."""
     device_maps = {s["id"]: vlan_map(s["effective"]) for s in scopes if s["kind"] == "device"}
@@ -432,6 +482,28 @@ def review_local_profiles(scopes, baseline, library):
                 recommendation = "review_reuse_library_profile"
             else:
                 recommendation = "review_create_library_profile"
+            global_assessment = assess_vlan_reference(body, baseline.get(vid))
+            library_assessment = assess_vlan_reference(body, library.get(vid))
+            # Prefer existing Global coverage; do not promote a VLAN to Global merely
+            # because it exists in the Library. All outputs remain review-only.
+            if recommendation == "retain_default":
+                proposed_review = "retain_default"
+            elif not same_effective:
+                proposed_review = "inspect_local_effective_difference"
+            elif scope["kind"] != "global" and global_assessment["classification"] in ("exact_match", "documented_defaults_only"):
+                proposed_review = "review_restore_global_inheritance"
+            elif scope["kind"] != "global" and vid in baseline and global_assessment["classification"] == "requires_validation":
+                proposed_review = "validate_global_inheritance_candidate"
+            elif vid in baseline and global_assessment["classification"] == "explicit_difference":
+                proposed_review = "review_intentional_global_exception"
+            elif library_assessment["classification"] in ("exact_match", "documented_defaults_only"):
+                proposed_review = "review_library_reuse_at_existing_scope"
+            elif library_assessment["classification"] == "requires_validation":
+                proposed_review = "validate_library_reuse_at_existing_scope"
+            elif library_assessment["classification"] == "explicit_difference":
+                proposed_review = "review_library_conflict"
+            else:
+                proposed_review = "review_library_creation_at_existing_scope"
             results.append({
                 "scope": scope["id"], "scope_kind": scope["kind"], "scope_name": scope["name"],
                 "vlan": vid, "profile": body, "library_state": library_state,
@@ -444,6 +516,9 @@ def review_local_profiles(scopes, baseline, library):
                 "library_differences": field_differences(body, library[vid]) if vid in library else None,
                 "global_differences": field_differences(body, baseline[vid]) if vid in baseline else None,
                 "effective_differences": field_differences(body, effective[vid]) if vid in effective else None,
+                "global_assessment": global_assessment,
+                "library_assessment": library_assessment,
+                "proposed_review": proposed_review,
                 "recommendation": recommendation, "status": "review_only"
             })
     return results
@@ -481,6 +556,41 @@ def print_review_summary(data):
             print("  Difference fields (counts, no values):")
             for (path, kind, local_type, ref_type), count in sorted(field_counts.items()):
                 print(f"    {path}: {kind} ({local_type} vs {ref_type}) x{count}")
+    print("Default-aware consolidation review (not an executable plan):")
+    for action, count in sorted(Counter(row.get("proposed_review", "unavailable") for row in candidates).items()):
+        print(f"  {action}: {count}")
+    for reference in ("library", "global"):
+        counts = Counter()
+        evidence = Counter()
+        for row in candidates:
+            assessment = row.get(reference + "_assessment")
+            if not assessment:
+                continue
+            counts[assessment["classification"]] += 1
+            for diff in assessment["differences"]:
+                path = safe_difference_path(diff["path"])
+                # Only print booleans for explicitly allowlisted, non-identifying settings.
+                safe_paths = {("enable",), ("voice-enable",), ("is-l3-vlan",),
+                              ("igmp", "snooping"), ("mld", "snooping"),
+                              ("dhcpv4-snooping", "enable"), ("dhcpv6-snooping", "enable")}
+                def safe_flag(side):
+                    if side + "_value" not in diff:
+                        return "omitted"
+                    value = diff[side + "_value"]
+                    field = tuple(diff["path"])
+                    if field in safe_paths and (type(value) is bool or value is None):
+                        return str(value).lower()
+                    if field in (("igmp",), ("mld",), ("dhcpv4-snooping",), ("dhcpv6-snooping",)) and isinstance(value, dict):
+                        key = "snooping" if field[0] in ("igmp", "mld") else "enable"
+                        if set(value) == {key} and type(value[key]) is bool:
+                            return key + "=" + str(value[key]).lower()
+                    return "[redacted]"
+                evidence[(path, diff["assessment"], safe_flag("local"), safe_flag("reference"))] += 1
+        print(f"Default-aware local vs {reference}:")
+        for status, count in sorted(counts.items()):
+            print(f"  {status}: {count}")
+        for (path, status, local_flag, reference_flag), count in sorted(evidence.items()):
+            print(f"    {path}: {status} ({local_flag} vs {reference_flag}) x{count}")
     print("Device deviations from Global:")
     for index, scope in enumerate((s for s in data["scope_comparisons"] if s["kind"] == "device"), 1):
         print(f"  Device {index}: local={len(scope['local_vlan_ids'])}, "
