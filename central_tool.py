@@ -1300,6 +1300,16 @@ CONFIG_MODULES = {
     "server-groups": ("name", NETWORK_PERSONAS, False),
     "object-groups": ("name", NETWORK_PERSONAS, False),
     "macsec": ("name", PERSONAS, False),
+    "mka": ("name", PERSONAS, False),
+    "aaa-profile": ("name", PERSONAS, False),
+    "fault-monitor": ("name", PERSONAS, False),
+    "nd-snooping": ("name", PERSONAS, False),
+    "devicefingerprinting-profile": ("name", PERSONAS, False),
+    "devicefingerprinting-interface": ("name", PERSONAS, False),
+    "ospfv2": ("name", PERSONAS | GATEWAY_PERSONAS, False),
+    "ospfv3": ("name", PERSONAS | GATEWAY_PERSONAS, False),
+    "bgp": ("name", PERSONAS | GATEWAY_PERSONAS, False),
+    "stp": ("name", PERSONAS, False),
     # Named resources documented by HPE; capture read-only across applicable
     # functions. Actual applicability and response qualification remain separate.
     "aliases": ("name", NETWORK_PERSONAS, False),

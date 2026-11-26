@@ -22,7 +22,17 @@ AUTH_REFERENCES = {"default-role": "roles", "auto-default-role": "roles",
                    "auth-server-group": "server-groups", "acct-server-group": "server-groups",
                    "primary-auth-server": "auth-servers", "backup-auth-server": "auth-servers",
                    "primary-acct-server": "auth-servers", "backup-acct-server": "auth-servers"}
+# Explicit reference fields documented in Ethernet and switch port profile schemas.
+# https://developer.arubanetworks.com/new-central-config/reference/replaceethernetinterfacesinterfacebyid
+# https://developer.arubanetworks.com/new-central-config/reference/replaceswportprofilesprofilebyid
+PORT_SECURITY_REFERENCES = {"macsec-policy": "macsec", "mka-policy": "mka",
+                            "fault-monitor-profile": "fault-monitor"}
+SWITCH_PORT_REFERENCES = {**PORT_SECURITY_REFERENCES, "aaa-profile": "aaa-profile",
+                          "dfp-profile": "devicefingerprinting-profile", "nd-snooping-profile": "nd-snooping"}
 MODULE_REFERENCES = {"wlan-ssids": AUTH_REFERENCES, "ap-port-profiles": AUTH_REFERENCES,
+                     "ethernet-interfaces": PORT_SECURITY_REFERENCES,
+                     "sw-port-profiles": SWITCH_PORT_REFERENCES,
+                     "devicefingerprinting-interface": {"profile-name": "devicefingerprinting-profile"},
                      "roles": {"macsec-policy": "macsec", "object-group-ipv4": "object-groups",
                                "object-group-ipv6": "object-groups"}}
 ADDITIVE = {"layer2-vlan", "roles", "wlan-ssids", "auth-servers"}
@@ -358,7 +368,7 @@ def advanced_analysis(bundle):
     for module, view in sorted(library.get("modules", {}).items()):
         # Identity is semantic for numeric VLAN IDs and SSIDs. Report equivalent
         # named bodies only; never assume interchangeability.
-        if module in ("layer2-vlan", "vlan-interfaces", "wlan-ssids") or module not in CONFIG_MODULES or view.get("status") != "list_parsed":
+        if module in ("layer2-vlan", "vlan-interfaces", "wlan-ssids", "ospfv2", "ospfv3", "bgp", "stp", "stp-gw") or module not in CONFIG_MODULES or view.get("status") != "list_parsed":
             continue
         key = CONFIG_MODULES[module][0]
         groups = defaultdict(list)

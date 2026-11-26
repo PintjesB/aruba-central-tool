@@ -107,3 +107,14 @@ class InheritanceTests(unittest.TestCase):
         result = nearest_fallback(entry, "dns", "5", "DeviceDNS", local, local, ann)
         self.assertEqual(result["status"], "unresolved")
         self.assertIn("Atomic device profile cardinality not confirmed", result["blockers"])
+
+
+    def test_routing_and_stp_atomic_matches_remain_review_only(self):
+        for module in ("ospfv2", "ospfv3", "bgp", "stp", "stp-gw"):
+            entry, local, ann = self.atomic_fixture(module, ancestor_name="DeviceDNS")
+            result = nearest_fallback(entry, module, "5", "DeviceDNS", local, local, ann)
+            self.assertEqual(result["mode"], "atomic")
+            self.assertEqual(result["status"], "candidate_unverified")
+            self.assertEqual(result["differences"], [])
+            self.assertFalse(result["safe_to_apply"])
+            self.assertTrue(any("Topology-sensitive" in blocker for blocker in result["blockers"]))
