@@ -2036,6 +2036,41 @@ def parse_vlan_feature(result, field, vlan_ids):
     return {"status": "observed", "vlans": candidates[0]}
 
 
+def parse_vlan_running_config(text, vlan_ids):
+    """Extract explicit VLAN-context feature commands only; absent is unknown."""
+    if not isinstance(text, str) or not re.search(r"(?m)^vlan [0-9]", text):
+        return {}
+    patterns = {
+        "voice": ("voice-enable", True), "no voice": ("voice-enable", False),
+        "ip igmp snooping enable": ("igmp", {"snooping": True}),
+        "ip igmp snooping disable": ("igmp", {"snooping": False}),
+        "no ip igmp snooping enable": ("igmp", {"snooping": False}),
+        "ipv6 mld snooping enable": ("mld", {"snooping": True}),
+        "ipv6 mld snooping disable": ("mld", {"snooping": False}),
+        "no ipv6 mld snooping enable": ("mld", {"snooping": False}),
+    }
+    records, conflicts, current = {}, set(), set()
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        if not line[0].isspace():
+            match = re.fullmatch(r"vlan ([0-9, -]+)", line.strip())
+            current = ((parse_reference_ids(match[1], True) or set()) & vlan_ids) if match else set()
+            continue
+        parsed = patterns.get(line.strip())
+        if parsed is None:
+            continue
+        field, value = parsed
+        for vid in current:
+            record = records.setdefault(vid, {})
+            if field in record and canonical(record[field]) != canonical(value):
+                conflicts.add((vid, field))
+            record[field] = value
+    for vid, field in conflicts:
+        records[vid].pop(field, None)
+    return {vid: record for vid, record in records.items() if record}
+
+
 def capture_switch_vlan_cli(client, results, details, workers=AUDIT_WORKERS, progress=None):
     """One bounded show vlan task per affected switch, after direct API reads."""
     tasks = []
@@ -2090,9 +2125,31 @@ def capture_switch_vlan_cli(client, results, details, workers=AUDIT_WORKERS, pro
             allowed = supported_show_commands(client.list_show_commands(serial))
         except (RuntimeError, OSError, ValueError, AttributeError):
             allowed = set()
-        return [(persona, sid, field, {"status": "command_not_listed"}) if allowed and command not in allowed
-                else collect_feature((persona, sid, serial, field, command, ids))
-                for field, command in VLAN_FEATURE_COMMANDS.items()]
+        results = [(persona, sid, field, {"status": "command_not_listed"}) if allowed and command not in allowed
+                   else collect_feature((persona, sid, serial, field, command, ids))
+                   for field, command in VLAN_FEATURE_COMMANDS.items()]
+        # Prefer the explicit-default config when Central actually lists it.
+        # Never store or log the full running configuration.
+        missing = {field for _, _, field, result in results
+                   if field in ("voice-enable", "igmp", "mld")
+                   and set(result.get("vlans", {})) != ids}
+        config_command = next((cmd for cmd in ("show running-config all", "show running-config") if cmd in allowed), None)
+        if missing and config_command:
+            try:
+                response = client.show_vlan_command(serial, config_command)
+                parsed = parse_vlan_running_config(extract_command_output(response.get("result"), config_command), ids)
+                for index, (_, _, field, result) in enumerate(results):
+                    if field not in missing:
+                        continue
+                    values = {vid: fields[field] for vid, fields in parsed.items() if field in fields}
+                    if values:
+                        existing = result.get("vlans", {})
+                        merged = {**values, **existing}
+                        results[index] = (persona, sid, field, {"status": "observed" if set(merged) == ids else "partial",
+                            "vlans": merged, "sources": {vid: config_command for vid in values if vid not in existing}})
+            except (RuntimeError, OSError, ValueError, AttributeError):
+                pass
+        return results
     audit_progress(progress, "Switch VLAN features", 0, len(feature_tasks), "Reading snooping and voice VLAN settings")
     # Run at most one command at a time on each device.
     for feature_results in ordered_parallel(feature_tasks, collect_features, min(workers, 4),
@@ -2103,6 +2160,8 @@ def capture_switch_vlan_cli(client, results, details, workers=AUDIT_WORKERS, pro
                                                      **({"http_error": result["http_error"]} if "http_error" in result else {})}
             for vid, value in result.get("vlans", {}).items():
                 base["vlans"][vid][field] = value
+                if vid in result.get("sources", {}):
+                    base["vlans"][vid].setdefault("feature_sources", {})[field] = result["sources"][vid]
     return output
 
 
@@ -2141,7 +2200,7 @@ def vlan_comparison_evidence(bundle, persona, sid, row):
         if key in live:
             if key in deployed and canonical(deployed[key]["value"]) != canonical(live[key]):
                 conflicts.append("device." + key)
-            deployed[key] = {"value": live[key], "source": "Switch " + VLAN_FEATURE_COMMANDS.get(key, "show vlan")}
+            deployed[key] = {"value": live[key], "source": "Switch " + live.get("feature_sources", {}).get(key, VLAN_FEATURE_COMMANDS.get(key, "show vlan"))}
     # Actual device observations complement the comparison, but are not saved
     # local fields and must not be used as executable configuration.
     comparison = copy.deepcopy(effective)
