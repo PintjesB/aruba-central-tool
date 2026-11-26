@@ -7209,5 +7209,39 @@
       "status": "read",
       "get_count": 14
     }
-  }
+  },
+  "release_note_collections": [
+    {
+      "path": "/network-config/v1alpha1/first-hop-security",
+      "source": "https://arubanetworking.hpe.com/techdocs/CNX-CNXOP-NewHelp/HPE%20Aruba%20Networking%20Central/GUID-95043870-991E-46A5-83B0-C864DB982BD4.html"
+    },
+    {
+      "path": "/network-config/v1alpha1/dos",
+      "source": "https://arubanetworking.hpe.com/techdocs/CNX-CNXOP-NewHelp/HPE%20Aruba%20Networking%20Central/GUID-95043870-991E-46A5-83B0-C864DB982BD4.html"
+    },
+    {
+      "path": "/network-config/v1alpha1/hardware-module",
+      "source": "https://arubanetworking.hpe.com/techdocs/CNX-CNXOP-NewHelp/HPE%20Aruba%20Networking%20Central/GUID-95043870-991E-46A5-83B0-C864DB982BD4.html"
+    },
+    {
+      "path": "/network-config/v1alpha1/gateway-clusters",
+      "source": "https://arubanetworking.hpe.com/techdocs/new-central-review/content/api/api-rn/nov-dec-apis.htm"
+    },
+    {
+      "path": "/network-config/v1alpha1/gw-cluster-intent-config",
+      "source": "https://arubanetworking.hpe.com/techdocs/new-central-review/content/api/api-rn/nov-dec-apis.htm"
+    },
+    {
+      "path": "/network-config/v1alpha1/stacks",
+      "source": "https://arubanetworking.hpe.com/techdocs/CNX-CNXOP-NewHelp/HPE%20Aruba%20Networking%20Central/GUID-EB205F4B-E21D-47A3-AC23-2142ABB48345.html"
+    },
+    {
+      "path": "/network-config/v1alpha1/dynamic-arp-inspection",
+      "source": "https://arubanetworking.hpe.com/techdocs/CNX-CNXOP-NewHelp/HPE%20Aruba%20Networking%20Central/GUID-EB205F4B-E21D-47A3-AC23-2142ABB48345.html"
+    },
+    {
+      "path": "/network-config/v1alpha1/ddns-http",
+      "source": "https://arubanetworking.hpe.com/techdocs/new-central/content/api/api-rn/april-apis.htm"
+    }
+  ]
 }
