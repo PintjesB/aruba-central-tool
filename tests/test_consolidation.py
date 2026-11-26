@@ -66,6 +66,8 @@ class ConsolidationTests(unittest.TestCase):
         findings = profile_recommendations(fixture())
         by_id = {f["identity"]: f for f in findings}
         self.assertEqual(by_id["10"]["action"], "remove_override")
+        self.assertFalse(by_id["10"]["preview_selectable"])
+        self.assertEqual(by_id["10"]["fallbacks"][0]["status"], "unresolved")
         self.assertTrue(any("intermediate scope" in b for b in by_id["10"]["blockers"]))
         self.assertEqual(by_id["20"]["action"], "promote_local")
         self.assertEqual(len(by_id["20"]["sources"]), 2)
@@ -77,6 +79,30 @@ class ConsolidationTests(unittest.TestCase):
         self.assertTrue(all(f["module"] == "layer2-vlan" for f in findings))
         self.assertTrue(all(not f["safe_to_apply"] for f in findings))
         self.assertEqual(len({f["id"] for f in findings}), len(findings))
+
+    def test_advisor_uses_nearest_group_instead_of_global(self):
+        bundle = fixture()
+        entry = bundle["results"]["ACCESS_SWITCH"]
+        entry["scopes"][2]["metadata"] = {"deviceGroupId": "6"}
+        entry["scopes"].append({"id": "6", "kind": "group", "name": "Group"})
+        direct = {"aruba-annotation:inherited": False, "aruba-annotation:object_type": "LOCAL"}
+        mod = entry["modules"]["layer2-vlan"]
+        device = next(s for s in mod["scope_results"] if s["scope"] == "3")
+        device["effective_view"]["profiles"]["10"]["@"] = direct
+        baseline = mod["scope_results"][0]["effective_view"]["profiles"]
+        device["review"] = review_module_scope(device["local_view"], device["effective_view"], baseline)
+        group = {"status": "list_parsed", "count_confirmed": True,
+                 "profiles": {"10": {"vlan": 10, "name": "Shared", "@": direct}}}
+        mod["scope_results"].append({"scope": "6", "scope_kind": "group",
+             "local_view": {"status": "list_parsed", "profiles": {}}, "effective_view": group,
+             "review": {"qualified": True, "profiles": []}})
+        finding = next(f for f in profile_recommendations(bundle) if f["identity"] == "10")
+        self.assertTrue(finding["preview_selectable"])
+        self.assertEqual(finding["fallbacks"][0]["source"]["scope"], "6")
+        group["profiles"]["10"]["name"] = "Different"
+        finding = next(f for f in profile_recommendations(bundle) if f["identity"] == "10")
+        self.assertFalse(finding["preview_selectable"])
+        self.assertEqual(finding["target"], "Retain: nearer scope differs")
 
     def test_scope_impact_uses_exact_membership_and_keeps_unknown_devices(self):
         from consolidation import scope_memberships, placement_evidence
