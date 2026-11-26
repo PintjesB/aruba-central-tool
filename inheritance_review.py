@@ -46,6 +46,7 @@ def nearest_fallback(entry, module, device, identity, local, effective, annotati
                     or set(view.get("profiles", {})) != {identity}):
                 result["blockers"].append("Atomic device profile cardinality not confirmed")
                 return result
+    inherited_observations = []
     for kind in PRECEDENCE:
         sid = membership[kind]
         if sid is None:
@@ -85,13 +86,20 @@ def nearest_fallback(entry, module, device, identity, local, effective, annotati
             # this scope. Keep walking; unknown annotations block certainty.
             inherited = isinstance(ann, dict) and ann.get("aruba-annotation:inherited") is True
             result["chain"].append({**step, "status": "inherited" if inherited else "source_unverified"})
-            if not inherited:
+            if inherited:
+                inherited_observations.append((step, source_identity, profile_body(raw)))
+            else:
                 result["blockers"].append(f"{kind} profile source not established")
             continue
         body = profile_body(raw)
         result["source"] = {**step, "body": body, "identity": source_identity, "object_type": ann["aruba-annotation:object_type"]}
         result["chain"].append({**step, "status": "direct_definition"})
         result["differences"] = field_differences(local, body)
+        # Intermediate effective observations must agree with the proposed source.
+        # An inheritance annotation alone does not establish that relationship.
+        for observed_scope, observed_identity, observed_body in inherited_observations:
+            if observed_identity != source_identity or canonical(observed_body) != canonical(body):
+                result["blockers"].append(f"{observed_scope['kind']} inherited observation disagrees with candidate source")
         if atomic:
             result["setting_differences"] = field_differences(
                 {k: v for k, v in local.items() if k != "name"},
