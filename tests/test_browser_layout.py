@@ -63,5 +63,78 @@ class BrowserLayoutTests(unittest.TestCase):
                 browser.close()
 
 
+    def test_workspace_navigation_filters_and_preview(self):
+        import copy
+        import json
+        import tempfile
+        from pathlib import Path
+        from playwright.sync_api import sync_playwright
+        from config_app import Workspace
+        from test_consolidation import fixture
+
+        data = fixture()
+        second = copy.deepcopy(data["results"]["ACCESS_SWITCH"])
+        second["modules"] = {"system-info": second["modules"]["system-info"]}
+        for scope in second["scopes"]:
+            scope["id"] = str(int(scope["id"]) + 100)
+            scope["name"] = "AP " + scope["name"]
+        for scope in second["modules"]["system-info"]["scope_results"]:
+            scope["scope"] = str(int(scope["scope"]) + 100)
+        data["results"]["CAMPUS_AP"] = second
+        with tempfile.TemporaryDirectory() as directory, sync_playwright() as pw:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(data))
+            w = Workspace(directory)
+            q = {"snapshot": name}
+            executable = shutil.which("google-chrome") or shutil.which("chromium")
+            browser = pw.chromium.launch(executable_path=executable, args=["--no-sandbox"])
+            try:
+                screens = {
+                    "overview": w.home(q), "overrides": w.overrides(q), "advisor": w.advisor(q),
+                    "engineering": w.advanced(q), "configuration": w.report(q), "inventory": w.scopes(q),
+                    "library": w.library(q), "collection": w.library({**q, "module": "layer2-vlan"}),
+                    "compare": w.comparison(q), "coverage": w.coverage(q),
+                }
+                for screen, html in screens.items():
+                    with self.subTest(screen=screen):
+                        view = browser.new_page(viewport={"width": 1280, "height": 800})
+                        view.set_default_timeout(5000)
+                        errors = []
+                        view.on("pageerror", lambda error: errors.append(str(error)))
+                        view.set_content(html)
+                        self.assertEqual(view.locator(".snapshot-picker").count(), 1)
+                        self.assertEqual(view.locator("main h1").count(), 1)
+                        self.assertEqual(view.locator("[aria-current=page]").count(), 1)
+                        self.assertLessEqual(view.evaluate("document.documentElement.scrollWidth"), 1282)
+                        if screen in ("overrides", "compare", "configuration"):
+                            form = view.locator("form[data-scope-filters]")
+                            self.assertEqual(form.count(), 1)
+                            self.assertEqual(form.locator("button[type=submit]").count(), 1)
+                            form.locator("[name=persona]").select_option("CAMPUS_AP")
+                            self.assertEqual(form.locator("[name=module] option").evaluate_all("(items) => items.map(o => o.value)"), ["", "system-info"])
+                            if screen == "overrides":
+                                self.assertIn("103", form.locator("[name=device] option").evaluate_all("(items) => items.map(o => o.value)"))
+                                self.assertNotIn("3", form.locator("[name=device] option").evaluate_all("(items) => items.map(o => o.value)"))
+                        if screen == "advisor":
+                            self.assertEqual(view.locator("#action-tabs").count(), 0)
+                            view.locator("#finding-type").select_option("remove_override")
+                            visible = view.locator("#advisor-table tbody > tr:visible")
+                            self.assertGreater(visible.count(), 0)
+                            self.assertTrue(all(x == "remove_override" for x in visible.evaluate_all("(rows) => rows.map(r=>r.dataset.action)")))
+                            view.locator("#select-visible").click()
+                            view.locator("#open-preview").click()
+                            self.assertTrue(view.locator("#plan-dialog").is_visible())
+                            self.assertEqual(view.locator(".plan-content").evaluate("(el)=>getComputedStyle(el).overflowY"), "auto")
+                            self.assertTrue(view.locator("#export-plan").is_enabled())
+                            view.keyboard.press("Escape")
+                            self.assertFalse(view.locator("#plan-dialog").is_visible())
+                        self.assertEqual(errors, [])
+                        view.set_viewport_size({"width": 390, "height": 844})
+                        self.assertLessEqual(view.evaluate("document.documentElement.scrollWidth"), 392)
+                        view.close()
+            finally:
+                browser.close()
+
+
 if __name__ == "__main__":
     unittest.main()

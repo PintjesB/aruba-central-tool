@@ -37,6 +37,34 @@ def select(name, values, selected="", label=None):
         for key, value in values) + '</select></label>'
 
 
+def scope_filter_form(root, route, snapshot, bundle, persona, fields, submit="Apply filters", extra_fields=()):
+    """Single GET form; dependent selectors change locally with device function."""
+    options_by_persona = {}
+    for function, entry in sorted(bundle["results"].items()):
+        options_by_persona[function] = {name: choices(entry) for name, _, _, choices in fields}
+    controls = select("persona", [(p, persona_label(p)) for p in options_by_persona], persona, "Device function")
+    for name, label, selected, _ in fields:
+        controls += select(name, options_by_persona[persona][name], selected, label)
+    for name, label, selected, choices in extra_fields:
+        controls += select(name, choices, selected, label)
+    return (f'<form class="filter-bar" method="get" action="{e(root + route)}" data-scope-filters="{e(json.dumps(options_by_persona))}">'
+            f'<input type="hidden" name="snapshot" value="{e(snapshot)}">' + controls
+            + f'<button type="submit">{e(submit)}</button>'
+            + f'<a class="button reset-link" href="{url(root, route, snapshot=snapshot)}">Reset</a></form>')
+
+
+def device_options(entry, placeholder="All devices"):
+    return [("", placeholder)] + sorted(
+        [(s["id"], s.get("name") or s["id"]) for s in entry["scopes"] if s["kind"] == "device"],
+        key=lambda pair: pair[1].casefold())
+
+
+def module_options(entry, placeholder="All modules", comparable=False):
+    return [("", placeholder)] + sorted(
+        [(m, module_label(m)) for m, data in entry["modules"].items()
+         if not comparable or not data.get("device_scope_only")], key=lambda pair: pair[1].casefold())
+
+
 def list_items(values, ordered=False):
     tag = "ol" if ordered else "ul"
     return f"<{tag}>" + "".join(f"<li>{e(v)}</li>" for v in values) + f"</{tag}>" if values else '<p class="muted">None observed.</p>'
@@ -256,14 +284,11 @@ def advisor_view(workspace, query):
                     and f["identity"] == identity_filter and any(s["scope"] == scope_filter for s in f["sources"])]
     short = {key: value[0] for key, value in ACTION_GUIDE.items()}
     counts = Counter(f["action"] for f in findings)
-    group_counts = [("opportunities", "Consolidation opportunities", sum(counts[k] for k in OPPORTUNITIES)),
-                    ("review", "Settings to review", counts["conflict"] + counts["default_review"]),
-                    ("optional", "Optional Library review", counts["create_library"] + counts["unassigned_library"]),
-                    ("", "All findings", len(findings))]
-    tabs = '<div class="tabs" id="action-tabs" aria-label="Recommendation type">' + "".join(
-        f'<button type="button" data-action="{e(key)}" aria-pressed="false">{e(label)} <span>{count}</span></button>'
-        for key, label, count in group_counts) + "</div>"
-    category_help = '<p id="category-help" class="note" aria-live="polite">Start with identical Global or Library profiles and repeated local definitions. All changes still require verification.</p>'
+    recommendation_options = [
+        ("opportunities", f"Consolidation opportunities ({sum(counts[k] for k in OPPORTUNITIES)})"),
+        ("review", f"Settings to review ({counts['conflict'] + counts['default_review']})"),
+        ("optional", f"Optional Library review ({counts['create_library'] + counts['unassigned_library']})"),
+        ("", f"All findings ({len(findings)})")] + [(k, f"{v[0]} ({counts[k]})") for k, v in ACTION_GUIDE.items()]
     rows = []
     for f in findings:
         action = f["action"]
@@ -303,15 +328,16 @@ def advisor_view(workspace, query):
         if not comparison:
             comparison = '<h3>Configuration comparison</h3>' + diff_table(f["differences"], "Local", reference_label)
         details = (
-            f'<h3>Why this appears</h3><p>{e(ACTION_GUIDE[action][1])}</p>'
-            f'<h3>What to do</h3><p>{e(ACTION_GUIDE[action][2])}</p>'
-            + comparison + (vlan_instance_context(bundle, f["persona"], sources, f["identity"]) + operational_vlan_context(bundle, f["persona"], sources, f["identity"]) if f["module"] == "layer2-vlan" else "") +
-            '<h3>Local scopes</h3>' + source_table +
-            ('<h3>Observed device configuration</h3>' + table(("Device", "Profile state"), device_rows) if device_rows else "") +
-            ('<h3>Higher-scope configuration</h3>' + table(("Scope", "Type", "Effective body"), scope_rows) if scope_rows else "") +
-            ('<h3>Destination impact</h3>' + table(("Destination", "Type", "Intended", "Additional", "Unknown", "Current"), placement_rows) if placement_rows else "") +
-            '<h3>Proposed workflow</h3>' + list_items(f["steps"], ordered=True) +
-            '<h3>Validation required</h3>' + list_items(f["blockers"]) + raw(f))
+            f'<div class="review-decision"><div><strong>{e(ACTION_GUIDE[action][2])}</strong><p>{e(ACTION_GUIDE[action][1])}</p></div></div>'
+            + comparison
+            + ('<h3>Destination impact</h3>' + table(("Destination", "Type", "Intended", "Additional", "Unknown", "Current"), placement_rows) if placement_rows else "")
+            + '<h3>Proposed workflow</h3>' + list_items(f["steps"], ordered=True)
+            + '<h3>Validation required</h3>' + list_items(f["blockers"])
+            + '<details><summary>Affected scopes and devices</summary>' + source_table
+            + ('<h3>Observed device configuration</h3>' + table(("Device", "Profile state"), device_rows) if device_rows else "")
+            + ('<h3>Higher-scope configuration</h3>' + table(("Scope", "Type", "Effective body"), scope_rows) if scope_rows else "") + '</details>'
+            + '<details><summary>Source evidence</summary>'
+            + (vlan_instance_context(bundle, f["persona"], sources, f["identity"]) + operational_vlan_context(bundle, f["persona"], sources, f["identity"]) if f["module"] == "layer2-vlan" else "") + raw(f) + '</details>')
         matching = len(observed.get("matching", []))
         unknown = len(observed.get("unknown", []))
         device_summary = f'<strong>{matching} / {sum(len(v) for v in observed.values())}</strong>' + (f'<small>{unknown} not comparable</small>' if unknown else "") if observed else '<span class="muted">Not assessed</span>'
@@ -323,26 +349,25 @@ def advisor_view(workspace, query):
             inspect(profile, details, "Review"),
             attrs=f' data-action="{e(action)}" data-module="{e(f["module"])}" data-persona="{e(f["persona"])}" data-search="{e(profile+" "+str([s["name"] for s in sources]))}"'))
     filters = (
-        '<div class="toolbar advisor-filters">'
+        '<div class="filter-bar advisor-filters">'
+        + select("finding-type", recommendation_options, "opportunities", "Recommendation")
         + select("module", [("", "All modules")] + [(m, module_label(m)) for m in sorted({f["module"] for f in findings})], label="Module")
         + select("persona", [("", "All functions")] + [(p, persona_label(p)) for p in sorted({f["persona"] for f in findings})], label="Device function")
-        + select("finding-type", [("", "All types")] + [(k, v[0]) for k, v in ACTION_GUIDE.items()], label="Finding type")
         + '<label class="searchbox">Search<input id="search" type="search" placeholder="Profile or scope"></label>'
         '<button id="clear" type="button" class="quiet">Reset</button></div>')
     listing = '<div id="advisor-table">' + table(("Select", "Profile", "Why flagged", "Local copies", "Suggested next step", "Devices with identical settings", ""), rows) + '</div>'
     bar = ('<div class="selection-bar"><div><strong id="selected" aria-live="polite">0 selected</strong>'
            '<small>Preview only · no Central writes</small></div><div class="selection-actions">'
-           '<button id="select-visible" type="button">Select filtered</button><button id="clear-selection" type="button">Clear</button>'
+           '<button id="select-visible" type="button">Select all filtered</button><button id="clear-selection" type="button">Clear</button>'
            '<button id="open-preview" type="button" class="primary" disabled>Review selected</button></div></div>')
-    dialog = ('<dialog id="plan-dialog" class="inspector"><div class="inspector-head"><strong>Selected change preview</strong>'
+    dialog = ('<dialog id="plan-dialog" class="inspector" aria-labelledby="plan-title"><div class="inspector-head"><h2 id="plan-title">Selected change preview</h2>'
               '<button id="close-preview" type="button">Close</button></div><div class="plan-content">'
               '<p class="note">These steps are not executable API operations. All writes require separate qualification and approval.</p>'
               '<div id="preview"></div><button id="export-plan" type="button" class="primary" disabled>Export private preview JSON</button>'
               '</div></dialog>')
     return page("Consolidation advisor", intro("Consolidation", "Choose a task, inspect the evidence, and prepare a change preview.", picker)
-                + f'<p><a href="{url(root, "overrides", snapshot=name)}">Compare device overrides with Global →</a></p>'
                 + '<section><div id="snapshot-label" hidden data-snapshot="' + e(name) + '"></div>'
-                + tabs + category_help + filters + '<div class="table-toolbar"><span id="visible-count" class="muted" aria-live="polite"></span>'
+                + filters + '<div class="table-toolbar"><span id="visible-count" class="muted" aria-live="polite"></span>'
                 '<div><button id="advisor-prev" type="button">Previous</button> <span id="advisor-page" class="muted"></span> '
                 '<button id="advisor-next" type="button">Next</button></div></div>'
                 + listing + '<p id="advisor-empty" class="empty" hidden>No matching recommendations.</p></section>'
@@ -354,28 +379,27 @@ ADVISOR_CSS = """
 #advisor-table td:nth-child(2){min-width:145px}#advisor-table td:nth-child(5){max-width:290px;min-width:160px}
 #advisor-table td:nth-child(5) select{width:100%;font-size:12px}
 #advisor-table th:first-child{font-size:0;width:38px}.selection-bar{position:sticky;bottom:12px;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:14px 18px;background:var(--surface);border:1px solid var(--line);box-shadow:0 5px 24px #0002;border-radius:10px}
-.selection-bar small{display:block}.selection-actions{display:flex;gap:8px;flex-wrap:wrap}.plan-content{padding:22px}.plan-item{padding:14px 0;border-bottom:1px solid var(--line)}.plan-item h3{margin:0 0 5px}.plan-item p{margin:4px 0}.tabs button[aria-pressed=true]{border-bottom-color:var(--accent);color:var(--accent);font-weight:700}
+.selection-bar small{display:block}.selection-actions{display:flex;gap:8px;flex-wrap:wrap}.plan-content{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:22px}.plan-item{padding:14px 0;border-bottom:1px solid var(--line)}.plan-item h3{margin:0 0 5px}.plan-item p{margin:4px 0}.tabs button[aria-pressed=true]{border-bottom-color:var(--accent);color:var(--accent);font-weight:700}
 """
 ADVISOR_JS = r"""
 (()=>{
 'use strict';
-const $=id=>document.getElementById(id), rows=Array.from($('advisor-table').querySelectorAll('tbody > tr'));
-const checks=rows.map(r=>r.querySelector('.choose')), actions=Array.from($('action-tabs').querySelectorAll('[data-action]'));
+const $=id=>document.getElementById(id), rows=Array.from($('advisor-table').querySelectorAll(':scope > .data-grid > .table-scroll > table > tbody > tr'));
+const checks=rows.map(r=>r.querySelector('.choose'));
 const categories={opportunities:['remove_override','promote_local','reuse_library'],review:['conflict','default_review'],optional:['create_library','unassigned_library']};
-const explanations={opportunities:'Start here: exact matches and repeated local profiles. Verify inheritance and destination impact before changing anything.',review:'These differences need interpretation. They are not necessarily errors or redundant settings.',optional:'Housekeeping only. Keep local profiles and Library definitions unless reuse or cleanup is justified.','':'All captured findings, including optional housekeeping and differences.'};
-let action='opportunities', page=0, filtered=[];const size=30;
+let page=0, filtered=[];const size=30;
 function filter(reset=true){
  if(reset)page=0;
  const q=$('search').value.toLowerCase().trim();
- filtered=rows.filter(r=>(!action||categories[action].includes(r.dataset.action))&&(!$('finding-type').value||r.dataset.action===$('finding-type').value)&&(!$('module').value||r.dataset.module===$('module').value)&&(!$('persona').value||r.dataset.persona===$('persona').value)&&((r.dataset.search+' '+r.textContent).toLowerCase().includes(q)));
+ const action=$('finding-type').value;
+ filtered=rows.filter(r=>(!action||(categories[action]?categories[action].includes(r.dataset.action):r.dataset.action===action))&&(!$('module').value||r.dataset.module===$('module').value)&&(!$('persona').value||r.dataset.persona===$('persona').value)&&((r.dataset.search+' '+r.textContent).toLowerCase().includes(q)));
  const pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.min(page,pages-1);
  const visible=new Set(filtered.slice(page*size,(page+1)*size));
  for(const r of rows)r.hidden=!visible.has(r);
  $('visible-count').textContent=filtered.length+' of '+rows.length+' recommendations';
  $('advisor-page').textContent=(page+1)+' / '+pages;$('advisor-prev').disabled=page===0;$('advisor-next').disabled=page+1>=pages;
  $('advisor-empty').hidden=filtered.length>0;
- $('category-help').textContent=explanations[action];
- for(const b of actions)b.setAttribute('aria-pressed',String(b.dataset.action===action));
+ $('advisor-prev').parentElement.hidden=pages<=1;
 }
 function selection(){
  const chosen=checks.filter(c=>c.checked&&!c.disabled).map(c=>{
@@ -390,6 +414,7 @@ function selection(){
   return f;
  });
  $('selected').textContent=chosen.length+' selected';
+ $('clear-selection').disabled=!chosen.length;
  $('open-preview').disabled=!chosen.length;
  $('export-plan').disabled=!chosen.length||chosen.some(f=>f.action==='promote_local'&&!f.selected_destination);
  return chosen;
@@ -406,16 +431,15 @@ function preview(){
  }
  if(chosen.some(f=>f.action==='promote_local'&&!f.selected_destination))$('preview').append(el('p','Select a destination for each consolidation recommendation before exporting.'));
 }
-for(const b of actions)b.addEventListener('click',()=>{action=b.dataset.action;$('finding-type').value='';filter();});
 for(const k of ['module','persona','finding-type'])$(k).addEventListener('change',()=>filter());
 $('search').addEventListener('input',()=>filter());
-$('clear').addEventListener('click',()=>{action='opportunities';$('finding-type').value='';$('module').value='';$('persona').value='';$('search').value='';filter();});
+$('clear').addEventListener('click',()=>{$('finding-type').value='opportunities';$('module').value='';$('persona').value='';$('search').value='';filter();});
 $('advisor-prev').addEventListener('click',()=>{page--;filter(false);});$('advisor-next').addEventListener('click',()=>{page++;filter(false);});
 for(const c of checks)c.addEventListener('change',selection);
 for(const field of document.querySelectorAll('.destination'))field.addEventListener('change',selection);
 $('select-visible').addEventListener('click',()=>{for(const r of filtered){const check=r.querySelector('.choose');if(!check.disabled)check.checked=true;}selection();});
 $('clear-selection').addEventListener('click',()=>{for(const c of checks)c.checked=false;selection();});
-$('open-preview').addEventListener('click',()=>{preview();$('plan-dialog').showModal();});
+$('open-preview').addEventListener('click',()=>{preview();$('plan-dialog').showModal();$('plan-dialog').querySelector('.plan-content').scrollTop=0;});
 $('close-preview').addEventListener('click',()=>$('plan-dialog').close());
 $('export-plan').addEventListener('click',()=>{
  const chosen=selection();if($('export-plan').disabled)return;
@@ -459,7 +483,7 @@ def engineering_view(workspace, query):
     data = advanced_analysis(bundle)
     panels = []
     def panel(key, label, hint, headers, rows, count):
-        panels.append((key, label, count, f'<section data-panel="{key}" data-group="engineering"><h2>{e(label)}</h2><p class="muted">{e(hint)}</p>'
+        panels.append((key, label, count, f'<section data-panel="{key}" data-group="engineering"><p class="filter-hint">{e(hint)}</p>'
                        + table(headers, rows, search=True) + '</section>'))
     rows = []
     for i, record in enumerate(data["port_groups"], 1):
@@ -521,12 +545,17 @@ def engineering_view(workspace, query):
                   + "".join(f'<details><summary>{e(identity)} · Where it is used</summary>{usage_detail(u)}</details>' for identity, u in usage.items())
                   + '<h3>Before consolidating</h3><ol><li>Choose the canonical name based on usage and naming standards.</li><li>Move assignments and references to that name.</li><li>Verify effective configuration and complete reverse references before deleting the old profile.</li></ol>'
                   + raw(r))
-        for identity, u in usage.items():
-            rows.append(tr(e(module_label(r["module"])), f'<strong>{e(identity)}</strong><small>Matches {e(", ".join(i for i in r["identities"] if i != identity))}</small>',
-                           *usage_cells(u), badge("Suggested to keep", "info") if identity == keep else "Review",
-                           inspect(", ".join(r["identities"]), detail, "Compare usage")))
-    panel("duplicates", "Duplicate Library profiles", "Compare each matching profile name separately. Choose which to retain based on observed assignments, shared device deployments and referencing configuration objects. Counts are not complete usage evidence.",
-          ("Module", "Profile", "Assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Suggested action", ""), rows, len(rows))
+        # One decision per duplicate group. Keep all per-profile usage counts
+        # aligned, rather than repeating the same review button for every member.
+        group_usage = ('<table class="group-usage"><thead><tr>' + "".join(
+            f'<th scope="col">{e(label)}</th>' for label in ("Profile", "Assignments", "Devices", "References", "Unknown reads"))
+            + '</tr></thead><tbody>' + "".join(
+                tr(f'<strong>{e(identity)}</strong>' + (' <span class="retain-mark">Keep</span>' if identity == keep else ""),
+                   *usage_cells(u)) for identity, u in usage.items()) + '</tbody></table>')
+        rows.append(tr(e(module_label(r["module"])), group_usage,
+                       e(keep or "Choose profile"), inspect(", ".join(r["identities"]), detail, "Review group")))
+    panel("duplicates", "Duplicate Library profiles", "Each row is a duplicate group. Compare observed usage for each name before choosing which profile to retain.",
+          ("Module", "Profiles and observed usage", "Suggested keep", ""), rows, len(rows))
     for key, label, records in (("references", "Reference review", [r for r in data["references"] if r["status"] != "observed"]),
                                 ("resolved", "Observed references", [r for r in data["references"] if r["status"] == "observed"])):
         rows = [tr(e(r["device"]), f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
@@ -595,12 +624,13 @@ def library_view(workspace, query):
         link = url(root, "library", snapshot=name, module=key)
         rows.append(tr(f'<a href="{link}">{e(module_label(key))}</a>', str(len(view["profiles"])), status(view["status"])))
     body = intro("Library", "Shared profiles and their observed assignments.", picker)
-    body += (f'<section><form method="get" action="{root}library"><input type="hidden" name="snapshot" value="{e(name)}">'
-             + select("module", [("", "All collections")] + [(k, module_label(k)) for k in sorted(modules)], module, "Profile collection")
-             + '<button type="submit" class="quiet">Open collection</button></form></section>')
     if not module:
         body += '<section><h2>Profile collections</h2>' + table(("Module", "Profiles", "State"), rows, search=True) + '</section>'
     else:
+        body += (f'<div class="collection-nav"><a href="{url(root, "library", snapshot=name)}">← All collections</a>'
+                 + f'<form class="auto-select" method="get" action="{root}library"><input type="hidden" name="snapshot" value="{e(name)}">'
+                 + select("module", [(k, module_label(k)) for k in sorted(modules)], module, "Collection")
+                 + '<noscript><button type="submit">Open</button></noscript></form></div>')
         view = modules[module]
         comparison = library_profile_comparison(bundle, module)
         usage = library_usage(bundle, module, view["profiles"], advanced_analysis(bundle)["references"])
@@ -610,12 +640,13 @@ def library_view(workspace, query):
             matches = review.get("assignments", [])
             variants = review.get("local_variants", [])
             conflict = sum(v["classification"] == "different_body" for v in variants)
-            detail = '<h3>Profile settings</h3>' + property_table(review.get("profile", profile)) + '<h3>Observed assignments</h3>' + table(("Scope", "Function"), [tr(e(a.get("scope-name", a.get("scope-id", ""))), e(persona_label(a.get("device-function", "")))) for a in matches])
+            detail = '<h3>Profile settings</h3>' + property_table(review.get("profile", profile))
             detail += '<h3>Local instances</h3>' + table(("Scope", "Function", "Comparison"), [tr(e(v["scope_name"]), e(persona_label(v["persona"])), status(v["classification"])) for v in variants])
-            for v in variants:
-                if v["differences"]:
-                    detail += f'<h3>{e(v["scope_name"])} differences</h3>' + diff_table(v["differences"], "Local", "Library")
-            detail += usage_detail(usage[identity]) + raw({"profile": profile, **review})
+            differing = [v for v in variants if v["differences"]]
+            if differing:
+                detail += '<details><summary>Local configuration differences</summary>' + "".join(
+                    f'<h3>{e(v["scope_name"])}</h3>' + diff_table(v["differences"], "Local", "Library") for v in differing) + '</details>'
+            detail += '<details><summary>Observed assignments and usage</summary>' + usage_detail(usage[identity]) + '</details>' + raw({"profile": profile, **review})
             rows.append(tr(f'<strong>{e(title_profile(identity, profile))}</strong>', *usage_cells(usage[identity]), str(len(variants)),
                            badge(str(conflict), "warn" if conflict else "neutral"), inspect(identity, detail)))
         body += f'<section><h2>{e(module_label(module))} · {len(rows)} profiles</h2>' + table(("Profile", "Observed assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Local instances", "Different bodies", ""), rows, search=True) + '</section>'
@@ -658,9 +689,12 @@ def comparison_view(workspace, query):
     left, right, module = query.get("left", ""), query.get("right", ""), query.get("module", "")
     if module and module not in entry["modules"]:
         raise ValueError("Unknown module")
-    choose = f'<form method="get" action="{root}compare"><input type="hidden" name="snapshot" value="{e(name)}">' + select("persona", [(p, persona_label(p)) for p in personas], persona, "Device function") + '<button type="submit" class="quiet">Load devices</button></form>'
-    controls = f'<form method="get" action="{root}compare"><input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="persona" value="{e(persona)}">' + select("left", [("", "Select device")] + devices, left, "Reference device") + select("right", [("", "Select device")] + devices, right, "Compare with") + select("module", [("", "Reusable modules")] + [(m, module_label(m)) for m in sorted(entry["modules"])], module, "Module") + '<button type="submit">Compare</button></form>'
-    body = intro("Compare devices", "Show configuration differences, not identical settings.", picker) + '<section>' + choose + '<hr>' + controls + '<p class="note">Infrastructure is excluded unless a specific module is selected.</p></section>'
+    controls = scope_filter_form(root, "compare", name, bundle, persona, (
+        ("left", "Reference device", left, lambda entry: device_options(entry, "Select device")),
+        ("right", "Compare with", right, lambda entry: device_options(entry, "Select device")),
+        ("module", "Module", module, lambda entry: module_options(entry, "Reusable modules"))),
+        submit="Compare")
+    body = intro("Compare devices", "Compare two devices using captured configuration.", picker) + '<section class="filter-section">' + controls + '<p class="filter-hint">Infrastructure modules are excluded unless selected explicitly.</p></section>'
     if left and right:
         if left == right:
             body += '<section class="empty">Select two different devices.</section>'
@@ -694,7 +728,7 @@ def coverage_view(workspace, query):
     body += metrics([("Complete module reads", counts["qualified"], "All requested scopes could be interpreted"), ("Partial module reads", counts["partial"], "Some scopes could be interpreted"), ("Unverified module reads", counts["unqualified"], "No scope evidence qualified")])
     rows = [tr(e(persona_label(r["persona"])), e(module_label(r["module"])), f'{r["qualified"]}/{r["total"]}', status(r["status"]),
                f'<a href="{url(root, "report", snapshot=name, persona=r["persona"], module=r["module"], diagnostics="1")}">View evidence</a>')
-            for r in sorted(records, key=lambda r: ({"qualified": 0, "partial": 1, "unqualified": 2}[r["status"]], r["persona"], r["module"]))]
+            for r in sorted(records, key=lambda r: ({"unqualified": 0, "partial": 1, "qualified": 2}[r["status"]], r["persona"], r["module"]))]
     body += '<section><h2>Module qualification</h2>' + table(("Device function", "Module", "Qualified scopes", "Read status", ""), rows, search=True) + '</section>'
     discovery = bundle.get("profile_type_discovery")
     if discovery:
@@ -729,9 +763,13 @@ def explorer_view(workspace, query):
     mode = query.get("view", "diagnostics" if query.get("diagnostics") else "all" if scope else "local")
     if mode not in ("all", "local", "diagnostics"):
         raise ValueError("Unknown view")
-    scope_names = [(s["id"], f'{pretty(s["kind"])} / {s.get("name") or s["id"]}') for s in entry["scopes"]]
-    controls = f'<form method="get" action="{root}report"><input type="hidden" name="snapshot" value="{e(name)}">' + select("persona", [(p, persona_label(p)) for p in personas], persona, "Function") + '<button type="submit" class="quiet">Load function</button></form><hr>'
-    controls += f'<form method="get" action="{root}report"><input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="persona" value="{e(persona)}">' + select("module", [("", "All modules")] + [(m, module_label(m)) for m in modules], module, "Module") + select("scope", [("", "All scopes")] + scope_names, scope, "Scope") + select("view", [("local", "Local profiles"), ("all", "All captured profiles"), ("diagnostics", "Incomplete API results")], mode, "Configuration to show") + '<button type="submit">Show</button></form>'
+    controls = scope_filter_form(root, "report", name, bundle, persona, (
+        ("module", "Module", module, module_options),
+        ("scope", "Scope", scope, lambda entry: [("", "All scopes")] + sorted(
+            [(s["id"], f'{pretty(s["kind"])} / {s.get("name") or s["id"]}') for s in entry["scopes"]],
+            key=lambda pair: pair[1].casefold()))),
+        submit="Show", extra_fields=(("view", "View", mode, [("local", "Local profiles"), ("all", "All captured profiles"),
+                                  ("diagnostics", "Incomplete API results")]),))
     rows = []
     records = [r for r in config_review_rows(bundle) if r[0] == persona and (not module or r[1] == module) and (not scope or r[3]["scope"] == scope)]
     for _, mod, scope_name, view in records:
@@ -768,7 +806,7 @@ def explorer_view(workspace, query):
             rows.append(tr(f'<strong>{e(scope_name)}</strong><small>{e(pretty(view["scope_kind"]))}</small>', e(module_label(mod)), e(title),
                            badge(profile_state_label(r["status"]), "good" if r["status"] in ("inherited", "shared", "local_matches_global") else "warn" if r["status"] in ("source_conflict", "local_differs_from_global", "local_effective_mismatch") else "neutral"), inspect(title, detail)))
     q = sum(v["review"]["qualified"] for _, _, _, v in records)
-    body = intro("Configuration", "Inspect captured profiles at a selected scope or module.", picker) + '<section>' + controls + '</section>'
+    body = intro("Configuration", "Inspect captured profiles at a selected scope or module.", picker) + '<section class="filter-section">' + controls + '</section>'
     body += f'<section><h2>{len(rows)} records</h2><p class="muted">{q}/{len(records)} selected scope views qualified.</p>' + table(("Scope", "Module", "Profile", "Source / state", ""), rows, search=True) + '</section>'
     body += f'<p class="note">For grouped consolidation recommendations, open <a href="{url(root, "advisor", snapshot=name)}">Consolidation</a>. Global comparison does not establish inheritance or safe removal.</p>'
     # Preserve the standalone report and CSV export through a separate optional route.

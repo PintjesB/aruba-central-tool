@@ -316,26 +316,45 @@ if(panel.dataset.state==='running')poll();
             summary = metrics([("Devices", len(devices), "Captured inventory"),
                                ("Qualified module views", qualified, f"{partial} partially qualified"),
                                ("Library profiles", observed, "Observed definitions")])
-            cards = []
-            for route, title, desc in (
-                ("overrides", "Review device overrides", "Compare saved device settings with Global and find possible redundant overrides."),
-                ("advisor", "Consolidate configuration", "Find repeated profiles, compare overrides and choose destinations."),
-                ("advanced", "Review engineering findings", "Find reusable ports, shadowed settings and duplicate Library profiles."),
-                ("report", "Explore configuration", "Inspect individual scope settings and their sources."),
-                ("compare", "Compare devices", "Review exact configuration differences between devices.")):
-                href = root + route + "?" + urlencode({"snapshot": name})
-                cards.append(f'<a class="workflow-card" href="{e(href)}"><strong>{e(title)}</strong><span>{e(desc)}</span><span class="arrow">Open workspace →</span></a>')
-            summary += '<h2>Workflows</h2><div class="workflow-grid">' + "".join(cards) + '</div>'
+            from consolidation import profile_recommendations
+            from collections import Counter
+            from central_tool import refresh_configuration_review
+            complete_structure = all(
+                {"scope_kind", "local_view", "effective_view"} <= scope.keys()
+                for entry in bundle["results"].values() for data in entry["modules"].values()
+                for scope in data["scope_results"])
+            findings = profile_recommendations(refresh_configuration_review(bundle)) if complete_structure else None
+            counts = Counter(f["action"] for f in findings or [])
+            opportunities = counts["remove_override"] + counts["promote_local"] + counts["reuse_library"]
+            advisor_href = root + "advisor?" + urlencode({"snapshot": name})
+            overrides_href = root + "overrides?" + urlencode({"snapshot": name})
+            coverage_href = root + "coverage?" + urlencode({"snapshot": name})
+            if findings is None:
+                summary += '<section><h2>Consolidation analysis unavailable</h2><p>This snapshot lacks the saved configuration evidence needed for review. Collect a new snapshot to calculate recommendations.</p></section>'
+            else:
+                summary += (f'<section class="overview-focus"><div><small>Recommended starting point</small>'
+                        f'<h2>{opportunities} consolidation opportunities</h2>'
+                        '<p>Review matching profiles and repeated configuration before planning changes.</p>'
+                        f'<a class="button primary" href="{e(advisor_href)}">Review opportunities</a></div>'
+                        '<div class="overview-breakdown">'
+                        + "".join(f'<div><span>{e(label)}</span><strong>{counts[key]}</strong></div>' for key, label in (
+                            ("remove_override", "Matching Global"), ("promote_local", "Repeated profiles"),
+                            ("reuse_library", "Matching Library"))) + '</div></section>'
+                        + '<section class="overview-links"><div><h3>Device overrides</h3><p>Compare saved configuration against Global.</p>'
+                        f'<a href="{e(overrides_href)}">Compare overrides →</a></div>'
+                        f'<div><h3>Data coverage</h3><p>{len(coverage) - qualified} module reads are not fully qualified.</p>'
+                        f'<a href="{e(coverage_href)}">Review coverage →</a></div></section>')
         else:
-            summary = '<section><h2>Collect your first snapshot</h2><p>Connect to Central to start a read-only configuration audit.</p></section>'
+            summary = '<section><h2>Saved snapshots</h2><p>No snapshots yet. Connect to Central to start a read-only configuration audit.</p></section>'
         picker = snapshot_picker(root, "", files, name) if files else ""
-        captures = (f'<section><div class="section-head"><h2>Saved snapshots ({len(files)})</h2></div>'
-                    + picker + (f'<p class="muted">Captured: {e(bundle.get("captured_at", "unknown"))}</p>' if bundle else "")
-                    + '<p class="note">Use a separate workspace directory for each customer. Tenant identity is not independently verified.</p></section>')
-        return page("Snapshots", intro("Overview", "Review captured configuration and plan improvements.")
-                    + summary + '<div class="split">' + captures
-                    + f'<section><h2>Connect to Central</h2>{progress_html}{refresh}</section></div>'
-                    + script, self.nav(name))
+        capture_note = (f'<p class="muted">Captured: {e(bundle.get("captured_at", "unknown"))} · Saved snapshots: {len(files)}</p>' if bundle else "")
+        # The connection form is secondary once an audit is available. Keep
+        # active/failed progress visible and never store credentials.
+        connection = (f'<section><details class="connection-details"{" open" if not bundle or state in ("running", "failed", "complete") else ""}>'
+                      f'<summary>Collect a new snapshot</summary>{progress_html}{refresh}'
+                      '<p class="note">Use a separate workspace directory for each customer. Tenant identity is not independently verified.</p></details></section>')
+        return page("Snapshots", intro("Overview", "Review captured configuration and plan improvements.", picker)
+                    + capture_note + summary + connection + script, self.nav(name))
 
     def overrides(self, query):
         from override_view import overrides_view

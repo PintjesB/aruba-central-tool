@@ -231,9 +231,10 @@ class ConsolidationTests(unittest.TestCase):
             self.assertIn("Settings to review", html)
             self.assertIn("Optional Library review", html)
             self.assertIn("No assignment observed", html)
-            self.assertIn("Why this appears", html)
-            self.assertIn("What to do", html)
-            self.assertIn("let action='opportunities'", html)
+            self.assertIn('class="review-decision"', html)
+            self.assertIn("Validation required", html)
+            self.assertIn('value="opportunities" selected', html)
+            self.assertNotIn('id="action-tabs"', html)
             self.assertIn("if(!check.disabled)", html)
             self.assertNotIn(">Default differences<", html)
 
