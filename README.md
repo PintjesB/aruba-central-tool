@@ -24,6 +24,10 @@ The scan discovers Global, site collections, sites, groups and device inventory,
 
 Run the report command again with a new output filename after upgrading. No API credentials or requests are required. The JSON includes a review entry for every local VLAN (even singletons), matching Global and Library content, per-device matching/missing/different coverage, and available effective annotations. The terminal displays anonymized aggregate counts. These are review suggestions, not migration plans. Exact equality does not prove equivalence; device coverage is limited to the scanned persona and does not authorize Global assignment.
 
+### Default-aware review
+
+The second-stage assessment distinguishes documented default candidates, explicit differences, multicast defaults requiring model/firmware validation, unresolved omissions, and the GET-only is-l3-vlan indicator. It does not rewrite profiles or treat omitted fields as proven equivalent. Verify actual SVI state and device behavior before migration. Library-only VLANs are reviewed at their existing scope, not automatically promoted globally. The terminal can display aggregate boolean values for allowlisted VLAN settings, but never names or customer identifiers.
+
 ## Safety boundary
 
 No configuration mutation API calls exist yet. Only OAuth token issuance uses POST. Candidate findings are not executable plans. The API is v1alpha1 and real tenant response shapes, group access, annotation semantics, and Classic/New configuration authority must be validated before enabling writes. Scope IDs are strings, not floating-point numbers.
