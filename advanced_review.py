@@ -315,7 +315,9 @@ def advanced_analysis(bundle):
             dependencies = [r for r in result["references"] if r["persona"] == persona
                             and r["source_module"] == "ethernet-interfaces"
                             and (r["scope"], r["source"]) in port_ids]
+            from port_conversion_review import port_conversion_review
             result["port_groups"].append({"persona": persona, "ports": ports,
+                "conversion_review": port_conversion_review(entry, ports, settings, library_matches),
                 "portable_settings": settings, "unsupported_fields": ports[0]["unsupported"],
                 "matching_library_profiles": library_matches, "library_status": profile_view.get("status", "not_collected"),
                 "dependencies": dependencies,
