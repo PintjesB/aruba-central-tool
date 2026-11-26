@@ -31,3 +31,20 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(result["nac"]["mac-registrations"]["status"], "count_confirmed")
         self.assertEqual(len(result["attempted_operations"]), 1)
         self.assertFalse(result["complete"])
+
+
+    def test_keyed_identity_shapes_without_leaking_identity(self):
+        bundle = {"schema": 1, "kind": "configuration_audit",
+                  "keyed_profile_details": {"profiles": {"ACCESS_SWITCH": {"PRIVATE-SCOPE": {
+                      "ethernet-interfaces": {"1/1/24": {"local": {"status": "invalid_selector"},
+                                                       "effective": {"status": "invalid_selector"}}},
+                      "dns": {"PRIVATE-NAME": {"local": {"status": "schema_unresolved"}}}
+                  }}}}, "unadapted_profiles": {"dns": {"scope_read_outcomes": {"empty_response": 2}}}}
+        report = diagnostics(bundle)
+        self.assertEqual(report["invalid_selector_shapes"],
+                         [{"module": "ethernet-interfaces", "shape": "numeric_port", "reads": 2}])
+        self.assertEqual(len(report["keyed_read_outcomes"]), 3)
+        self.assertEqual(report["raw_scope_outcomes"], [{"module": "dns", "status": "empty_response", "views": 2}])
+        self.assertEqual(report["nac"]["mac-registrations"]["status"], "not_collected")
+        for value in ("PRIVATE-SCOPE", "PRIVATE-NAME", "1/1/24"):
+            self.assertNotIn(value, json.dumps(report))
