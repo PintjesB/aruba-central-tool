@@ -80,11 +80,19 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
     if evidence is not None:
         local = evidence['local']
         effective = evidence['comparison']
-    assessment = assess_vlan_reference(saved, reference)
-    if not assessment["differences"]:
+    # The original saved/reference diff alone hides fields present only in
+    # effective or recovered configuration. Include every observed setting,
+    # keeping precise nested difference paths where available.
+    comparisons = {}
+    for body in (saved, local, effective):
+        if isinstance(body, dict):
+            for d in assess_vlan_reference(body, reference)["differences"]:
+                comparisons.setdefault(tuple(d["path"]), d)
+    for key in sorted(set().union(*(b.keys() for b in (saved, local, effective, reference) if isinstance(b, dict)))):
+        if not any(path and path[0] == key for path in comparisons):
+            comparisons[(key,)] = {"path": [key], "assessment": "matching"}
+    if not comparisons:
         return ""
-    def cell(d, key):
-        return e(json.dumps(d[key], ensure_ascii=False)) if key in d else '<span class="muted">Not returned</span>'
     def observed_cell(body, path, source_key):
         value = body
         for key in path:
@@ -107,13 +115,15 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
                 return "Observed value matches reference"
             if any(v["kind"] not in ("missing_local", "missing_reference") for v in matches):
                 return "Observed value differs from reference"
+        if d["assessment"] == "matching":
+            return "No difference in captured values" if effective is not None else "Saved and reference values match"
         return ASSESSMENT_LABELS.get(d["assessment"], pretty(d["assessment"]))
     conflict = ('<p class="note">Conflicting observations: ' + e(', '.join(evidence['conflicts'])) + '. Resolve before changing configuration.</p>') if evidence and evidence['conflicts'] else ''
-    return '<h3>Why these VLAN settings differ</h3>' + table(
+    return '<h3>VLAN settings comparison</h3>' + table(
         ("Setting", "Saved locally", "Effective at source / observed", "Global / reference", "Meaning"),
-        [tr(e(".".join(map(str, d["path"]))), observed_cell(local, d["path"], "local"), observed_cell(effective, d["path"], "comparison"), cell(d, "reference_value"),
+        [tr(e(".".join(map(str, d["path"]))), observed_cell(local, d["path"], "local"), observed_cell(effective, d["path"], "comparison"), observed_cell(reference, d["path"], "reference"),
             e(meaning(d)))
-         for d in assessment["differences"]]) + conflict + '<p class="note">Not returned does not mean disabled or equal to the default. Effective values use Central configuration and independently observed switch data where identified. They do not prove that an omitted setting was explicitly saved locally. Without switch evidence, Central effective settings are not a live switch CLI or traffic measurement.</p>'
+         for _, d in sorted(comparisons.items())]) + conflict + '<p class="note">Not returned does not mean disabled or equal to the default. Effective values use Central configuration and independently observed switch data where identified. They do not prove that an omitted setting was explicitly saved locally. Without switch evidence, Central effective settings are not a live switch CLI or traffic measurement.</p>'
 
 
 def vlan_instance_context(bundle, persona, sources, identity):
