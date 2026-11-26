@@ -13,6 +13,16 @@ STANDARD_MODULES = {"layer2-vlan", "roles", "wlan-ssids", "dns", "ntp", "snmp",
                     "net-groups", "policies", "role-acls", "alg", "object-groups"}
 
 
+# Templates select configuration domains; values always come from an explicitly
+# chosen baseline, never from guessed universal network settings.
+STANDARD_TEMPLATES = {
+    "template:services": ("Infrastructure services", {"dns", "ntp", "logging", "snmp", "snmp-trap"}),
+    "template:switching": ("Switch access and VLAN policy", {"layer2-vlan", "sw-port-profiles", "interface-profiles", "qos-queues"}),
+    "template:wireless": ("Wireless access policy", {"wlan-ssids", "ap-port-profiles", "roles", "auth-servers", "server-groups"}),
+    "template:security": ("Authentication and security policy", {"roles", "auth-servers", "server-groups", "macauth", "aliases", "net-groups", "policies", "role-acls", "alg", "object-groups"}),
+}
+
+
 def snapshot_identity_checks(before, after):
     def global_ids(bundle):
         return {str(s["id"]) for entry in bundle["results"].values()
@@ -144,9 +154,10 @@ def reference_compliance(bundle, persona, module, reference, target_scope, *, ba
     baseline_devices = {s["id"]: s for s in baseline_entry.get("scopes", []) if s["kind"] == "device"}
     available = STANDARD_MODULES & (entry["modules"].keys() | baseline_entry.get("modules", {}).keys())
     if (reference not in baseline_devices or target_scope not in scopes
-            or (module != "all" and module not in available)):
+            or (module != "all" and module not in available and module not in STANDARD_TEMPLATES and selected_modules is None)):
         raise ValueError("Invalid reference, module or target scope")
-    modules = sorted(available) if module == "all" else [module]
+    modules = (sorted(available) if module == "all" else
+               sorted(available & STANDARD_TEMPLATES[module][1]) if module in STANDARD_TEMPLATES else [module])
     if selected_modules is not None:
         if not selected_modules or not set(selected_modules) <= STANDARD_MODULES:
             raise ValueError("Invalid frozen module set")
