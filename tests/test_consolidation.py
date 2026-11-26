@@ -381,6 +381,62 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("Not returned", html)
         self.assertIn("original snapshot", html)
 
+    def test_partial_vlan_matches_are_review_candidates_not_verified_removals(self):
+        from central_tool import refresh_configuration_review
+        from override_view import device_override_rows
+        from workspace_views import vlan_explanation
+        data = fixture()
+        views = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]
+        reference = {"vlan": 70, "name": "VOICE", "enable": True,
+                     "voice-enable": False, "dhcpv4-snooping": {"enable": False},
+                     "dhcpv6-snooping": {"enable": False}, "igmp": {"snooping": False},
+                     "mld": {"snooping": False}}
+        views[0]["effective_view"]["profiles"]["70"] = reference
+        views[2]["local_view"]["profiles"]["70"] = {"vlan": 70}
+        views[2]["effective_view"]["profiles"]["70"] = {"vlan": 70, "name": "VOICE"}
+        data["switch_vlan_cli"] = {"ACCESS_SWITCH": {"3": {"status": "observed", "vlans": {
+            "70": {"name": "VOICE", "enable": True, "dhcpv4-snooping": {"enable": False},
+                   "dhcpv6-snooping": {"enable": False}}}}}}
+        data["operational_vlans"] = {"ACCESS_SWITCH": {"3": {"status": "response_received",
+            "payload": {"items": [{"id": 70, "voice": "Disabled"}]}}}}
+        refresh_configuration_review(data)
+        def finding():
+            rows, _ = device_override_rows(data, "ACCESS_SWITCH")
+            return next(f for f in rows if f["device"] == "3" and f["module"] == "layer2-vlan" and f["identity"] == "70")
+        f = finding()
+        self.assertEqual(f["result"], "partial_match")
+        self.assertEqual(f["assessment"]["counts"], {"matching": 5, "different": 0, "unavailable": 2, "conflict": 0})
+        self.assertTrue(f["review_candidate"])
+        self.assertFalse(f["candidate"])
+        self.assertFalse(f["safe_to_apply"])
+        html = vlan_explanation(f["profile"]["local"], reference, f["profile"]["effective"], f["evidence"])
+        self.assertIn("5 matching", html)
+        self.assertIn("2 unavailable settings", html)
+        self.assertIn('class="comparison-gaps"', html)
+        import tempfile
+        import json
+        from pathlib import Path
+        from config_app import Workspace
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(data))
+            html = Workspace(directory).overrides({"snapshot": name, "result": "cleanup", "module": "layer2-vlan"})
+            self.assertIn("VLAN 70", html)
+            self.assertIn("No observed differences", html)
+            self.assertIn("5 match · 2 unavailable", html)
+            self.assertNotIn("VLAN 40", html)
+        # A real observed difference or a conflicting saved value excludes cleanup.
+        data["switch_vlan_cli"]["ACCESS_SWITCH"]["3"]["vlans"]["70"]["enable"] = False
+        f = finding()
+        self.assertEqual(f["result"], "different")
+        self.assertFalse(f["review_candidate"])
+        data["switch_vlan_cli"]["ACCESS_SWITCH"]["3"]["vlans"]["70"]["enable"] = True
+        views[2]["local_view"]["profiles"]["70"]["igmp"] = {"snooping": True}
+        refresh_configuration_review(data)
+        f = finding()
+        self.assertEqual(f["result"], "source_uncertain")
+        self.assertFalse(f["review_candidate"])
+
     def test_recovered_vlan_fields_change_comparison_not_saved_body(self):
         from central_tool import refresh_configuration_review, vlan_comparison_evidence
         from override_view import device_override_rows
