@@ -5,7 +5,9 @@ from consolidation import scope_memberships
 PRECEDENCE = ("group", "site", "collection", "global")
 # Identity-preserving, additive profile families already reviewed by the advisor.
 ADDITIVE = {"layer2-vlan", "roles", "wlan-ssids", "auth-servers"}
-ATOMIC = {"dns", "ntp"}
+ATOMIC = {"dns", "ntp", "ospfv2", "ospfv3", "bgp", "stp", "stp-gw"}
+# These topology-sensitive modules are observation-only, even when exact.
+TOPOLOGY_REVIEW = {"ospfv2", "ospfv3", "bgp", "stp", "stp-gw"}
 SUPPORTED = ADDITIVE | ATOMIC
 
 
@@ -111,6 +113,9 @@ def nearest_fallback(entry, module, device, identity, local, effective, annotati
             result["blockers"].append("Atomic fallback changes profile identity; verify references and assignment effects")
         else:
             result["status"] = "matching_fallback" if not result["differences"] else "different_fallback"
+        if module in TOPOLOGY_REVIEW and result["status"] in ("matching_fallback", "matching_settings_identity_changed"):
+            result["status"] = "candidate_unverified"
+            result["blockers"].append("Topology-sensitive profile; verify per-VRF and operational behavior before any removal")
         break
     if result["source"] is None:
         result["blockers"].append("No directly observed higher-scope definition")
