@@ -2972,5 +2972,142 @@
       "id": "32717089-cfe034d1-36f7-4824-9f29-b8e989b088a2"
     }
   ],
-  "entries": []
+  "entries": [
+    {
+      "group": "Application Experience/App Recog Control",
+      "name": "Read existing ARC Configuration",
+      "id": "32717089-5415b14a-6cfa-4000-9b2e-8531a23e615b",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/arc",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Extensions/Extension Vsphere",
+      "name": "Read vsphere-instances",
+      "id": "32717089-b94cd9a7-55d6-4308-9b7d-af18af290813",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/vsphere-instances",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "High Availability/Switch Stack",
+      "name": "Read existing stack configurations",
+      "id": "32717089-cbd4772f-97fa-458b-a7bc-fd30ebb2345e",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/stacks/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "High Availability/Vsx",
+      "name": "Read vsx profiles",
+      "id": "32717089-875943e9-2193-4ff4-9351-0e43d13aa057",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/vsx-profiles",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces/Ap Port Profile",
+      "name": "Read configured port profiles",
+      "id": "32717089-b12a4601-71c7-473d-8e2e-ab21795bb0d7",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/ap-port-profiles",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces/Ap Uplink",
+      "name": "Read existing uplink parameters",
+      "id": "32717089-e6f4d311-17ea-4387-99a0-a433adb933a4",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/ap-uplinks",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces/Cdp",
+      "name": "Read existing CDP configuration.",
+      "id": "32717089-accb4cf1-d379-4196-8f48-7a543725fc03",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/cdp",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Interfaces/Device Profile",
+      "name": "Read Device-Profile configuration.",
+      "id": "32717089-8f1343d5-2c3d-450b-b6be-ff53fe8169d0",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/device-profile",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    }
+  ]
 }
