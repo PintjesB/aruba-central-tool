@@ -6,6 +6,8 @@ import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlencode
+from unittest.mock import patch
 
 from config_app import Workspace, audit_files, compare_devices, handler_for, read_audit
 
@@ -50,10 +52,10 @@ class WorkspaceTests(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             root = "/" + workspace.token + "/"
-            def request(method, path, headers=None):
+            def request(method, path, headers=None, body=None):
                 with_connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
                 try:
-                    with_connection.request(method, path, headers=headers or {})
+                    with_connection.request(method, path, body=body, headers=headers or {})
                     response = with_connection.getresponse()
                     result = response.status, response.getheader("Cache-Control"), response.read()
                     return result
@@ -66,8 +68,29 @@ class WorkspaceTests(unittest.TestCase):
                 self.assertEqual((status, cache), (200, "no-store"))
                 self.assertIn(b"Saved snapshots", body)
                 self.assertEqual(request("POST", root + "refresh", {"Origin": "https://example.com"})[0], 403)
-                self.assertEqual(request("POST", root + "refresh", {
-                    "Origin": f"http://127.0.0.1:{server.server_port}"})[0], 409)
+                same = {"Origin": f"http://127.0.0.1:{server.server_port}",
+                        "Content-Type": "application/x-www-form-urlencoded"}
+                self.assertIn(workspace.csrf.encode(), body)
+                self.assertEqual(request("POST", root + "refresh", same,
+                                         urlencode({"csrf": workspace.csrf}))[0], 409)
+                self.assertEqual(request("POST", root + "refresh", same,
+                                         urlencode({"csrf": "wrong"}))[0], 403)
+                opaque = {**same, "Origin": "null", "Sec-Fetch-Site": "same-origin"}
+                form = urlencode({"csrf": workspace.csrf, "client_id": "example-id",
+                                  "client_secret": "example-secret", "region": ""})
+                with patch("config_app.credential_refresh", return_value=lambda: self.fixture()) as factory:
+                    self.assertEqual(request("POST", root + "credentials",
+                                             {**opaque, "Sec-Fetch-Site": "cross-site"}, form)[0], 403)
+                    self.assertEqual(request("POST", root + "credentials",
+                                             {**opaque, "Origin": "https://example.com"}, form)[0], 403)
+                    self.assertEqual(request("POST", root + "credentials",
+                                             {**opaque, "Sec-Fetch-Site": "none"}, form)[0], 403)
+                    self.assertEqual(request("POST", root + "credentials", opaque, form)[0], 303)
+                    factory.assert_called_once_with("example-id", "example-secret", "")
+                    deadline = time.monotonic() + 3
+                    while workspace.state == "running" and time.monotonic() < deadline:
+                        time.sleep(.01)
+                    self.assertEqual(workspace.state, "complete")
             finally:
                 server.shutdown()
                 server.server_close()

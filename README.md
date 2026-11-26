@@ -62,7 +62,7 @@ Run `python central_tool.py review-config config-audit.json --output review.html
 
 Run `python central_tool.py app --directory <private-audit-directory>` to open a loopback-only browser application. It lists saved configuration audit snapshots, opens the existing explorer, and compares two devices of the same persona within one snapshot. Device comparisons exclude infrastructure by default; explicitly select a module to include it. Exact differences do not prove behavioral equivalence.
 
-Use a separate directory per customer. The application does not independently verify tenant identity. Enter client ID, client secret and region directly in the browser and select Connect and refresh. Credentials and access tokens are held in process memory only for the audit and are not deliberately persisted, logged, or returned to the browser. The application cannot control browser password managers, OS paging or crash dumps; decline save prompts. For legacy automation, environment credentials with `--enable-refresh --region-file <region-file>` remain supported. Module coverage lists fully qualified modules first, distinguishes partial from unqualified scopes, and links to evidence. No scope is authorized for writes. Refresh creates a new private audit file; only one refresh can run at a time. The server binds to 127.0.0.1 on a random port, uses a random session URL, validates Host and refresh Origin, disables caching and framing, and does not log request URLs. Keep the local session URL private. Press Ctrl+C to stop. No dependencies or database are required.
+Use a separate directory per customer. The application does not independently verify tenant identity. Enter client ID, client secret and region directly in the browser and select Connect and refresh. Credentials and access tokens are held in process memory only for the audit and are not deliberately persisted, logged, or returned to the browser. The application cannot control browser password managers, OS paging or crash dumps; decline save prompts. For legacy automation, environment credentials with `--enable-refresh --region-file <region-file>` remain supported. Module coverage lists fully qualified modules first, distinguishes partial from unqualified scopes, and links to evidence. No scope is authorized for writes. Refresh creates a new private audit file; only one refresh can run at a time. The server binds to 127.0.0.1 on a random port, uses a random session URL, validates Host, refresh Origin/fetch metadata and a separate anti-CSRF form token, disables caching and framing, and does not log request URLs. Keep the local session URL private. Press Ctrl+C to stop. No dependencies or database are required.
 
 ### Additional module qualification and Library inventory
 
@@ -75,6 +75,10 @@ The extended catalog adds DNS, NTP, SNMP, SNMP traps, logging, system informatio
 ### Unadapted profile evidence and Library comparison
 
 When the observed assignment or scope-map inventories identify a module without a dedicated adapter, the audit attempts read-only Library and annotated committed/effective queries at the observed source scopes. Scope IDs, function selectors and module names are validated and repeated source queries are deduplicated. Raw evidence is available under Module coverage, explicitly unqualified and excluded from migration candidates. The Library browser also joins exact observed assignment identities and compares qualified local bodies of matching identities; absent assignments do not prove a profile is unused. All values remain in private local snapshots.
+
+## Development roadmap
+
+See [ROADMAP.md](ROADMAP.md) for the configuration consolidation workflows, Library selection criteria, safety gates and delivery order.
 
 ## Safety boundary
 

@@ -1,0 +1,85 @@
+# Configuration management roadmap
+
+## Objective
+
+Reduce configuration duplication and unnecessary scope overrides in New Central while preserving the intended effective configuration and network behavior. Prioritize workflows that save engineering time on existing customer deployments. Read-only analysis must remain useful even when some profile types are unqualified.
+
+## Priority 0: reliable inputs
+
+- [ ] Validate browser connection, automatic region discovery, transient credentials and read-only refresh on a real tenant.
+- [ ] Qualify each module and its local, effective and Library views separately; distinguish empty, unsupported, incomplete, and forbidden responses.
+- [ ] Resolve actual device membership (site, site collection and device group), configuration authority (New versus Classic), persona and supported model/firmware.
+- [ ] Resolve exact configuration source and nearest applicable ancestor. Device groups are a separate inheritance path. Do not infer parentage from ordered scope lists.
+- [ ] Establish profile schema, identity, cardinality (additive versus replacement), default semantics, applicability and references for each supported module. Read-only inference must not authorize writes.
+- [ ] Preserve snapshots and compare changes within a verified tenant. Report incomplete scope and assignment coverage explicitly.
+
+## Priority 1: consolidation advisor
+
+Each finding shows source scope, device function, profile identity, exact local and effective bodies, alternative/reference body, affected scopes and devices, dependencies, proposed action, blockers and confidence. Group repeated bodies without losing original locations. Offer filters for module, site, group, device function, action and risk. No writes from the advisor.
+
+| ID | Scenario | Suggested action | Required evidence |
+|---|---|---|---|
+| C01 | Local device override matches applicable inherited configuration | Remove redundant override | Exact prospective inherited body and source, including intermediate and device-group precedence |
+| C02 | Local site/group/collection override matches inherited configuration | Remove redundant override | All descendant devices retain intended effective settings |
+| C03 | Local override differs only by omitted/default fields | Review possible normalization | Module-specific documented defaults and firmware/behavior evidence |
+| C04 | Local override genuinely differs | Keep intentional exception or standardize with explicit approval | Side-by-side differences and affected device set |
+| C05 | Identical local profiles exist at multiple devices | Promote to lowest common suitable scope, or assign Library profile to exact scopes; remove redundant locals | Membership, target support, exact consumers, no unintended propagation |
+| C06 | Identical definitions repeat across sites/groups | Reuse or create Library profile and assign to appropriate scopes | Exact bodies, applicable persona(s), dependencies and assignments |
+| C07 | Local profile exactly matches existing Library profile | Prefer reuse and assignment over another copy | Verified identity, exact body, assignment behavior and precedence |
+| C08 | Same identity has multiple distinct bodies | Flag conflict; choose canonical profile and preserve approved exceptions | Per-variant comparison, source/consumer coverage and explicit intended changes |
+| C09 | Library has duplicate content under different identities | Review consolidation of names/IDs | Module identity semantics, all references and assignment graph; never merge solely on body similarity |
+| C10 | Library profile has no observed assignments | Review unused-profile candidate | Complete assignment and reverse-reference coverage; never infer unused from incomplete evidence |
+| C11 | Multiple interfaces have equivalent settings | Recommend port profile/interface-profile reuse | Normalize only documented device-specific fields, preserve port identity, uplink/LAG, VLAN, PoE, security and topology dependencies |
+| C12 | Settings are inconsistently applied across devices of the same purpose | Compare to approved reference or desired standard | Explicit target set and intentional exceptions |
+| C13 | Local profile or assignment is shadowed by a closer scope | Review unnecessary assignment/override | Actual precedence, all affected devices, and future-use policy |
+| C14 | Configuration exists but is not observed on intended devices | Investigate missing assignment, applicability or sync | Assignment/monitoring evidence; never assume configuration delivery |
+| C15 | Referenced profile is missing or incompatible | Flag broken reference and recommend remediation | Qualified dependency graph and module-specific semantics |
+| C16 | Profile is present but apparently unused on devices | Review orphaned configuration | Operational and reverse-reference evidence; lack of observation is not proof of disuse |
+| C17 | Same profile name or VLAN ID has divergent definitions across functions | Review intended cross-function policy and conflicts | Function-specific schema and applicability; no automatic cross-persona merge |
+| C18 | Changes introduce drift since previous snapshot | Explain changes and generate review/rollback evidence | Comparable snapshots, tenant identity and exact scope/profile changes |
+
+## Priority 1: placement and Library advisor
+
+Library is a reusable profile repository, not an application scope. A shared profile needs explicit scope/device-function assignment. Local profiles suit a unique scope or intentional exception. Prefer the narrowest placement that covers the intended recipients without adding consumers. Use reusable Library profiles when consistent policy must be assigned across scopes/functions, including provisioning of future devices.
+
+| Configuration | Typical placement recommendation |
+|---|---|
+| Common Layer 2 VLAN definitions | Library with Global assignment if intended everywhere; otherwise assign only to relevant site/group/device scopes |
+| Site-specific VLAN | Site or group local profile, or Library assignment if reused |
+| Switch access/trunk port settings | Reusable switch port/interface profiles; keep actual interface mapping and unique port attributes local |
+| WLAN SSIDs, roles, policy and AAA profiles | Library where module supports reuse and security policy is common; retain per-site or per-role exceptions |
+| DNS/NTP/logging/SNMP settings | Shared profiles for standard infrastructure settings, with site-specific services or credentials reviewed separately |
+| Switch/AP system settings | Reuse common supported settings; keep hostnames, unique addresses and per-device attributes local |
+| QoS, ACL/policy, authentication and multicast settings | Reuse standard policy only after confirming compatibility, ordering and dependent resources |
+| SVIs, routed interfaces, LAG membership, addressing, VRRP/active gateway | Generally topology-specific; protect device-unique attributes and only promote explicitly supported shared portions |
+
+Do not assume all modules support every scope. In particular HPE's VLAN guidance recommends reusable Layer 2 VLANs in Library with Global assignment; some switch documentation limits creation of custom local VLANs at Global scope. Check actual supported contract before constructing a plan. Existing Library assignments replaced by a local override may have been unassigned, so deleting the local object alone may not restore the previous shared assignment.
+
+## Priority 2: guided change planner
+
+- [ ] Select candidates individually or by exact repeated-profile group, preserving all affected scopes.
+- [ ] Preview candidate destination scopes and their blast radius; distinguish intended recipients, newly affected devices, protected exceptions and unknown coverage.
+- [ ] Choose reuse existing Library profile, create Library profile plus assign, create supported local profile at a higher scope, or remove redundant override.
+- [ ] Show ordered operations, before/expected-after configuration, reference changes and rollback journal. Block a plan when any prerequisite is unknown.
+- [ ] Capture fresh evidence just before execution, detect drift and reject stale plans.
+- [ ] Implement explicit approval, per-module write adapters, least-privilege authentication, idempotent operations, phased verification and failure handling.
+- [ ] Create/reuse and verify target configuration before removing local definitions. Verify every affected device after changes, including operational checks where meaningful.
+- [ ] Restore prior bodies and assignments on failure using validated rollback operations. Never claim rollback is guaranteed without proving the inverse operations.
+
+No live write may be authorized by profile similarity, inferred identity, or a successful read alone. Start with the VLAN workflow; validate every subsequent write adapter independently. No automatic deletion of defaults, SVI/port/LAG dependencies, or unresolved objects.
+
+## Priority 3: adjacent engineering workflows
+
+- [ ] Bulk profile and scope assignment editor, device-group rename and membership change preview.
+- [ ] NAC MAC identity/tag/role/VLAN assignment inspection and controlled bulk administration.
+- [ ] Device/reference comparison, standards compliance, historical drift reports and private customer exports.
+- [ ] Multi-customer workspaces with explicit tenant separation, credential entry in memory only, no persistent API credentials and no cross-tenant comparison by default.
+
+## Vendor references
+
+- [Configuration model and precedence](https://arubanetworking.hpe.com/techdocs/VSG/docs/002-central/central-020-config-model/)
+- [Working with local profiles](https://developer.arubanetworks.com/new-central/docs/working-with-local-profiles)
+- [Working with Library profiles](https://developer.arubanetworks.com/new-central/docs/working-with-library-profiles)
+- [Configuration deployment models](https://arubanetworking.hpe.com/techdocs/new-central/content/cfg/get-start/get-start-cfg.htm)
+- [VLAN profile deployment guidance](https://arubanetworking.hpe.com/techdocs/new-central/content/cfg/profiles/vlan-prof.htm)
+- [AOS-CX configuration scope limitations](https://arubanetworking.hpe.com/techdocs/new-central-review/content/get-started/cx-cfg.htm)
