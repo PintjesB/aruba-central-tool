@@ -92,6 +92,27 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(finding["module_results"]["layer2-vlan"]["status"], "differences_observed")
         self.assertFalse(result["reference_count_confirmed"])
 
+    def test_drift_groups_keep_views_separate_and_count_device_impact(self):
+        from drift_review import drift_groups
+        before, current = snapshot(), snapshot("Changed")
+        result = configuration_drift(before, current, confirmed=True)
+        groups = drift_groups(result["records"], current)
+        self.assertEqual(len(groups), 1)
+        group = groups[0]
+        self.assertEqual(group["effective_device_count"], 1)
+        self.assertEqual(group["saved_scope_count"], 1)
+        self.assertEqual(group["library_count"], 1)
+        self.assertEqual(len(group["observations"]), 3)
+        self.assertFalse(group["safe_to_apply"])
+
+    def test_drift_groups_do_not_merge_different_transitions(self):
+        from drift_review import drift_groups
+        current = snapshot("Changed")
+        rows = configuration_drift(snapshot(), current, confirmed=True)["records"]
+        rows[0]["after"] = {"name": "Other"}
+        groups = drift_groups(rows, current)
+        self.assertEqual(len(groups), 2)
+
     def test_browser_routes_render_and_show_explicit_selection(self):
         import json
         import tempfile
@@ -105,6 +126,8 @@ class HistoryTests(unittest.TestCase):
             html = w.drift({"snapshot": "config-audit-new.json", "previous": "config-audit-old.json", "confirmed": "yes"})
             self.assertIn("Change worklist", html)
             self.assertIn("Common device serials", html)
+            self.assertIn("Profile change groups", html)
+            self.assertIn("Review impact", html)
             self.assertIn("Export private report JSON", html)
             html = w.standards({"snapshot": "config-audit-new.json", "persona": "ACCESS_SWITCH",
                                 "module": "layer2-vlan", "reference": "3", "target": "2"})
