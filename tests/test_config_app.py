@@ -73,6 +73,43 @@ class WorkspaceTests(unittest.TestCase):
                 server.server_close()
                 thread.join()
 
+    def test_coverage_distinguishes_partial_and_unqualified(self):
+        from config_app import module_coverage
+        bundle = {"results": {"ACCESS_SWITCH": {"modules": {
+            "a": {"scope_results": [{"review": {"qualified": True}}]},
+            "b": {"scope_results": [{"review": {"qualified": True}}, {"review": {"qualified": False}}]},
+            "c": {"scope_results": [{"review": {"qualified": False}}]}}}}}
+        rows = {r["module"]: r for r in module_coverage(bundle)}
+        self.assertEqual(rows["a"]["status"], "qualified")
+        self.assertEqual(rows["b"]["status"], "partial")
+        self.assertEqual(rows["c"]["status"], "unqualified")
+
+    def test_one_shot_credentials_are_not_saved_or_retained(self):
+        from unittest.mock import patch
+        from config_app import credential_refresh
+        from central_tool import EU_REGIONS
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            with patch("central_tool.detect_region"), patch("central_tool.configuration_audit", return_value=self.fixture()):
+                refresh = credential_refresh("test-client-id", "test-secret", EU_REGIONS[0])
+                client = refresh.__closure__[0].cell_contents
+                self.assertTrue(workspace.start_refresh(refresh))
+                deadline = time.monotonic() + 3
+                while workspace.state == "running" and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertEqual(workspace.state, "complete")
+                self.assertIsNone(workspace.refresh)
+                self.assertIsNone(client.client_id)
+                self.assertIsNone(client.client_secret)
+                self.assertIsNone(client.token)
+                self.assertFalse(workspace.start_refresh())
+                files = audit_files(Path(directory))
+                self.assertEqual(len(files), 1)
+                self.assertNotIn("test-secret", files[0].read_text())
+                self.assertNotIn("test-client-id", workspace.home())
+            with self.assertRaises(ValueError):
+                credential_refresh("id", "secret", "https://example.com")
+
     def test_refresh_single_flight_and_saved_capture(self):
         with tempfile.TemporaryDirectory() as directory:
             release = threading.Event()
