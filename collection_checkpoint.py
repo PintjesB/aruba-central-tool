@@ -125,3 +125,27 @@ def mark_complete(path):
             db.execute("UPDATE manifest SET payload = ?", (json.dumps(data),))
     finally:
         db.close()
+
+
+def available_checkpoints(directory, now=None):
+    """List only locally created, unsealed, nonexpired checkpoint filenames."""
+    import re
+    now = now or datetime.now(timezone.utc)
+    result = []
+    for path in Path(directory).glob("collection-*.db"):
+        if path.is_symlink() or not path.is_file() or not re.fullmatch(r"collection-[a-f0-9]{32}\.db", path.name):
+            continue
+        try:
+            db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+            try:
+                manifest = json.loads(db.execute("SELECT payload FROM manifest").fetchone()[0])
+                created = datetime.fromisoformat(manifest["created_at"])
+                if (manifest.get("schema") == 1 and manifest.get("complete") is False
+                        and created.tzinfo is not None and timedelta(0) <= now - created <= timedelta(hours=24)):
+                    result.append({"name": path.name, "created_at": created.isoformat(),
+                                   "pairs": db.execute("SELECT COUNT(*) FROM pairs").fetchone()[0]})
+            finally:
+                db.close()
+        except (sqlite3.Error, OSError, ValueError, KeyError, TypeError):
+            continue
+    return sorted(result, key=lambda row: row["created_at"], reverse=True)

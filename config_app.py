@@ -60,7 +60,7 @@ def module_coverage(bundle):
     return result
 
 
-def credential_refresh(client_id, client_secret, region, *, deep_catalog=False):
+def credential_refresh(client_id, client_secret, region, *, deep_catalog=False, checkpoint_path=None, resume=False):
     """One-shot credentials captured in a worker closure, not a workspace or file."""
     from central_tool import Central, EU_REGIONS, detect_region, configuration_audit, audit_progress
     if region and region not in EU_REGIONS:
@@ -72,7 +72,8 @@ def credential_refresh(client_id, client_secret, region, *, deep_catalog=False):
         try:
             audit_progress(progress, "Connection", 0, 0, "Authenticating and detecting region")
             detect_region(client, region or None)
-            return configuration_audit(client, progress=progress, deep_catalog=deep_catalog)
+            return configuration_audit(client, progress=progress, deep_catalog=deep_catalog,
+                                       checkpoint_path=checkpoint_path, resume=resume)
         finally:
             client.client_id = None
             client.client_secret = None
@@ -183,7 +184,7 @@ class Workspace:
                     "done": self.done, "total": self.total, "elapsed": int(elapsed),
                     "snapshot": self.snapshot}
 
-    def start_refresh(self, one_shot=None):
+    def start_refresh(self, one_shot=None, *, checkpoint_path=None):
         with self.lock:
             refresh = one_shot if one_shot is not None else self.refresh
             if refresh is None or self.state == "running":
@@ -208,6 +209,9 @@ class Workspace:
                     os.replace(temporary, target)
                 finally:
                     temporary.unlink(missing_ok=True)
+                if checkpoint_path is not None:
+                    from collection_checkpoint import mark_complete
+                    mark_complete(checkpoint_path)
                 state = "complete"
                 snapshot = target.name
             except Exception as exc:
@@ -242,14 +246,19 @@ class Workspace:
         from central_tool import EU_REGIONS
         disabled = " disabled" if state == "running" else ""
         hidden = f'<input type="hidden" name="csrf" value="{e(self.csrf)}">'
+        from collection_checkpoint import available_checkpoints
+        checkpoints = available_checkpoints(self.directory) if state != "running" else []
+        checkpoint_options = options([("", "New collection (resumable)") , ("fresh", "New collection without checkpoint")] + [(v["name"], "Resume " + v["created_at"] + " (" + str(v["pairs"]) + " saved scope pairs)") for v in checkpoints])
         refresh = (f'<form class="connection-form" method="post" action="{root}credentials" autocomplete="off">' + hidden +
                    '<label>API region<select name="region">'
                    + options([("", "Detect EU region")] + [(r, urlsplit(r).hostname.split(".")[0].upper()) for r in EU_REGIONS])
                    + '</select></label><label>Client ID<input name="client_id" type="text" required maxlength="1024" autocomplete="off"></label>'
                    '<label>Client secret<input name="client_secret" type="password" required maxlength="4096" autocomplete="new-password"></label>'
                    '<label>Collection depth<select name="depth"><option value="deep">Deep catalog (all discovered scopes)</option><option value="standard">Standard (observed functions and Global)</option></select></label>'
+                   '<label>Collection recovery<select name="checkpoint">' + checkpoint_options + '</select></label>'
                    f'<button type="submit"{disabled}>Connect and refresh</button></form>'
                    '<p><small>Deep collection can take substantially longer on large tenants. API coverage gaps and rejected reads remain visible.</small></p>'
+                   '<p><small>Resume only an interrupted collection with the same tenant, depth and inventory. Resumed evidence has mixed capture times; use a fresh collection for change verification.</small></p>'
                    '<p><small>Credentials are used only for this audit, in process memory. '
                    'They are not saved or returned by the application. Decline browser password-saving prompts.</small></p>')
         if self.refresh is not None:
@@ -591,7 +600,7 @@ def handler_for(workspace):
                 self.connection.settimeout(10)
                 values = parse_qs(self.rfile.read(length).decode("utf-8"),
                                   keep_blank_values=True, strict_parsing=True,
-                                  max_num_fields=512 if self.path == root + "save-standard" else 12 if self.path in (root + "save-standard", root + "approve-exception", root + "revoke-exception") else 5)
+                                  max_num_fields=512 if self.path == root + "save-standard" else 12 if self.path in (root + "save-standard", root + "approve-exception", root + "revoke-exception") else 6)
                 fields = values.pop("field_selection", []) if self.path == root + "save-standard" else []
                 if any(len(v) != 1 for v in values.values()):
                     raise ValueError("Invalid form")
@@ -630,12 +639,26 @@ def handler_for(workspace):
                     return
                 if self.path == root + "credentials":
                     depth = values.pop("depth", ["standard"])[0]
+                    recovery = values.pop("checkpoint", ["fresh"])[0]
                     if set(values) != {"client_id", "client_secret", "region"} or depth not in ("standard", "deep"):
                         raise ValueError("Invalid credential form")
-                    refresh = credential_refresh(values["client_id"][0], values["client_secret"][0], values["region"][0],
-                                                 deep_catalog=depth == "deep")
+                    from collection_checkpoint import available_checkpoints
+                    import uuid
+                    checkpoint_path = None
+                    resume = recovery not in ("", "fresh")
+                    if resume:
+                        if recovery not in {v["name"] for v in available_checkpoints(workspace.directory)}:
+                            raise ValueError("Unknown or expired checkpoint")
+                        checkpoint_path = workspace.directory / recovery
+                    elif recovery == "":
+                        checkpoint_path = workspace.directory / ("collection-" + uuid.uuid4().hex + ".db")
+                    # Preserve compatibility for callers using a non-resumable refresh.
+                    kwargs = {"deep_catalog": depth == "deep"}
+                    if checkpoint_path is not None:
+                        kwargs.update(checkpoint_path=checkpoint_path, resume=resume)
+                    refresh = credential_refresh(values["client_id"][0], values["client_secret"][0], values["region"][0], **kwargs)
                     values.clear()
-                    started = workspace.start_refresh(refresh)
+                    started = workspace.start_refresh(refresh, checkpoint_path=checkpoint_path)
                 else:
                     if values:
                         raise ValueError("Invalid refresh form")
