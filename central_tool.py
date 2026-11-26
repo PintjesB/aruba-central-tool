@@ -119,6 +119,29 @@ class Central:
                 self.expires = time.monotonic() + max(0, int(result["expires_in"]) - 60)
             return self.token
 
+    def change(self, method, path, params, body=None):
+        """Private transport for explicit guarded change adapters; never retry writes."""
+        if method not in ("POST", "DELETE") or not path.startswith(ALPHA + "/"):
+            raise ValueError("Unsupported configuration operation")
+        query = urlencode(params)
+        request = Request(self.base + path + ("?" + query if query else ""),
+                          data=None if body is None else canonical(body).encode("utf-8"),
+                          headers={"Accept": "application/json",
+                                   "Content-Type": "application/json",
+                                   "Authorization": "Bearer " + self._token()}, method=method)
+        self._wait_rate_limit()
+        # Write success may have an empty response body. HTTP errors propagate
+        # without a retry because the outcome may be uncertain.
+        if not hasattr(self._http, "opener"):
+            self._http.opener = build_opener(NoRedirect())
+        try:
+            with self._http.opener.open(request, timeout=30) as response:
+                if response.status != 200:
+                    raise APIError("Configuration write", response.status)
+                response.read()
+        except HTTPError as exc:
+            raise APIError("Configuration write", exc.code) from None
+
     def get(self, path, **params):
         query = urlencode(params)
         url = self.base + path + ("?" + query if query else "")
