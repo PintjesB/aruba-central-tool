@@ -14,6 +14,17 @@ PORT_TOPOLOGY = {"lag", "lacp", "ip", "ipv4", "ipv6", "vrrp", "vrf-forwarding",
                  "ap-profile", "gw-profile", "br-profile", "retain-profile-configs", "port-monitor", "vsx"}
 NAMED_REFERENCES = {"sw-profile": "sw-port-profiles", "ap-profile": "ap-port-profiles",
                     "gw-profile": "gw-port-profiles", "portchannel-lag": "portchannels"}
+# Reference fields are scoped to documented source profile families.
+# https://developer.arubanetworks.com/new-central-config/reference/updatewlanssidswlanssidbyid
+# https://developer.arubanetworks.com/new-central-config/reference/replaceapportprofilesprofilebyid
+AUTH_REFERENCES = {"default-role": "roles", "auto-default-role": "roles",
+                   "mac-auth-only-role": "roles", "pre-auth-role": "roles",
+                   "auth-server-group": "server-groups", "acct-server-group": "server-groups",
+                   "primary-auth-server": "auth-servers", "backup-auth-server": "auth-servers",
+                   "primary-acct-server": "auth-servers", "backup-acct-server": "auth-servers"}
+MODULE_REFERENCES = {"wlan-ssids": AUTH_REFERENCES, "ap-port-profiles": AUTH_REFERENCES,
+                     "roles": {"macsec-policy": "macsec", "object-group-ipv4": "object-groups",
+                               "object-group-ipv6": "object-groups"}}
 ADDITIVE = {"layer2-vlan", "roles", "wlan-ssids", "auth-servers"}
 PRECEDENCE = ("group", "site", "collection", "global")
 
@@ -23,21 +34,22 @@ def effective_views(entry):
             for module, data in entry["modules"].items()}
 
 
-def explicit_references(value, path=()):
+def explicit_references(value, path=(), module=None):
+    named = {**NAMED_REFERENCES, **MODULE_REFERENCES.get(module, {})}
     if isinstance(value, dict):
         for key, item in value.items():
             if key in ("@", "metadata"):
                 continue
             here = path + (key,)
-            if key in NAMED_REFERENCES:
-                yield NAMED_REFERENCES[key], item if isinstance(item, str) and item else None, here
+            if key in named:
+                yield named[key], item if isinstance(item, str) and item else None, here
             elif key == "sw-profile-alias":
                 yield "sw-port-profiles", None, here
             else:
-                yield from explicit_references(item, here)
+                yield from explicit_references(item, here, module)
     elif isinstance(value, list):
         for i, item in enumerate(value):
-            yield from explicit_references(item, path + (i,))
+            yield from explicit_references(item, path + (i,), module)
 
 
 def library_usage(bundle, module, identities, references):
@@ -61,7 +73,7 @@ def library_usage(bundle, module, identities, references):
         result[identity] = {"identity": identity, "assignment_count": len(unique),
                             "assignment_status": assignment_view.get("status", "not_collected"),
                             "assignments": rows, "reference_count": len(consumers),
-                            "reference_devices": len({(r["persona"], r["scope"]) for r in refs}),
+                            "reference_devices": len({(r["persona"], r["scope"]) for r in refs if r.get("source_scope_kind", "device") == "device"}),
                             "references": refs, "shared_devices": [], "matching_other_devices": [],
                             "different_devices": [], "unknown_devices": [], "compared_devices": 0,
                             "coverage_complete": False}
@@ -150,7 +162,7 @@ def advanced_analysis(bundle):
                             emit(module, identity, "layer2-vlan", None, path)
                         if module == "vlan-interfaces" and identity.isdigit():
                             emit(module, identity, "layer2-vlan", identity, ["identity"])
-                    for target, ref, path in explicit_references(body):
+                    for target, ref, path in explicit_references(body, module=module):
                         emit(module, identity, target, ref, path)
                     if module == "ethernet-interfaces" and persona.endswith("_SWITCH"):
                         if body.get("routing") is True or PORT_TOPOLOGY & body.keys():
@@ -262,6 +274,43 @@ def advanced_analysis(bundle):
                              "Confirm profile assignment and retain/remove semantics in lab.",
                              "Verify all dependencies and complete effective port configuration."],
                 "safe_to_apply": False})
+    # Index saved definitions even when they are not currently deployed. A
+    # Library object or a higher-scope profile may reference another profile
+    # that has no observed device-level consumer yet.
+    def definition_refs(persona, sid, name, kind, module, profiles, target_views):
+        vlan_view = target_views.get("layer2-vlan", {})
+        vlans = vlan_view.get("profiles", {}) if vlan_view.get("status") == "list_parsed" else {}
+        for identity, raw in profiles.items():
+            body = profile_body(raw)
+            refs = list(explicit_references(body, module=module))
+            if module != "layer2-vlan":
+                vlan = reference_candidates(body, vlans)
+                refs.extend(("layer2-vlan", vid, ref["path"]) for ref in vlan["references"] for vid in ref["vlan_ids"])
+                refs.extend(("layer2-vlan", None, path) for path in vlan["unresolved_paths"])
+            for target, target_id, path in refs:
+                view = target_views.get(target, {})
+                # Existence in Library is not proof of device applicability.
+                state = ("unresolved" if target_id is None or view.get("status") != "list_parsed"
+                         else "definition_observed" if target_id in view["profiles"] else "not_observed")
+                result["references"].append({"persona": persona, "scope": sid, "device": name,
+                    "source_scope_kind": kind, "source_module": module, "source": identity,
+                    "target_module": target, "target": target_id, "path": list(path), "status": state})
+    for persona, entry in sorted(bundle["results"].items()):
+        views = effective_views(entry)
+        scopes = {s["id"]: s for s in entry["scopes"]}
+        for module, data in sorted(entry["modules"].items()):
+            for scope in data["scope_results"]:
+                sid = scope["scope"]
+                meta = scopes.get(sid)
+                local = scope.get("local_view", {})
+                if not meta or meta["kind"] == "device" or local.get("status") != "list_parsed":
+                    continue
+                definition_refs(persona, sid, meta.get("name") or sid, meta["kind"], module,
+                                local["profiles"], {m: v.get(sid, {}) for m, v in views.items()})
+    for module, view in sorted(library_modules.items()):
+        if view.get("status") == "list_parsed":
+            definition_refs("Library", "Library", "Library", "library", module, view["profiles"], library_modules)
+
     for module, view in sorted(library.get("modules", {}).items()):
         # Identity is semantic for numeric VLAN IDs and SSIDs. Report equivalent
         # named bodies only; never assume interchangeability.
