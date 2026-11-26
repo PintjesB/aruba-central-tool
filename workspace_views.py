@@ -98,6 +98,36 @@ def vlan_explanation(local, reference, effective=None):
          for d in assessment["differences"]]) + '<p class="note">Not returned does not mean disabled or equal to the default. Effective is the Central configuration view, not a live switch CLI or traffic measurement.</p>'
 
 
+def vlan_instance_context(bundle, persona, sources, identity):
+    """Keep instance-specific observations distinct from collection bodies."""
+    evidence = bundle.get("vlan_instance_details", {}).get(persona, {})
+    rows = []
+    for source in sources:
+        if source["kind"] != "device":
+            continue
+        details = evidence.get(source["scope"], {}).get(identity, {})
+        for kind in ("local", "effective"):
+            result = details.get(kind)
+            if result is None:
+                continue
+            profile = result.get("profile", {})
+            def value(key):
+                return e(json.dumps(profile[key], ensure_ascii=False)) if key in profile else (
+                    '<span class="muted">Not returned</span>' if result["status"] == "observed" else
+                    '<span class="muted">Unavailable</span>')
+            label = {"observed": "Read by ID", "source_unverified": "Local source not confirmed",
+                     "request_rejected": "Request rejected", "permission_denied": "Access denied",
+                     "schema_unresolved": "Response format not recognized", "read_failed": "Read failed"}.get(result["status"], pretty(result["status"]))
+            rows.append(tr(e(source["name"]), "Saved locally" if kind == "local" else "Effective", value("name"), value("enable"),
+                           e(label) + (f' (HTTP {e(result["http_error"])})' if "http_error" in result else ""),
+                           raw(result, "Response")))
+    if not rows:
+        return '<p class="note">No targeted VLAN read by ID captured. Refresh to check omitted name or administrative state, if applicable.</p>'
+    return ('<h3>Targeted VLAN reads by ID</h3>'
+            + table(("Switch", "View", "VLAN name", "Administrative enable", "Read result", "Evidence"), rows)
+            + '<p class="note">These are independent Central responses. If the values differ from the collection, review the discrepancy; the original snapshot and comparison are not overwritten. If both omit a field, its configured value is still unverified.</p>')
+
+
 def operational_vlan_context(bundle, persona, sources, identity):
     from central_tool import configuration_operational_vlan
     states = {"not_collected": "Not collected in this snapshot",
@@ -181,7 +211,7 @@ def advisor_view(workspace, query):
         details = (
             f'<h3>Why this appears</h3><p>{e(ACTION_GUIDE[action][1])}</p>'
             f'<h3>What to do</h3><p>{e(ACTION_GUIDE[action][2])}</p>'
-            + comparison + (operational_vlan_context(bundle, f["persona"], sources, f["identity"]) if f["module"] == "layer2-vlan" else "") +
+            + comparison + (vlan_instance_context(bundle, f["persona"], sources, f["identity"]) + operational_vlan_context(bundle, f["persona"], sources, f["identity"]) if f["module"] == "layer2-vlan" else "") +
             '<h3>Local scopes</h3>' + source_table +
             ('<h3>Observed device configuration</h3>' + table(("Device", "Profile state"), device_rows) if device_rows else "") +
             ('<h3>Higher-scope configuration</h3>' + table(("Scope", "Type", "Effective body"), scope_rows) if scope_rows else "") +
