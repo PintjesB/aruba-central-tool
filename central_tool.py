@@ -1609,6 +1609,46 @@ def review_module_scope(local, effective, baseline, device_only=False, is_global
     return result
 
 
+def capture_configuration_operational_vlans(client, results, workers=AUDIT_WORKERS, progress=None):
+    """Best-effort switch monitoring evidence; never block the configuration audit."""
+    tasks = [(persona, scope) for persona, entry in sorted(results.items())
+             if persona in PERSONAS for scope in entry["scopes"] if scope["kind"] == "device"]
+    def collect(task):
+        persona, scope = task
+        try:
+            evidence = probe_operational_vlans(client, scope.get("metadata") or {})
+        except (RuntimeError, OSError, ValueError):
+            evidence = {"status": "monitoring_read_failed"}
+        return persona, scope["id"], {**evidence, "captured_at": datetime.now(timezone.utc).isoformat()}
+    audit_progress(progress, "Operational VLANs", 0, len(tasks), "Reading switch monitoring")
+    observations = defaultdict(dict)
+    for persona, sid, evidence in ordered_parallel(tasks, collect, workers,
+            completed=lambda done, total: audit_progress(progress, "Operational VLANs", done, total, "Reading switch monitoring")):
+        observations[persona][sid] = evidence
+    return dict(observations)
+
+
+def configuration_operational_vlan(bundle, persona, sid, vid):
+    """Return the exact reported monitoring fields for one uniquely observed VLAN."""
+    evidence = bundle.get("operational_vlans", {}).get(persona, {}).get(sid, {})
+    result = {"status": evidence.get("status", "not_collected"), "captured_at": evidence.get("captured_at")}
+    if result["status"] != "response_received":
+        return result
+    payload = evidence.get("payload")
+    if not isinstance(payload, dict):
+        return {**result, "status": "schema_unresolved"}
+    lists = [v for k, v in payload.items() if k != "metadata" and isinstance(v, list)]
+    if len(lists) != 1 or not all(isinstance(v, dict) for v in lists[0]):
+        return {**result, "status": "schema_unresolved"}
+    matches = [v for v in lists[0] if parse_reference_ids(v.get("id")) == {str(vid)}]
+    if len(matches) != 1:
+        return {**result, "status": "identity_unresolved" if len(matches) > 1 else
+                "not_observed", "may_be_truncated": len(lists[0]) >= 1000}
+    return {**result, "status": "observed", "fields": {k: matches[0][k] for k in
+            ("id", "name", "status", "type", "ipv4", "taggedPorts", "untaggedPorts", "voice") if k in matches[0]},
+            "may_be_truncated": len(lists[0]) >= 1000}
+
+
 def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None):
     """Inventory-driven read-only audit with bounded parallel scope reads."""
     audit_progress(progress, "Discovery", 0, 0, "Reading device inventory and assignments")
@@ -1698,12 +1738,14 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     print("Reading tenant Library and assignments", flush=True)
     library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress)
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress)
+    operational = capture_configuration_operational_vlans(client, results, workers, progress)
     print(f"Configuration audit coverage: personas reviewed={len(results)}; "
           f"personas without adapter={len(unqualified)}; migration authorized=no")
     return {"schema": 1, "kind": "configuration_audit", "region": client.base,
             "captured_at": datetime.now(timezone.utc).isoformat(), "inventory": records,
             "results": results, "unqualified_personas": unqualified, "library": library,
             "profile_type_discovery": profile_types, "unadapted_profiles": unadapted,
+            "operational_vlans": operational,
             "catalog_exhaustive": False, "safe_to_apply": False}
 
 
