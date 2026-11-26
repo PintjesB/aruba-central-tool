@@ -653,6 +653,24 @@ document.addEventListener('click',event=>{
 """
 
 
+def keyed_profile_evidence(bundle, persona, scope, module, identity):
+    reads = ((bundle.get("keyed_profile_details") or {}).get("profiles", {})
+             .get(persona, {}).get(str(scope), {}).get(module, {}).get(identity, {}))
+    if not reads:
+        return ""
+    labels = {"library": "Library", "local": "Saved local", "effective": "Effective"}
+    body = '<h3>Individual profile reads</h3><p class="note">Additional evidence from the individual profile endpoint. Source and completeness are not verified; these values do not replace the collection or authorize changes.</p>'
+    for kind, evidence in sorted(reads.items()):
+        body += '<h4>' + e(labels.get(kind, kind)) + '</h4>' + status(evidence["status"])
+        if evidence.get("profile") is not None:
+            body += property_table(evidence["profile"])
+            if evidence.get("differences"):
+                body += '<h4>Differences from collection response</h4>' + diff_table(
+                    evidence["differences"], "Collection", "Individual read")
+        body += raw(evidence, "Individual API evidence")
+    return body
+
+
 def library_view(workspace, query):
     from config_app import library_profile_comparison
     from advanced_review import advanced_analysis, library_usage
@@ -712,6 +730,7 @@ def library_view(workspace, query):
             if differing:
                 detail += '<details><summary>Local configuration differences</summary>' + "".join(
                     f'<h3>{e(v["scope_name"])}</h3>' + diff_table(v["differences"], "Local", "Library") for v in differing) + '</details>'
+            detail += keyed_profile_evidence(bundle, "Library", "", module, identity)
             detail += '<details><summary>Observed assignments and usage</summary>' + usage_detail(usage[identity]) + '</details>' + raw({"profile": profile, **review})
             rows.append(tr(f'<strong>{e(title_profile(identity, profile))}</strong>', *usage_cells(usage[identity]), str(len(variants)),
                            badge(str(conflict), "warn" if conflict else "neutral"), inspect(identity, detail)))
@@ -864,6 +883,17 @@ def coverage_view(workspace, query):
         if pending:
             body += '<p>Profile collections not captured: ' + e(", ".join(sorted(pending))) + '</p>'
         body += f'<p><a href="{e(catalog["source"])}" target="_blank" rel="noopener noreferrer">HPE published API catalog</a> · Revision {e(catalog["source_updated_at"])}</p></section>'
+    keyed = bundle.get("keyed_profile_details")
+    if keyed:
+        outcomes = keyed.get("outcomes", {})
+        body += '<section><h2>Individual profile evidence</h2>' + metrics([
+            ("Supported keyed modules", len(keyed.get("supported_modules", [])), "Documented single-key selectors"),
+            ("Individual reads", sum(outcomes.values()), "Includes failed or invalid selectors"),
+            ("Identity observed", outcomes.get("identity_observed", 0), "Source not qualified"),
+        ]) + '<p class="note">Open a profile in Library or Configuration to compare individual and collection responses. Only observed Library and saved local identities are queried; inherited-only and other resource types remain outstanding.</p>'
+        body += '<p>' + e(", ".join(f"{pretty(k)}: {v}" for k, v in sorted(outcomes.items())) or "No observed profile identities") + '</p></section>'
+    else:
+        body += '<section><h2>Individual profile evidence</h2><p class="muted">Not collected. Select Deep catalog collection to retrieve additional individual profile settings.</p></section>'
     ledger = bundle.get("api_read_coverage")
     if ledger:
         operations = ledger.get("operations", [])
@@ -980,6 +1010,7 @@ def explorer_view(workspace, query):
                         detail += '<h3>Saved settings</h3>' + property_table(profile_body(saved))
                     if effective is not None:
                         detail += '<h3>Effective settings</h3>' + property_table(profile_body(effective))
+                    detail += keyed_profile_evidence(bundle, persona, view["scope"], mod, identity)
                     rows.append(tr(e(scope_name), e(module_label(mod)), e(title),
                                    badge("Partial evidence", "warn"), inspect(title, detail)))
             continue
@@ -990,6 +1021,7 @@ def explorer_view(workspace, query):
                 continue
             title = title_profile(r["identity"], r["local"] or r["effective"])
             detail = '<h3>Global comparison</h3>' + diff_table(r["global_differences"], "Local", "Global") + '<h3>Effective settings</h3>' + property_table(r["effective"]) + raw(r)
+            detail += keyed_profile_evidence(bundle, persona, view["scope"], mod, r["identity"])
             rows.append(tr(f'<strong>{e(scope_name)}</strong><small>{e(pretty(view["scope_kind"]))}</small>', e(module_label(mod)), e(title),
                            badge(profile_state_label(r["status"]), "good" if r["status"] in ("inherited", "shared", "local_matches_global") else "warn" if r["status"] in ("source_conflict", "local_differs_from_global", "local_effective_mismatch") else "neutral"), inspect(title, detail)))
     q = sum(v["review"]["qualified"] for _, _, _, v in records)
