@@ -483,7 +483,7 @@ def engineering_view(workspace, query):
     data = advanced_analysis(bundle)
     panels = []
     def panel(key, label, hint, headers, rows, count):
-        panels.append((key, label, count, f'<section data-panel="{key}" data-group="engineering"><h2>{e(label)}</h2><p class="muted">{e(hint)}</p>'
+        panels.append((key, label, count, f'<section data-panel="{key}" data-group="engineering"><p class="filter-hint">{e(hint)}</p>'
                        + table(headers, rows, search=True) + '</section>'))
     rows = []
     for i, record in enumerate(data["port_groups"], 1):
@@ -545,12 +545,16 @@ def engineering_view(workspace, query):
                   + "".join(f'<details><summary>{e(identity)} · Where it is used</summary>{usage_detail(u)}</details>' for identity, u in usage.items())
                   + '<h3>Before consolidating</h3><ol><li>Choose the canonical name based on usage and naming standards.</li><li>Move assignments and references to that name.</li><li>Verify effective configuration and complete reverse references before deleting the old profile.</li></ol>'
                   + raw(r))
-        for identity, u in usage.items():
-            rows.append(tr(e(module_label(r["module"])), f'<strong>{e(identity)}</strong><small>Matches {e(", ".join(i for i in r["identities"] if i != identity))}</small>',
-                           *usage_cells(u), badge("Suggested to keep", "info") if identity == keep else "Review",
-                           inspect(", ".join(r["identities"]), detail, "Compare usage")))
-    panel("duplicates", "Duplicate Library profiles", "Compare each matching profile name separately. Choose which to retain based on observed assignments, shared device deployments and referencing configuration objects. Counts are not complete usage evidence.",
-          ("Module", "Profile", "Assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Suggested action", ""), rows, len(rows))
+        # One decision per duplicate group. Keep all per-profile usage counts
+        # aligned, rather than repeating the same review button for every member.
+        cells = [usage_cells(u) for u in usage.values()]
+        stack = lambda values: '<div class="usage-stack">' + "".join(f'<div>{v}</div>' for v in values) + '</div>'
+        rows.append(tr(e(module_label(r["module"])),
+                       stack([f'<strong>{e(identity)}</strong>' + (' <span class="retain-mark">Keep</span>' if identity == keep else "") for identity in usage]),
+                       *(stack([values[index] for values in cells]) for index in range(4)),
+                       e(keep or "Choose profile"), inspect(", ".join(r["identities"]), detail, "Review group")))
+    panel("duplicates", "Duplicate Library profiles", "Each row is a duplicate group. Compare observed usage for each name before choosing which profile to retain.",
+          ("Module", "Matching profiles", "Assignments", "Shared devices", "References", "Unknown reads", "Suggested keep", ""), rows, len(rows))
     for key, label, records in (("references", "Reference review", [r for r in data["references"] if r["status"] != "observed"]),
                                 ("resolved", "Observed references", [r for r in data["references"] if r["status"] == "observed"])):
         rows = [tr(e(r["device"]), f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
@@ -619,12 +623,13 @@ def library_view(workspace, query):
         link = url(root, "library", snapshot=name, module=key)
         rows.append(tr(f'<a href="{link}">{e(module_label(key))}</a>', str(len(view["profiles"])), status(view["status"])))
     body = intro("Library", "Shared profiles and their observed assignments.", picker)
-    body += (f'<section><form method="get" action="{root}library"><input type="hidden" name="snapshot" value="{e(name)}">'
-             + select("module", [("", "All collections")] + [(k, module_label(k)) for k in sorted(modules)], module, "Profile collection")
-             + '<button type="submit" class="quiet">Open collection</button></form></section>')
     if not module:
         body += '<section><h2>Profile collections</h2>' + table(("Module", "Profiles", "State"), rows, search=True) + '</section>'
     else:
+        body += (f'<div class="collection-nav"><a href="{url(root, "library", snapshot=name)}">← All collections</a>'
+                 + f'<form class="auto-select" method="get" action="{root}library"><input type="hidden" name="snapshot" value="{e(name)}">'
+                 + select("module", [(k, module_label(k)) for k in sorted(modules)], module, "Collection")
+                 + '<noscript><button type="submit">Open</button></noscript></form></div>')
         view = modules[module]
         comparison = library_profile_comparison(bundle, module)
         usage = library_usage(bundle, module, view["profiles"], advanced_analysis(bundle)["references"])
@@ -634,12 +639,13 @@ def library_view(workspace, query):
             matches = review.get("assignments", [])
             variants = review.get("local_variants", [])
             conflict = sum(v["classification"] == "different_body" for v in variants)
-            detail = '<h3>Profile settings</h3>' + property_table(review.get("profile", profile)) + '<h3>Observed assignments</h3>' + table(("Scope", "Function"), [tr(e(a.get("scope-name", a.get("scope-id", ""))), e(persona_label(a.get("device-function", "")))) for a in matches])
+            detail = '<h3>Profile settings</h3>' + property_table(review.get("profile", profile))
             detail += '<h3>Local instances</h3>' + table(("Scope", "Function", "Comparison"), [tr(e(v["scope_name"]), e(persona_label(v["persona"])), status(v["classification"])) for v in variants])
-            for v in variants:
-                if v["differences"]:
-                    detail += f'<h3>{e(v["scope_name"])} differences</h3>' + diff_table(v["differences"], "Local", "Library")
-            detail += usage_detail(usage[identity]) + raw({"profile": profile, **review})
+            differing = [v for v in variants if v["differences"]]
+            if differing:
+                detail += '<details><summary>Local configuration differences</summary>' + "".join(
+                    f'<h3>{e(v["scope_name"])}</h3>' + diff_table(v["differences"], "Local", "Library") for v in differing) + '</details>'
+            detail += '<details><summary>Observed assignments and usage</summary>' + usage_detail(usage[identity]) + '</details>' + raw({"profile": profile, **review})
             rows.append(tr(f'<strong>{e(title_profile(identity, profile))}</strong>', *usage_cells(usage[identity]), str(len(variants)),
                            badge(str(conflict), "warn" if conflict else "neutral"), inspect(identity, detail)))
         body += f'<section><h2>{e(module_label(module))} · {len(rows)} profiles</h2>' + table(("Profile", "Observed assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Local instances", "Different bodies", ""), rows, search=True) + '</section>'
