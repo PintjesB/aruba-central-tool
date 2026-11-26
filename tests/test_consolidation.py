@@ -256,3 +256,15 @@ class ConsolidationTests(unittest.TestCase):
             self.assertNotIn('data-plan="{&quot;action&quot;: &quot;promote_local&quot;', html)
             self.assertIn("Scope precedence", w.advanced({"snapshot": name}))
             self.assertIn("Compare overrides", w.scopes({"snapshot": name}))
+
+    def test_vlan_comparison_displays_effective_values_not_assumed_defaults(self):
+        from workspace_views import vlan_explanation
+        html = vlan_explanation({"vlan": 1}, {"vlan": 1, "enable": True, "name": "DEFAULT_VLAN_1"},
+                                {"vlan": 1, "enable": False, "name": "Effective name"})
+        self.assertIn("Saved locally", html)
+        self.assertIn("Effective at source", html)
+        self.assertIn("Global / reference", html)
+        self.assertIn("Effective name", html)
+        self.assertIn("false", html)
+        self.assertIn("Not returned", html)
+        self.assertIn("not a live switch CLI", html)
