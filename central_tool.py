@@ -1702,7 +1702,10 @@ def capture_vlan_instance_details(client, results, workers=AUDIT_WORKERS, progre
                     continue
                 for kind in ("local", "effective"):
                     body = row[kind]
-                    if isinstance(body, dict) and any(k not in body for k in ("name", "enable")):
+                    reference = row.get("global_reference")
+                    omitted = isinstance(body, dict) and isinstance(reference, dict) and any(
+                        d["kind"] == "missing_local" for d in field_differences(body, reference))
+                    if isinstance(body, dict) and (omitted or any(k not in body for k in ("name", "enable"))):
                         tasks.append((persona, scope["scope"], row["identity"], kind))
     def collect(task):
         persona, scope, vid, kind = task
@@ -1831,6 +1834,9 @@ def vlan_comparison_evidence(bundle, persona, sid, row):
         detail = details.get(kind, {})
         if isinstance(body, dict) and detail.get("status") == "observed":
             merge(body, detail["profile"], (kind,), "Central VLAN by ID")
+    if isinstance(local, dict) and isinstance(effective, dict):
+        conflicts.extend("local_vs_effective." + ".".join(map(str, d["path"])) for d in field_differences(local, effective)
+                         if d["kind"] not in ("missing_local", "missing_reference"))
     deployed = {}
     cli = bundle.get("switch_vlan_cli", {}).get(persona, {}).get(sid, {})
     live = cli.get("vlans", {}).get(row["identity"], {}) if cli.get("status") == "observed" else {}
