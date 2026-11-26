@@ -35,6 +35,7 @@ AAA_REFERENCES = {"dpp-netaccess-default-role": "roles", "dpp-netaccess-server-g
 LIST_REFERENCES = {"aaa-profile": {"rfc3576-server-list": "auth-servers"}}
 MODULE_REFERENCES = {"wlan-ssids": AUTH_REFERENCES, "ap-port-profiles": AUTH_REFERENCES,
                      "aaa-profile": AAA_REFERENCES,
+                     "role-acls": {"src-role": "roles"},
                      "ethernet-interfaces": PORT_SECURITY_REFERENCES,
                      "sw-port-profiles": SWITCH_PORT_REFERENCES,
                      "devicefingerprinting-interface": {"profile-name": "devicefingerprinting-profile"},
@@ -52,6 +53,9 @@ def effective_views(entry):
 def explicit_references(value, path=(), module=None):
     named = {**NAMED_REFERENCES, **MODULE_REFERENCES.get(module, {})}
     if isinstance(value, dict):
+        if module == "policies" and value.get("type") == "ADDRESS_ROLE":
+            role = value.get("role")
+            yield "roles", role if isinstance(role, str) and role else None, path + ("role",)
         for key, item in value.items():
             if key in ("@", "metadata"):
                 continue
