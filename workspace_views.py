@@ -408,6 +408,41 @@ function filter(reset=true){
  $('advisor-empty').hidden=filtered.length>0;
  $('advisor-prev').parentElement.hidden=pages<=1;
 }
+function dependencyOrder(chosen){
+ const byId=new Map(chosen.map(f=>[f.id,f]));
+ const outgoing=new Map(chosen.map(f=>[f.id,new Set()]));
+ const incoming=new Map(chosen.map(f=>[f.id,0]));
+ const relationships=[];
+ const seen=new Set();
+ const matches=(f,ref)=>f.module===ref.target_module&&f.identity===ref.target&&
+  (f.persona===ref.persona||ref.persona==='Library');
+ for(const consumer of chosen){
+  for(const ref of (consumer.dependency_review||{}).dependencies||[]){
+   if(!['observed','definition_observed'].includes(ref.status)||ref.target==null||
+      !['effective','library'].includes(ref.source_view))continue;
+   if(ref.source_module!==consumer.module||ref.source!==consumer.identity)continue;
+   for(const prerequisite of chosen){
+    if(prerequisite.id===consumer.id||!matches(prerequisite,ref))continue;
+    const key=JSON.stringify([prerequisite.id,consumer.id]);
+    if(seen.has(key))continue;seen.add(key);
+    outgoing.get(prerequisite.id).add(consumer.id);
+    incoming.set(consumer.id,incoming.get(consumer.id)+1);
+    relationships.push({prerequisite:prerequisite.id,consumer:consumer.id,evidence:ref});
+   }
+  }
+ }
+ const order=[];
+ const ready=chosen.filter(f=>incoming.get(f.id)===0).map(f=>f.id);
+ while(ready.length){
+  const id=ready.shift();order.push(id);
+  for(const next of outgoing.get(id)){
+   incoming.set(next,incoming.get(next)-1);
+   if(incoming.get(next)===0)ready.push(next);
+  }
+ }
+ const blocked=chosen.filter(f=>!order.includes(f.id)).map(f=>f.id);
+ return {order:[...order,...blocked],blocked,relationships,complete:false};
+}
 function bulkReview(chosen){
  const known=new Map(),unknown=new Map(),touches=new Map(),library=new Map(),fallbacks=[];
  const collisions=[],seen=new Set(),stages={prepare:[],verify:[],cleanup:[]};
@@ -461,7 +496,11 @@ function bulkReview(chosen){
   if(library.has(k))collision(library.get(k),f.id,'Selected Library reuse overlaps a proposed Library promotion');
  }
  for(const f of fallbacks)if(touches.has(f.key))collision(touches.get(f.key),f.id,'A selected proposal touches another proposal’s expected inherited definition');
- return {known_recipients:[...known.values()],unknown_recipients:[...unknown.values()],collisions,missing_destinations:missing,stages,safe_to_apply:false};
+ const dependency_order=dependencyOrder(chosen);
+ const rank=new Map(dependency_order.order.map((id,i)=>[id,i]));
+ for(const phase of ['prepare','verify'])stages[phase].sort((a,b)=>rank.get(a.id)-rank.get(b.id));
+ stages.cleanup.sort((a,b)=>rank.get(b.id)-rank.get(a.id));
+ return {known_recipients:[...known.values()],unknown_recipients:[...unknown.values()],collisions,missing_destinations:missing,stages,dependency_order,safe_to_apply:false};
 }
 function selection(){
  const chosen=checks.filter(c=>c.checked&&!c.disabled).map(c=>{
@@ -479,7 +518,7 @@ function selection(){
  $('clear-selection').disabled=!chosen.length;
  $('open-preview').disabled=!chosen.length;
  const review=bulkReview(chosen);
- $('export-plan').disabled=!chosen.length||review.missing_destinations.length>0||review.collisions.length>0;
+ $('export-plan').disabled=!chosen.length||review.missing_destinations.length>0||review.collisions.length>0||review.dependency_order.blocked.length>0;
  return chosen;
 }
 function el(tag,text){const n=document.createElement(tag);n.textContent=text;return n;}
@@ -501,6 +540,18 @@ function preview(){
   const labels=new Map(chosen.map(f=>[f.id,f.module+' / '+f.identity+' ('+f.persona+')']));
   for(const c of review.collisions)list.append(el('li',labels.get(c.first)+' ↔ '+labels.get(c.second)+': '+c.reason));
   summary.append(list);
+ }
+ const dep=review.dependency_order;
+ const labels=new Map(chosen.map(f=>[f.id,f.module+' / '+f.identity+' ('+f.persona+')']));
+ summary.append(el('h3','Dependency-aware review order'),
+  el('p',dep.relationships.length+' observed relationship(s) between selected profile identities. Prepare prerequisites before consumers; review cleanup in reverse order. Same-name evidence does not establish exact source identity.'));
+ if(dep.relationships.length){
+  const deps=el('ul','');
+  for(const r of dep.relationships)deps.append(el('li',labels.get(r.prerequisite)+' before '+labels.get(r.consumer)+' · '+r.evidence.device));
+  summary.append(deps);
+ }
+ if(dep.blocked.length){
+  summary.append(el('h3','Dependency cycle or blocked order'),el('p','Review cyclic or dependent selections separately before exporting: '+dep.blocked.map(id=>labels.get(id)).join('; ')));
  }
  const phases=el('ol','');
  for(const [phase,items] of Object.entries(review.stages)){
