@@ -131,20 +131,25 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
         else:
             display = json.dumps(value, ensure_ascii=False)
         return e(display) + (f'<small>{e(source)}</small>' if source else '')
-    def meaning(d):
-        if not has_value(effective, d["path"]) or not has_value(reference, d["path"]):
-            return "Cannot compare: value unavailable"
-        if evidence is not None:
-            matches = [v for v in (evidence["differences"] or []) if v["path"] == d["path"]]
-            if evidence["conflicts"]:
-                return "Check conflicting observations"
-            if evidence["differences"] is not None and not matches:
-                return "Observed value matches reference"
-            if any(v["kind"] not in ("missing_local", "missing_reference") for v in matches):
-                return "Observed value differs from reference"
-        if d["assessment"] == "matching":
-            return "No difference in captured values" if effective is not None else "Saved and reference values match"
-        return ASSESSMENT_LABELS.get(d["assessment"], pretty(d["assessment"]))
+    def result_for(d):
+        path = d["path"]
+        if not has_value(effective, path) or not has_value(reference, path):
+            return "unavailable", "Unavailable", "Cannot compare: value unavailable"
+        if evidence is not None and evidence["conflicts"]:
+            # A conflict on this field is not a verified match. Keep the
+            # full conflict list visible separately, without flagging every row.
+            field = ".".join(map(str, path))
+            if any(v == field or v.endswith("." + field) or ("." + field + ".") in v
+                   for v in evidence["conflicts"]):
+                return "conflict", "Conflict", "Check conflicting observations"
+        def at(body):
+            for key in path:
+                body = body[key]
+            return body
+        from central_tool import canonical
+        if canonical(at(effective)) == canonical(at(reference)):
+            return "matching", "Match", "Observed value matches reference"
+        return "different", "Different", "Observed value differs from reference"
     conflict = ('<p class="note">Conflicting observations: ' + e(', '.join(evidence['conflicts'])) + '. Resolve before changing configuration.</p>') if evidence and evidence['conflicts'] else ''
     labels = {"vlan": "VLAN ID", "name": "Name", "enable": "Administrative state",
               "voice-enable": "Voice VLAN", "igmp": "IGMP snooping", "mld": "MLD snooping",
@@ -154,11 +159,26 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
         if len(path) == 1 or (len(path) == 2 and path[0] in labels and path[1] in ("enable", "snooping")):
             return labels.get(path[0], pretty(path[0]))
         return ".".join(map(str, path))
-    return table(
-        ("Setting", "Saved locally", "Effective at source", "Global / reference", "Result"),
-        [tr(e(field_label(d["path"])), observed_cell(local, d["path"], "local"), observed_cell(effective, d["path"], "comparison"), observed_cell(reference, d["path"], "reference"),
-            e(meaning(d)))
-         for _, d in sorted(comparisons.items())]) + conflict + '<p class="note">Unavailable means Central did not provide a verified value. Not returned locally does not mean disabled. Effective settings are not a live switch CLI measurement unless a switch source is identified.</p>'
+    rows = []
+    counts = Counter()
+    priority = {"different": 0, "conflict": 1, "unavailable": 2, "matching": 3}
+    ordered = sorted(comparisons.values(), key=lambda d: (
+        priority[result_for(d)[0]], list(labels).index(d["path"][0]) if d["path"][0] in labels else len(labels),
+        tuple(map(str, d["path"]))))
+    for d in ordered:
+        kind, label, explanation = result_for(d)
+        counts[kind] += 1
+        tone = {"matching": "good", "different": "warn", "conflict": "warn", "unavailable": "neutral"}[kind]
+        result = f'<span class="tag {tone}" title="{e(explanation)}">{e(label)}</span>'
+        rows.append(tr(e(field_label(d["path"])), observed_cell(local, d["path"], "local"),
+                       observed_cell(effective, d["path"], "comparison"), observed_cell(reference, d["path"], "reference"),
+                       result, attrs=f' data-comparison="{kind}"'))
+    summary = '<div class="comparison-summary" aria-label="Comparison summary">' + "".join(
+        badge(f"{counts[kind]} {label}", tone) for kind, label, tone in (
+            ("different", "different", "warn"), ("conflict", "conflicting", "warn"),
+            ("unavailable", "unavailable", "neutral"), ("matching", "matching", "good"))) + '</div>'
+    return summary + table(("Setting", "Saved locally", "Effective at source", "Global / reference", "Result"),
+                           rows, style="comparison-table") + conflict + '<p class="note">Unavailable: Central did not provide a verified value. Not returned: the saved local field was omitted. A named switch source indicates device evidence; otherwise the value is from Central configuration, not a live switch CLI measurement.</p>'
 
 
 def vlan_instance_context(bundle, persona, sources, identity):
