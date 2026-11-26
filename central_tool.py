@@ -1317,6 +1317,18 @@ CONFIG_MODULES = {
     "policies": ("name", NETWORK_PERSONAS, False),
     "role-acls": ("name", NETWORK_PERSONAS, False),
     "alg": ("name", NETWORK_PERSONAS, False),
+    # Observed in customer scope inventories; exact named-key contracts are
+    # present in the pinned HPE collection. Candidate function sets only.
+    "net-services": ("name", AP_PERSONAS | GATEWAY_PERSONAS, False),
+    "named-vlan": ("name", AP_PERSONAS | GATEWAY_PERSONAS, False),
+    "role-gpids": ("name", NETWORK_PERSONAS, False),
+    "radios": ("name", AP_PERSONAS, False),
+    "dot1xauth": ("name", PERSONAS, False),
+    "captive-portal": ("name", AP_PERSONAS | GATEWAY_PERSONAS, False),
+    "auth-server-global-config": ("name", PERSONAS, False),
+    "devicefingerprinting": ("name", PERSONAS, False),
+    "client-iptracker": ("name", PERSONAS, False),
+    "traffic-insight": ("name", PERSONAS, False),
     # Central NAC authentication profiles use default query parameters.
     # Keep this existing catalog entry for historical audit compatibility.
     "auth-profiles": ("auth-profile-id", NETWORK_PERSONAS, False),
