@@ -104,6 +104,10 @@ Contracts: [create VLAN](https://developer.arubanetworks.com/new-central-config/
 
 The browser workspace opens on an overview of the selected audit. Use the sidebar to switch between Consolidation, Engineering review, Configuration, Inventory, Library, Compare and Coverage. The selected snapshot is preserved in navigation links. Consolidation is task-first, with grouped recommendations, filters, pagination, a side inspector, a selection bar and non-executable preview export. Engineering findings have separate views for repeated port settings, shadowed configuration, duplicate Library profiles, unresolved reference evidence and observed references. Configuration, Library and Compare show compact tables with structured details and optional raw evidence. Coverage is a separate diagnostic view. The original full evidence report and CSV export remain available from Configuration. Theme changes affect the current page only. All assets are local, and the browser remains read-only.
 
+### Operational VLAN evidence
+
+New configuration audits also collect best-effort switch VLAN monitoring using discovered switch identities and the existing read-only monitoring query. The device overrides and consolidation inspectors distinguish saved and effective configuration from observed VLAN name, monitoring status, and tagged/untagged port membership. Older snapshots display monitoring as not collected. Monitoring failures do not invalidate the configuration capture. Reported VLAN status is not the configured enable field; neither omitted settings nor observed monitoring status establishes multicast behavior or migration safety. Refresh once to collect monitoring evidence.
+
 ## Safety boundary
 
 No configuration mutation API calls exist yet. Only OAuth token issuance uses POST. Candidate findings are not executable plans. The API is v1alpha1 and real tenant response shapes, group access, annotation semantics, and Classic/New configuration authority must be validated before enabling writes. Scope IDs are strings, not floating-point numbers.

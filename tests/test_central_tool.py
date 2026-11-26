@@ -719,6 +719,25 @@ class Tests(unittest.TestCase):
             self.assertEqual(ordered_parallel(range(8), lambda _: client._token(), 4), ["token"] * 8)
             self.assertEqual(request.call_count, 1)
 
+    def test_configuration_operational_capture_is_best_effort_and_switch_only(self):
+        from unittest.mock import patch
+        from central_tool import capture_configuration_operational_vlans
+        results = {
+            "ACCESS_SWITCH": {"scopes": [{"id": "1", "kind": "global"},
+                                         {"id": "2", "kind": "device", "metadata": {"serial": "a"}},
+                                         {"id": "3", "kind": "device", "metadata": {"serial": "b"}}]},
+            "CAMPUS_AP": {"scopes": [{"id": "4", "kind": "device"}]}}
+        def probe(client, metadata):
+            if metadata["serial"] == "a":
+                return {"status": "response_received", "payload": {"vlans": []}}
+            raise RuntimeError("sanitized failure")
+        with patch("central_tool.probe_operational_vlans", side_effect=probe) as read:
+            data = capture_configuration_operational_vlans(object(), results, workers=1)
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual(data["ACCESS_SWITCH"]["2"]["status"], "response_received")
+        self.assertEqual(data["ACCESS_SWITCH"]["3"]["status"], "monitoring_read_failed")
+        self.assertNotIn("CAMPUS_AP", data)
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")

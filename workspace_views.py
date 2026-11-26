@@ -98,6 +98,36 @@ def vlan_explanation(local, reference, effective=None):
          for d in assessment["differences"]]) + '<p class="note">Not returned does not mean disabled or equal to the default. Effective is the Central configuration view, not a live switch CLI or traffic measurement.</p>'
 
 
+def operational_vlan_context(bundle, persona, sources, identity):
+    from central_tool import configuration_operational_vlan
+    states = {"not_collected": "Not collected in this snapshot",
+              "not_observed": "VLAN not observed in monitoring response",
+              "permission_denied": "Monitoring access denied",
+              "identity_unresolved": "Switch or VLAN identity could not be resolved",
+              "request_rejected": "Monitoring request rejected",
+              "monitoring_read_failed": "Monitoring read failed",
+              "schema_unresolved": "Monitoring response not recognized"}
+    observations = [(s["name"], configuration_operational_vlan(bundle, persona, s["scope"], identity))
+                    for s in sources if s["kind"] == "device"]
+    if not observations:
+        return '<h3>Operational VLAN evidence</h3><p class="muted">No device source selected for operational comparison.</p>'
+    rows = []
+    for name, evidence in observations:
+        fields = evidence.get("fields", {})
+        def cell(key):
+            if key not in fields:
+                return '<span class="muted">Not returned</span>' if evidence["status"] == "observed" else '<span class="muted">Unavailable</span>'
+            return e(fields[key]) if isinstance(fields[key], str) else e(json.dumps(fields[key], ensure_ascii=False))
+        state = "Observed VLAN" if evidence["status"] == "observed" else states.get(evidence["status"], pretty(evidence["status"]))
+        if evidence.get("may_be_truncated"):
+            state += " (response may be incomplete)"
+        rows.append(tr(e(name), cell("name"), cell("status"), cell("taggedPorts"), cell("untaggedPorts"),
+                       e(state) + (f'<small>{e(evidence["captured_at"])}</small>' if evidence.get("captured_at") else "")))
+    return ('<h3>Operational VLAN evidence</h3>'
+            + table(("Switch", "Reported VLAN name", "Reported status", "Tagged ports", "Untagged ports", "Monitoring result"), rows)
+            + '<p class="note">This is captured switch monitoring data, not a live CLI check. Reported status is not the same field as configured enable. It does not establish default semantics, multicast behavior or safe removal.</p>')
+
+
 def advisor_view(workspace, query):
     from consolidation import profile_recommendations
     loaded, empty = load(workspace, query, "Consolidation advisor", "advisor")
@@ -151,7 +181,7 @@ def advisor_view(workspace, query):
         details = (
             f'<h3>Why this appears</h3><p>{e(ACTION_GUIDE[action][1])}</p>'
             f'<h3>What to do</h3><p>{e(ACTION_GUIDE[action][2])}</p>'
-            + comparison +
+            + comparison + (operational_vlan_context(bundle, f["persona"], sources, f["identity"]) if f["module"] == "layer2-vlan" else "") +
             '<h3>Local scopes</h3>' + source_table +
             ('<h3>Observed device configuration</h3>' + table(("Device", "Profile state"), device_rows) if device_rows else "") +
             ('<h3>Higher-scope configuration</h3>' + table(("Scope", "Type", "Effective body"), scope_rows) if scope_rows else "") +
