@@ -167,6 +167,7 @@ class Workspace:
         if not self.directory.is_dir():
             raise ValueError("Workspace must be a directory")
         self.token = secrets.token_urlsafe(32)
+        self.csrf = secrets.token_urlsafe(32)
         self.refresh = refresh
         self.lock = threading.Lock()
         self.state = "idle"
@@ -190,9 +191,14 @@ class Workspace:
                 finally:
                     temporary.unlink(missing_ok=True)
                 state = "complete"
-            except Exception:
-                # No exception payloads or credentials in browser output.
-                state = "failed; check local configuration and API access"
+            except Exception as exc:
+                # Expose only a known HTTP status, never arbitrary exception data.
+                from central_tool import APIError
+                if isinstance(exc, APIError):
+                    stage = "OAuth" if str(exc).startswith("OAuth:") else "Central API"
+                    state = f"failed; {stage} returned HTTP {exc.status}"
+                else:
+                    state = "failed; check local configuration and API access"
             with self.lock:
                 self.state = state
         threading.Thread(target=run, daemon=True).start()
@@ -209,7 +215,8 @@ class Workspace:
             state = self.state
         from central_tool import EU_REGIONS
         disabled = " disabled" if state == "running" else ""
-        refresh = (f'<form method="post" action="{root}credentials" autocomplete="off">'
+        hidden = f'<input type="hidden" name="csrf" value="{e(self.csrf)}">'
+        refresh = (f'<form method="post" action="{root}credentials" autocomplete="off">' + hidden +
                    '<label>API region<select name="region">'
                    + options([("", "Detect EU region")] + [(r, urlsplit(r).hostname.split(".")[0].upper()) for r in EU_REGIONS])
                    + '</select></label><label>Client ID<input name="client_id" type="text" required maxlength="1024" autocomplete="off"></label>'
@@ -218,7 +225,7 @@ class Workspace:
                    '<p><small>Credentials are used only for this audit, in process memory. '
                    'They are not saved or returned by the application. Decline browser password-saving prompts.</small></p>')
         if self.refresh is not None:
-            refresh += (f'<form method="post" action="{root}refresh"><button type="submit"'
+            refresh += (f'<form method="post" action="{root}refresh">' + hidden + '<button type="submit"'
                        + (" disabled" if state == "running" else "")
                        + ">Refresh using environment credentials</button></form>")
         return page("Snapshots", '<p>Private local workspace. Select a saved configuration capture. '
@@ -459,7 +466,9 @@ def handler_for(workspace):
             self.send_header("Content-Security-Policy", CSP)
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Referrer-Policy", "no-referrer")
+            # no-referrer can cause an opaque Origin on browser form POSTs.
+            # Never send the private session URL to a different origin.
+            self.send_header("Referrer-Policy", "same-origin")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
@@ -495,31 +504,42 @@ def handler_for(workspace):
 
         def do_POST(self):
             expected = f"http://127.0.0.1:{self.server.server_port}"
+            origin = self.headers.get("Origin")
+            fetch_site = self.headers.get("Sec-Fetch-Site")
+            # Explicit cross-origin requests are always rejected. Older cached
+            # form pages or privacy settings may send an opaque/null Origin;
+            # permit that only with same-origin fetch metadata and a CSRF token.
+            origin_ok = origin == expected or (origin in (None, "null") and fetch_site == "same-origin")
             if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials")
-                    or self.headers.get("Origin") != expected):
-                self.reply("Forbidden", 403)
+                    or not origin_ok or fetch_site not in (None, "same-origin")):
+                self.reply("Forbidden: local session or origin check failed. Reopen the application.", 403)
                 return
-            if self.path == root + "credentials":
-                try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                    if not 0 < length <= 24576 or self.headers.get_content_type() != "application/x-www-form-urlencoded":
-                        raise ValueError("Invalid credential form")
-                    self.connection.settimeout(10)
-                    values = parse_qs(self.rfile.read(length).decode("utf-8"),
-                                      keep_blank_values=True, strict_parsing=True, max_num_fields=3)
-                    if set(values) != {"client_id", "client_secret", "region"} or any(len(v) != 1 for v in values.values()):
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 24576 or self.headers.get_content_type() != "application/x-www-form-urlencoded":
+                    raise ValueError("Invalid form")
+                self.connection.settimeout(10)
+                values = parse_qs(self.rfile.read(length).decode("utf-8"),
+                                  keep_blank_values=True, strict_parsing=True, max_num_fields=4)
+                if any(len(v) != 1 for v in values.values()):
+                    raise ValueError("Invalid form")
+                token = values.pop("csrf", [""])[0]
+                if not secrets.compare_digest(token.encode("utf-8"), workspace.csrf.encode("utf-8")):
+                    self.reply("Forbidden: stale or invalid form token. Reopen the application.", 403)
+                    return
+                if self.path == root + "credentials":
+                    if set(values) != {"client_id", "client_secret", "region"}:
                         raise ValueError("Invalid credential form")
                     refresh = credential_refresh(values["client_id"][0], values["client_secret"][0], values["region"][0])
                     values.clear()
                     started = workspace.start_refresh(refresh)
-                except (ValueError, OSError, UnicodeError):
-                    self.reply("Invalid credential form", 400)
-                    return
-            else:
-                if self.headers.get("Content-Length", "0") != "0":
-                    self.reply("Unexpected request body", 400)
-                    return
-                started = workspace.start_refresh()
+                else:
+                    if values:
+                        raise ValueError("Invalid refresh form")
+                    started = workspace.start_refresh()
+            except (ValueError, OSError, UnicodeError):
+                self.reply("Invalid refresh form", 400)
+                return
             if not started:
                 self.reply(page("Refresh unavailable", "<p>Refresh unavailable or already running.</p>",
                                 workspace.nav()), 409)
