@@ -215,3 +215,21 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(list(explicit_references({"rfc3576-server-list": "unexpected"}, module="aaa-profile")),
                          [("auth-servers", None, ("rfc3576-server-list",))])
         self.assertFalse(list(explicit_references({"rfc3576-server-list": ["coa"]}, module="unqualified")))
+
+
+    def test_duplicate_groups_preserve_separate_usage_after_indexing(self):
+        from advanced_review import library_usage
+        profiles = {name: {"profile-name": name, "enable": value}
+                    for name, value in (("a", True), ("b", True), ("c", False), ("d", False))}
+        rows = [{"profile-type": "sw-port-profiles", "profile-instance": name,
+                 "device-function": "ACCESS_SWITCH", "scope-id": str(i)}
+                for i, name in enumerate(("a", "c", "c"), 1)]
+        bundle = {"results": {}, "library": {"modules": {"sw-port-profiles": view(profiles)},
+                   "assignments": {"status": "response_received", "rows": rows}}}
+        groups = advanced_analysis(bundle)["library_duplicates"]
+        self.assertEqual([g["identities"] for g in groups], [["a", "b"], ["c", "d"]])
+        self.assertEqual(groups[0]["usage"]["a"]["assignment_count"], 1)
+        self.assertEqual(groups[1]["usage"]["c"]["assignment_count"], 2)
+        self.assertEqual(groups[0]["suggested_keep"], "a")
+        self.assertEqual(groups[1]["suggested_keep"], "c")
+        self.assertEqual(library_usage(bundle, "sw-port-profiles", [], []), {})
