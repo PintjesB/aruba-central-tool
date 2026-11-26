@@ -694,7 +694,7 @@ def explorer_view(workspace, query):
         raise ValueError("Unknown view")
     scope_names = [(s["id"], f'{pretty(s["kind"])} / {s.get("name") or s["id"]}') for s in entry["scopes"]]
     controls = f'<form method="get" action="{root}report"><input type="hidden" name="snapshot" value="{e(name)}">' + select("persona", [(p, persona_label(p)) for p in personas], persona, "Function") + '<button type="submit" class="quiet">Load function</button></form><hr>'
-    controls += f'<form method="get" action="{root}report"><input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="persona" value="{e(persona)}">' + select("module", [("", "All modules")] + [(m, module_label(m)) for m in modules], module, "Module") + select("scope", [("", "All scopes")] + scope_names, scope, "Scope") + select("view", [("local", "Local profiles"), ("all", "All qualified profiles"), ("diagnostics", "Incomplete API results")], mode, "Configuration to show") + '<button type="submit">Show</button></form>'
+    controls += f'<form method="get" action="{root}report"><input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="persona" value="{e(persona)}">' + select("module", [("", "All modules")] + [(m, module_label(m)) for m in modules], module, "Module") + select("scope", [("", "All scopes")] + scope_names, scope, "Scope") + select("view", [("local", "Local profiles"), ("all", "All captured profiles"), ("diagnostics", "Incomplete API results")], mode, "Configuration to show") + '<button type="submit">Show</button></form>'
     rows = []
     records = [r for r in config_review_rows(bundle) if r[0] == persona and (not module or r[1] == module) and (not scope or r[3]["scope"] == scope)]
     for _, mod, scope_name, view in records:
@@ -702,6 +702,24 @@ def explorer_view(workspace, query):
         if not review["qualified"]:
             if mode == "diagnostics":
                 rows.append(tr(e(scope_name), e(module_label(mod)), "—", badge("Not qualified"), inspect(scope_name, raw({"local": configuration_view_shape(view["local_view"]), "effective": configuration_view_shape(view["effective_view"]), "review": review}))))
+            elif mode == "all":
+                # Show independently parsed bodies even if the other read failed.
+                # Do not feed these incomplete views into consolidation.
+                available = {kind: view[kind + "_view"].get("profiles", {})
+                             for kind in ("local", "effective")
+                             if view[kind + "_view"].get("status") == "list_parsed"}
+                from central_tool import profile_body
+                for identity in sorted(set().union(*(p.keys() for p in available.values()))):
+                    saved = available.get("local", {}).get(identity)
+                    effective = available.get("effective", {}).get(identity)
+                    title = title_profile(identity, saved or effective)
+                    detail = '<p class="note">Only independently retrieved settings are shown. Source and comparison are not verified.</p>'
+                    if saved is not None:
+                        detail += '<h3>Saved settings</h3>' + property_table(profile_body(saved))
+                    if effective is not None:
+                        detail += '<h3>Effective settings</h3>' + property_table(profile_body(effective))
+                    rows.append(tr(e(scope_name), e(module_label(mod)), e(title),
+                                   badge("Partial evidence", "warn"), inspect(title, detail)))
             continue
         if mode == "diagnostics":
             continue

@@ -42,6 +42,26 @@ def fixture():
 
 
 class ConsolidationTests(unittest.TestCase):
+    def test_configuration_explorer_exposes_partial_values_without_recommending_changes(self):
+        import tempfile
+        import json
+        from pathlib import Path
+        from config_app import Workspace
+        data = fixture()
+        scope = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"][-1]
+        scope["local_view"] = {"status": "empty_object", "profiles": {}}
+        scope["effective_view"] = {"status": "list_parsed", "profiles": {
+            "999": {"vlan": 999, "name": "Partial profile"}}}
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(data))
+            html = Workspace(directory).report({"snapshot": name, "persona": "ACCESS_SWITCH",
+                       "module": "layer2-vlan", "scope": "5", "view": "all"})
+            self.assertIn("Partial profile", html)
+            self.assertIn("Partial evidence", html)
+            self.assertIn("Source and comparison are not verified", html)
+        self.assertFalse(any(f["identity"] == "999" for f in profile_recommendations(data)))
+
     def test_advisor_groups_and_keeps_uncertainty(self):
         findings = profile_recommendations(fixture())
         by_id = {f["identity"]: f for f in findings}

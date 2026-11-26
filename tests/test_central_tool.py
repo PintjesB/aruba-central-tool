@@ -650,6 +650,30 @@ class Tests(unittest.TestCase):
                 self.assertEqual(view["pagination_status"], reason)
                 self.assertEqual(view["profiles"], {})
 
+    def test_explicit_null_envelope_requires_zero_count(self):
+        from central_tool import module_view
+        self.assertEqual(module_view({"metadata": {"count_objects_in_module": {"ANY": 0}}, "snmp": None}, "name")["status"], "list_parsed")
+        self.assertNotEqual(module_view({"snmp": None}, "name")["status"], "list_parsed")
+        self.assertNotEqual(module_view({"metadata": {"count_objects_in_module": {"ANY": 0}, "total": 1}, "snmp": None}, "name")["status"], "list_parsed")
+
+    def test_empty_local_is_retried_only_when_direct_local_is_observed(self):
+        from central_tool import recover_local_view
+        ann = {"aruba-annotation:object_type": "LOCAL", "aruba-annotation:inherited": False}
+        profile = {"name": "one", "@": ann}
+        effective = {"status": "list_parsed", "profiles": {"one": profile}}
+        local = {"status": "empty_object", "profiles": {}, "raw": {}}
+        raw = {"metadata": {"count_objects_in_module": {"ANY": 1, "LOCAL": 1}}, "snmp": [profile]}
+        fake = Fake([raw])
+        recovered = recover_local_view(fake, "snmp", "name", {"scope-id": "1"}, local, effective)
+        self.assertEqual(recovered["profiles"], {"one": {"name": "one"}})
+        self.assertEqual(recovered["qualification"], "annotated_committed_local")
+        self.assertEqual(recovered["raw"], {})
+        self.assertEqual(recovered["alternate_raw"], raw)
+        no_retry = Fake([])
+        self.assertEqual(recover_local_view(no_retry, "snmp", "name", {}, local,
+                         {"status": "list_parsed", "profiles": {}}), local)
+        self.assertEqual(no_retry.calls, [])
+
     def test_library_reads_nac_with_default_parameters_once(self):
         from central_tool import library_inventory
         fake = Fake([{"profiles": [{"auth-profile-id": "a"}]},

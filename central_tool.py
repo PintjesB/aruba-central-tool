@@ -1287,7 +1287,10 @@ def module_view(payload, identity, object_type="ANY"):
     expected = counts.get(object_type)
     # An omitted list with explicit zero for the requested object type is
     # evidence of zero returned profiles, unlike an unqualified empty object.
-    if set(payload) == {"metadata"} and type(expected) is int and expected == 0:
+    empty_envelope = [key for key in payload if key != "metadata"]
+    explicit_empty = (not empty_envelope or
+                      (len(empty_envelope) == 1 and payload[empty_envelope[0]] is None))
+    if explicit_empty and "metadata" in payload and type(expected) is int and expected == 0:
         if "total" in metadata and (type(metadata["total"]) is not int or metadata["total"] != 0):
             return {"status": "count_mismatch", "profiles": {}}
         return {"status": "list_parsed", "profiles": {}, "envelope": None,
@@ -1415,8 +1418,11 @@ def read_module_view(client, module, identity, params):
     return incomplete("page_limit_reached")
 
 
-def recover_local_view(client, module, identity, params, local):
-    if local["status"] not in ("count_mismatch", "schema_unresolved"):
+def recover_local_view(client, module, identity, params, local, effective=None):
+    retry_empty = (local["status"] == "empty_object" and effective is not None
+                   and effective["status"] == "list_parsed"
+                   and check_empty_local(list(effective["profiles"].values())) == "contradictory_local_profile")
+    if local["status"] not in ("count_mismatch", "schema_unresolved") and not retry_empty:
         return local
     # Query unfiltered committed configuration and require explicit source
     # annotations, rather than assuming the API honored object-type=LOCAL.
@@ -2231,8 +2237,8 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             params = {"view-type": "LOCAL", "scope-id": scope["id"], "device-function": persona}
             local = read_module_view(client, module, identity, {**params, "object-type": "LOCAL",
                                                                 "effective": "false", "detailed": "false"})
-            local = recover_local_view(client, module, identity, params, local)
             effective = read_module_view(client, module, identity, {**params, "effective": "true", "detailed": "true"})
+            local = recover_local_view(client, module, identity, params, local, effective)
             return module, scope, local, effective
         grouped = defaultdict(list)
         for module, scope, local, effective in ordered_parallel(
@@ -2362,8 +2368,7 @@ def refresh_configuration_review(bundle):
                             alternative = annotated_committed_local(view["alternate_raw"], identity)
                             if alternative["status"] == "list_parsed":
                                 parsed = alternative
-                        scope[kind + "_view"] = {**parsed, "raw": view["raw"],
-                                                **({"alternate_raw": view["alternate_raw"]} if "alternate_raw" in view else {})}
+                        scope[kind + "_view"] = {**view, **parsed}
                 effective = scope["effective_view"]
                 if scope["scope_kind"] == "global" and effective["status"] == "list_parsed":
                     baseline = effective["profiles"]
