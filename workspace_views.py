@@ -264,6 +264,9 @@ def advisor_view(workspace, query):
         findings = [f for f in findings if f["action"] == "remove_override"
                     and f["persona"] == query.get("persona") and f["module"] == query.get("module")
                     and f["identity"] == identity_filter and any(s["scope"] == scope_filter for s in f["sources"])]
+    from advanced_review import advanced_analysis
+    from optimization_dependencies import attach_dependency_review
+    attach_dependency_review(findings, advanced_analysis(bundle)["references"])
     short = {key: value[0] for key, value in ACTION_GUIDE.items()}
     counts = Counter(f["action"] for f in findings)
     recommendation_options = [
@@ -318,9 +321,22 @@ def advisor_view(workspace, query):
             for x in f["fallbacks"]:
                 if x.get("source"):
                     fallback_html += '<h4>' + e(x["name"]) + '</h4>' + diff_table(x.get("differences"), "Local", "Nearest higher scope")
+        dep = f["dependency_review"]
+        dependency_rows = []
+        for key, label in (("consumers", "Consumer"), ("dependencies", "Prerequisite"), ("unresolved_target_observations", "Unresolved target")):
+            for ref in dep[key]:
+                dependency_rows.append(tr(e(label), e(ref["device"]), e(ref["source_module"] + " / " + str(ref["source"])),
+                                          e(ref["target_module"] + " / " + str(ref["target"] or "Unknown")),
+                                          badge(pretty(ref["status"]))))
+        dependency_html = ('<h3>Observed dependencies</h3><p>' + str(dep["observed_consumer_devices"])
+                           + ' effective consumer device/function pairs; ' + str(len(dep["unqualified_edges"]))
+                           + ' unqualified edges; ' + str(len(dep["unresolved_target_observations"]))
+                           + ' unresolved target observations. Same-name references may belong to another scope; no complete dependency claim.</p>'
+                           + table(("Relationship", "Scope", "Source", "Target", "Evidence"), dependency_rows, search=True)
+                           + f'<p><a href="{url(root, "impact", snapshot=name, module=f["module"], identity=f["identity"])}">Trace direct and transitive impact</a></p>')
         details = (
             f'<div class="review-decision"><div><strong>{e(f["target"] if action == "remove_override" else ACTION_GUIDE[action][2])}</strong><p>{e(ACTION_GUIDE[action][1])}</p></div></div>'
-            + fallback_html + comparison
+            + fallback_html + comparison + dependency_html
             + ('<h3>Destination impact</h3>' + table(("Destination", "Type", "Intended", "Additional", "Unknown", "Current"), placement_rows) if placement_rows else "")
             + '<h3>Proposed workflow</h3>' + list_items(f["steps"], ordered=True)
             + '<h3>Validation required</h3>' + list_items(f["blockers"])
