@@ -87,3 +87,14 @@ No live write may be authorized by profile similarity, inferred identity, or a s
 - [Configuration deployment models](https://arubanetworking.hpe.com/techdocs/new-central/content/cfg/get-start/get-start-cfg.htm)
 - [VLAN profile deployment guidance](https://arubanetworking.hpe.com/techdocs/new-central/content/cfg/profiles/vlan-prof.htm)
 - [AOS-CX configuration scope limitations](https://arubanetworking.hpe.com/techdocs/new-central-review/content/get-started/cx-cfg.htm)
+
+## Decision-oriented UX acceptance criteria
+
+Every engineering finding must expose the evidence, a useful next action, the affected objects and devices, an explicit choice where multiple alternatives exist, and the prerequisites for execution. Avoid presenting generic review categories as faults. Keep unknown counts and missing values distinct from zero and false. Raw payloads are secondary evidence.
+
+- Duplicate Library profiles: separate each name's observed scope/function assignments, shared device deployments and distinct referencing objects; suggest a name to retain based on observed migration effort, allow a different selection, preview the other names' migration workload. Reference graph completeness and semantic interchangeability remain unverified.
+- Device overrides: compare saved, effective and Global settings and applicable higher scopes; explain whether a local definition is a potential redundancy or an intentional difference. Do not infer omitted values from defaults; expose operational evidence where independently captured, otherwise state that it is unavailable.
+- Port consolidation: show candidate mappings, existing profile matches and observed usage, visibility, dependency checks and a recommended next step.
+- Scope precedence: show the applied definition, higher-scope alternative, affected devices and whether to review lower-scope redundancy or retain intentional settings.
+- Library: distinguish assignment counts from observed shared deployments and referencing objects. Never infer unused from zero observations.
+- Configuration and comparison: show actual values and provenance, affected devices, and direct navigation to the relevant engineering workflow. Continue validating the real browser against customer snapshots and prioritize decision clarity over additional raw tables.
