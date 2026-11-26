@@ -524,6 +524,32 @@ class Tests(unittest.TestCase):
         self.assertEqual(data["unqualified_personas"], ["HYBRID_NAC"])
         self.assertFalse(data["safe_to_apply"])
 
+    def test_configuration_browser_escapes_evidence_and_marks_unknown(self):
+        from central_tool import configuration_html, configuration_view_shape
+        view = {"status": "count_mismatch", "raw": {"profiles": [{"name": "CUSTOMER_SECRET"}],
+                "metadata": {"total": 2, "count_objects_in_module": {"LOCAL": 1, "SHARED": 1}}}}
+        shape = configuration_view_shape(view)
+        self.assertEqual(shape["list_lengths"], [1])
+        self.assertEqual(shape["object_counts"], {"LOCAL": 1, "SHARED": 1})
+        self.assertNotIn("CUSTOMER_SECRET", str(shape))
+        row = {"identity": "<script>alert(1)</script>", "status": "local_differs_from_global",
+               "local": {"name": "<img src=x>"}, "effective": {}, "global_reference": {},
+               "global_differences": [], "annotations": {}}
+        scope = {"scope": "1", "scope_kind": "device", "review": {"qualified": True, "profiles": [row]},
+                 "local_view": view, "effective_view": view}
+        bad = {**scope, "review": {"qualified": False, "profiles": [], "local_status": "count_mismatch",
+                                 "effective_status": "schema_unresolved"}}
+        bundle = {"schema": 1, "kind": "configuration_audit", "results": {"ACCESS_SWITCH":
+                  {"scopes": [{"id": "1", "kind": "device", "name": "Switch"}], "modules": {
+                  "roles": {"scope_results": [scope, bad]}}}}}
+        html = configuration_html(bundle)
+        self.assertIn("scope_unqualified", html)
+        self.assertIn("Qualified module scopes: 1/2", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+        self.assertNotIn("<img src=x>", html)
+        self.assertNotIn("CUSTOMER_SECRET", html)
+        self.assertIn("default-src 'none'", html)
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
