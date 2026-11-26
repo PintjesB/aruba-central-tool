@@ -1609,6 +1609,72 @@ def review_module_scope(local, effective, baseline, device_only=False, is_global
     return result
 
 
+def read_vlan_instance(client, persona, scope, vid, effective):
+    """Read a specific VLAN without silently merging collection and instance views."""
+    if persona not in PERSONAS or not str(scope).isdigit() or parse_reference_ids(vid) != {vid}:
+        return {"status": "invalid_selector"}
+    params = {"view-type": "LOCAL", "scope-id": scope, "device-function": persona,
+              "effective": "true" if effective else "false", "detailed": "true"}
+    if not effective:
+        params["object-type"] = "LOCAL"
+    try:
+        raw = client.get(VLAN + "/" + quote(vid, safe=""), **params)
+    except APIError as exc:
+        return {"status": "permission_denied" if exc.status == 403 else "request_rejected",
+                "http_error": exc.status}
+    except (RuntimeError, OSError, ValueError):
+        return {"status": "read_failed"}
+    result = {"status": "schema_unresolved", "raw": raw}
+    if not isinstance(raw, dict):
+        return result
+    parsed = module_view(raw, "vlan", params.get("object-type", "ANY"))
+    if parsed["status"] == "list_parsed":
+        if set(parsed["profiles"]) != {vid}:
+            return {**result, "status": "identity_unresolved"}
+        profile = parsed["profiles"][vid]
+    elif parse_reference_ids(raw.get("vlan")) == {vid} and "metadata" not in raw:
+        profile = raw
+    elif set(raw) - {"metadata"} == {"l2-vlan"} and isinstance(raw["l2-vlan"], dict) and parse_reference_ids(raw["l2-vlan"].get("vlan")) == {vid}:
+        profile = raw["l2-vlan"]
+    else:
+        return result
+    annotation = profile.get("@", {})
+    if not isinstance(annotation, dict):
+        return result
+    if not effective and (annotation.get("aruba-annotation:object_type") != "LOCAL"
+                          or annotation.get("aruba-annotation:inherited") is not False):
+        return {**result, "status": "source_unverified"}
+    return {**result, "status": "observed", "profile": profile_body(profile),
+            "annotations": annotation}
+
+
+def capture_vlan_instance_details(client, results, workers=AUDIT_WORKERS, progress=None):
+    """Target only local switch VLANs with missing name/admin-state evidence."""
+    tasks = []
+    for persona, entry in sorted(results.items()):
+        if persona not in PERSONAS:
+            continue
+        for scope in entry["modules"].get("layer2-vlan", {}).get("scope_results", []):
+            if scope["scope_kind"] != "device" or not scope["review"]["qualified"]:
+                continue
+            for row in scope["review"]["profiles"]:
+                if row["local"] is None:
+                    continue
+                for kind in ("local", "effective"):
+                    body = row[kind]
+                    if isinstance(body, dict) and any(k not in body for k in ("name", "enable")):
+                        tasks.append((persona, scope["scope"], row["identity"], kind))
+    def collect(task):
+        persona, scope, vid, kind = task
+        return task, read_vlan_instance(client, persona, scope, vid, kind == "effective")
+    audit_progress(progress, "VLAN details", 0, len(tasks), "Checking omitted VLAN settings by ID")
+    evidence = {}
+    for (persona, scope, vid, kind), detail in ordered_parallel(tasks, collect, workers,
+            completed=lambda done, total: audit_progress(progress, "VLAN details", done, total, "Checking omitted VLAN settings by ID")):
+        evidence.setdefault(persona, {}).setdefault(scope, {}).setdefault(vid, {})[kind] = detail
+    return evidence
+
+
 def capture_configuration_operational_vlans(client, results, workers=AUDIT_WORKERS, progress=None):
     """Best-effort switch monitoring evidence; never block the configuration audit."""
     tasks = [(persona, scope) for persona, entry in sorted(results.items())
@@ -1738,6 +1804,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     print("Reading tenant Library and assignments", flush=True)
     library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress)
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress)
+    details = capture_vlan_instance_details(client, results, workers, progress)
     operational = capture_configuration_operational_vlans(client, results, workers, progress)
     print(f"Configuration audit coverage: personas reviewed={len(results)}; "
           f"personas without adapter={len(unqualified)}; migration authorized=no")
@@ -1745,7 +1812,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             "captured_at": datetime.now(timezone.utc).isoformat(), "inventory": records,
             "results": results, "unqualified_personas": unqualified, "library": library,
             "profile_type_discovery": profile_types, "unadapted_profiles": unadapted,
-            "operational_vlans": operational,
+            "operational_vlans": operational, "vlan_instance_details": details,
             "catalog_exhaustive": False, "safe_to_apply": False}
 
 
