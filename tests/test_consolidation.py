@@ -216,7 +216,7 @@ class ConsolidationTests(unittest.TestCase):
         html = vlan_explanation({"vlan": 10, "name": "Test"}, {"vlan": 10, "name": "Test", "enable": True})
         self.assertIn("Cannot compare: value unavailable", html)
         self.assertIn("Not returned", html)
-        self.assertIn("does not mean disabled", html)
+        self.assertIn("the saved local field was omitted", html)
         html = vlan_explanation({"vlan": 10, "is-l3-vlan": True}, {"vlan": 10})
         self.assertIn("Cannot compare: value unavailable", html)
         import tempfile
@@ -306,7 +306,7 @@ class ConsolidationTests(unittest.TestCase):
                       "DHCPv4 snooping", "DHCPv6 snooping"):
             row = html.split("<td>" + label + "</td>", 1)[1].split("</tr>", 1)[0]
             self.assertIn("Not returned", row)
-            self.assertEqual(row.count(">Unavailable<"), 2)
+            self.assertEqual(row.count(">Unavailable<"), 3)
             self.assertIn("Cannot compare: value unavailable", row)
             self.assertNotIn(">Disabled<", row)
             self.assertNotIn("matches reference", row)
@@ -426,6 +426,8 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(len(evidence["differences"]), 2)
         html = vlan_explanation(row["local"], row["global_reference"], row["effective"], evidence)
         self.assertIn("Layer 2 snooping not reported", html)
+        self.assertIn('data-comparison="unavailable"', html)
+        self.assertIn('class="comparison-summary"', html)
         self.assertFalse(evidence["safe_to_apply"])
 
     def test_monitoring_voice_uses_explicit_state_only(self):

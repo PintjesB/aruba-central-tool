@@ -88,8 +88,9 @@ def status(value):
     return badge(labels.get(value, pretty(value)), tone)
 
 
-def table(headers, rows, *, search=False, label="Search"):
+def table(headers, rows, *, search=False, label="Search", style=""):
     header = "".join(f"<th scope=\"col\">{e(h)}</th>" for h in headers)
+    table_class = f' class="{e(style)}"' if style else ""
     controls = ""
     if search:
         controls = (f'<div class="table-toolbar"><label class="searchbox">{e(label)}'
@@ -99,7 +100,7 @@ def table(headers, rows, *, search=False, label="Search"):
              '<span data-page class="muted"></span><button type="button" data-next>Next</button></div>') if search else ""
     empty = '<p data-table-empty class="empty" hidden>No matching records.</p>' if search else ""
     return ('<div class="data-grid"' + (' data-paginated' if search else '') + '>' + controls
-            + f'<div class="table-scroll"><table><thead><tr>{header}</tr></thead><tbody>'
+            + f'<div class="table-scroll"><table{table_class}><thead><tr>{header}</tr></thead><tbody>'
             + "".join(rows) + '</tbody></table></div>' + empty + pager + '</div>')
 
 
@@ -182,8 +183,9 @@ def page(title, content, nav="", extra_css=""):
             '<div class="app-body"><header class="topbar"><span>Workspace <span class="muted">/</span> '
             f'<strong>{e(active)}</strong></span><button id="workspace-theme" class="quiet" type="button">Theme</button></header>'
             f'<main id="main-content">{content}</main></div>'
-            '<dialog class="inspector" id="workspace-inspector"><div class="inspector-head">'
-            '<span>Configuration review</span><button type="button" id="workspace-close">Close</button></div>'
+            '<dialog class="inspector" id="workspace-inspector" aria-labelledby="workspace-inspector-title"><div class="inspector-head">'
+            '<div><small>Configuration review</small><h2 id="workspace-inspector-title"></h2></div>'
+            '<button type="button" id="workspace-close" autofocus>Close <span aria-hidden="true">×</span></button></div>'
             '<div id="workspace-inspector-body"></div></dialog>'
             f'<script>{SCRIPT}</script></body></html>')
 
@@ -238,10 +240,27 @@ tbody tr:hover{background:var(--soft)}tbody tr:last-child td{border-bottom:0}td 
 .raw{border-top:1px solid var(--line);margin-top:16px;padding-top:8px}.raw summary{font-size:12px;color:var(--muted)}
 summary{cursor:pointer;color:var(--accent);font-weight:550;margin:8px 0}pre,code{font:12px/1.55 ui-monospace,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 pre{background:var(--bg);border:1px solid var(--line);padding:12px;max-height:420px;overflow:auto;border-radius:7px;margin:8px 0}
-.inspector{position:fixed;margin:0 0 0 auto;inset:0 0 0 auto;width:min(840px,96vw);height:100vh;max-height:100vh;max-width:none;border:0;border-left:1px solid var(--line);background:var(--surface);color:var(--text);padding:0;box-shadow:-12px 0 45px #0004}
-.inspector::backdrop{background:#07132288}.inspector-head{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;background:var(--surface);padding:14px 22px;border-bottom:1px solid var(--line);z-index:1;font-size:12px;color:var(--muted)}
-#workspace-inspector-body{padding:24px}.inspector-title{margin-bottom:18px}.inspector-title h2{font-size:23px;overflow-wrap:anywhere}
-.inspector h3{margin:18px 0 8px}.inspector .table-scroll{max-height:440px;overflow:auto}.inspector ul,.inspector ol{padding-left:22px;margin:8px 0 16px}
+html:has(.inspector[open]),html.inspector-open{overflow:hidden;scrollbar-gutter:stable}
+.inspector{position:fixed;inset:0;margin:auto;width:min(1240px,calc(100vw - 48px));height:calc(100vh - 48px);height:calc(100dvh - 48px);max-height:none;max-width:none;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--text);padding:0;overflow:hidden;box-shadow:0 18px 70px #0005}
+.inspector[open]{display:flex;flex-direction:column}
+.inspector::backdrop{background:#07132288}
+.inspector-head{flex:none;display:flex;justify-content:space-between;align-items:center;gap:16px;background:var(--surface);padding:16px 24px;border-bottom:1px solid var(--line)}
+.inspector-head small{display:block;font-size:11px;margin-bottom:3px}.inspector-head h2{font-size:21px;line-height:1.3;margin:0;overflow-wrap:anywhere}
+#workspace-inspector-body{flex:1;min-height:0;min-width:0;padding:20px 24px 28px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable}
+.inspector h3{margin:20px 0 8px}.inspector .table-scroll{max-height:none;overflow-x:auto;overflow-y:hidden}
+.inspector .data-grid{min-width:0}.inspector th{white-space:normal}.inspector td{vertical-align:top}
+.inspector pre{max-height:none;overflow:visible}.inspector ul,.inspector ol{padding-left:22px;margin:8px 0 16px}
+.inspector .note{border:0;background:var(--bg);border-radius:6px;padding:10px 12px}
+.inspector details:not(.raw){border-top:1px solid var(--line);padding:5px 0}
+.review-decision{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;padding:14px 16px;margin:0 0 18px;background:var(--bg);border-radius:8px}
+.review-decision p{margin:8px 0 0}.review-context{min-width:0;text-align:right}.review-context strong{display:block;overflow-wrap:anywhere}
+.comparison-summary{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px}
+.comparison-summary .tag{font-size:12px;padding:5px 9px}
+.comparison-table{table-layout:fixed}.comparison-table th,.comparison-table td{padding:9px 10px}
+.comparison-table th:nth-child(1){width:23%}.comparison-table th:nth-child(2){width:15%}.comparison-table th:nth-child(3){width:25%}.comparison-table th:nth-child(4){width:20%}.comparison-table th:nth-child(5){width:17%}
+.comparison-table td:first-child{font-weight:600}.comparison-table td small{font-size:11px;line-height:1.3}
+.comparison-table td .tag{white-space:normal}.comparison-table tbody tr[data-comparison=different]{background:var(--warn-bg)}
+@media(max-width:760px){.inspector{width:100vw;height:100vh;height:100dvh;border-radius:0;border:0}.inspector-head{padding:12px 16px}#workspace-inspector-body{padding:16px}.comparison-table{min-width:560px}}
 .inspector li{margin-bottom:5px}.tabs{display:flex;gap:5px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin-bottom:16px}
 .tabs button{border:0;border-radius:0;border-bottom:3px solid transparent;background:transparent;font-size:13px;padding:9px 11px;color:var(--muted)}
 .tabs button[aria-selected=true]{border-bottom-color:var(--accent);color:var(--accent);font-weight:700}.tabs button span{font-size:11px;color:var(--muted);margin-left:4px}
@@ -259,22 +278,41 @@ SCRIPT = r"""
 'use strict';
 const dialog=document.getElementById('workspace-inspector');
 const body=document.getElementById('workspace-inspector-body');
+const title=document.getElementById('workspace-inspector-title');
+const closeButton=document.getElementById('workspace-close');
+let opener=null;
 document.addEventListener('click',event=>{
  const button=event.target.closest('[data-inspect]');
  if(!button)return;
  const template=button.nextElementSibling;
  if(!template||template.tagName!=='TEMPLATE')return;
- body.replaceChildren(template.content.cloneNode(true));dialog.showModal();
+ const content=template.content.cloneNode(true);
+ const heading=content.querySelector('.inspector-title');
+ title.textContent=heading?heading.textContent.trim():'Configuration review';
+ if(heading)heading.remove();
+ body.replaceChildren(content);
+ for(const grid of body.querySelectorAll('[data-paginated]'))initGrid(grid);
+ if(!dialog.open){
+  opener=button;
+  dialog.showModal();
+  document.documentElement.classList.add('inspector-open');
+ }
+ body.scrollTop=0;closeButton.focus({preventScroll:true});
 });
-document.getElementById('workspace-close').addEventListener('click',()=>dialog.close());
-dialog.addEventListener('close',()=>body.replaceChildren());
+closeButton.addEventListener('click',()=>dialog.close());
+dialog.addEventListener('close',()=>{
+ document.documentElement.classList.remove('inspector-open');
+ body.replaceChildren();title.textContent='';
+ if(opener&&opener.isConnected)opener.focus({preventScroll:true});
+ opener=null;
+});
 const theme=document.getElementById('workspace-theme');
 theme.addEventListener('click',()=>{
  const dark=getComputedStyle(document.documentElement).colorScheme==='dark';
  document.documentElement.dataset.theme=dark?'light':'dark';
 });
 function initGrid(grid){
- const rows=Array.from(grid.querySelectorAll('tbody > tr'));
+ const rows=Array.from(grid.querySelectorAll(':scope > .table-scroll > table > tbody > tr'));
  const search=grid.querySelector('[data-table-search]');
  const count=grid.querySelector('[data-table-count]');
  const prev=grid.querySelector('[data-prev]'),next=grid.querySelector('[data-next]');

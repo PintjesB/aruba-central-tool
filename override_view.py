@@ -8,7 +8,7 @@ from workspace_views import load, url, select, title_profile, vlan_explanation, 
 RESULTS = {
     "identical": "Identical to Global",
     "effective_match": "Observed settings match Global",
-    "omitted": "Comparison incomplete: omitted fields",
+    "omitted": "Comparison incomplete",
     "protected": "Protected default VLAN",
     "different": "Different from Global",
     "no_global": "No matching Global profile",
@@ -18,7 +18,7 @@ RESULTS = {
 NEXT_STEP = {
     "identical": "Review possible override removal",
     "effective_match": "Review removal only after verifying saved definition and inheritance",
-    "omitted": "Verify missing settings; no proven effective difference",
+    "omitted": "Retain until unavailable settings can be verified",
     "protected": "Retain VLAN 1; inspect default settings only",
     "different": "Keep local unless the difference is unnecessary",
     "no_global": "Local definition, not a proven Global override",
@@ -79,7 +79,7 @@ def device_override_rows(bundle, persona):
                     elif identity not in view["profiles"]:
                         text = "Profile not returned"
                     else:
-                        text = "Identical settings" if canonical(profile_body(view["profiles"][identity])) == canonical(local) else "Different settings"
+                        text = "Saved body matches" if canonical(profile_body(view["profiles"][identity])) == canonical(local) else "Saved body differs"
                     chain.append({"name": names[ancestor], "state": text, "kind": kind})
                 ann = row.get("annotations", {})
                 direct = ann.get("aruba-annotation:object_type") == "LOCAL" and ann.get("aruba-annotation:inherited") is False
@@ -140,13 +140,14 @@ def overrides_view(workspace, query):
         if f["module"] == "layer2-vlan":
             sources = [{"kind": "device", "scope": f["device"], "name": f["device_name"]}]
             extra += vlan_instance_context(bundle, persona, sources, f["identity"]) + operational_vlan_context(bundle, persona, sources, f["identity"])
-        detail = ('<p><strong>' + e(RESULTS[state]) + '</strong> · ' + e(next_step) + '.</p>'
+        detail = ('<div class="review-decision"><div>' + badge(RESULTS[state], "warn" if state in ("different", "omitted", "source_uncertain") else "neutral")
+                  + '<p><strong>Next step:</strong> ' + e(next_step) + '.</p></div><div class="review-context"><small>Device</small><strong>'
+                  + e(f["device_name"]) + '</strong></div></div>'
                   + comparison
-                  + '<details><summary>Source evidence</summary>' + extra + '</details>'
-                  + '<h3>Applicable higher scopes (captured effective settings)</h3>'
-                  + table(("Scope", "Comparison with local"), [tr(e(v["name"]), e(v["state"])) for v in f["chain"]])
-                  + '<p class="note">A Global match alone does not prove that removing the override preserves configuration. Verify the inherited source, dependencies and rollback first.</p>'
-                  + raw(p))
+                  + '<details><summary>Inheritance and higher scopes</summary>'
+                  + table(("Scope", "Saved local vs captured scope body"), [tr(e(v["name"]), e(v["state"])) for v in f["chain"]])
+                  + '<p class="note">Captured bodies can differ because fields are omitted. These are not verified effective differences. Verify inheritance and dependencies before removal.</p></details>'
+                  + '<details><summary>Source evidence</summary>' + extra + raw(p) + '</details>')
         if f["candidate"]:
             detail += f'<p><a href="{url(root, "advisor", snapshot=name, finding="remove_override", module=f["module"], persona=persona, scope=f["device"], identity=f["identity"])}">Open matching consolidation preview</a></p>'
         rows.append(tr(f'<strong>{e(f["device_name"])}</strong>', e(module_label(f["module"])), e(label),
