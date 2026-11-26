@@ -758,6 +758,7 @@ def library_view(workspace, query):
             if differing:
                 detail += '<details><summary>Local configuration differences</summary>' + "".join(
                     f'<h3>{e(v["scope_name"])}</h3>' + diff_table(v["differences"], "Local", "Library") for v in differing) + '</details>'
+            detail += f'<p><a href="{url(root, "impact", snapshot=name, module=module, identity=identity)}">Trace all observed references to this name</a></p>'
             detail += keyed_profile_evidence(bundle, "Library", "", module, identity)
             detail += '<details><summary>Observed assignments and usage</summary>' + usage_detail(usage[identity]) + '</details>' + raw({"profile": profile, **review})
             rows.append(tr(f'<strong>{e(title_profile(identity, profile))}</strong>', *usage_cells(usage[identity]), str(len(variants)),

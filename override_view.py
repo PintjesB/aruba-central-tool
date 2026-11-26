@@ -253,6 +253,7 @@ def overrides_view(workspace, query):
                   + table(("Scope", "Observed device vs scope settings"), [tr(e(v["name"]), e(v["state"])) for v in f["chain"]])
                   + '<p class="note">Scope membership does not establish inheritance precedence. Compare the actual inherited source and dependencies before removal.</p></details>'
                   + '<details><summary>Source evidence</summary>' + extra + raw(p) + '</details>')
+        detail += f'<p><a href="{url(root, "impact", snapshot=name, module=f["module"], identity=f["identity"], persona=persona, scope=f["device"])}">Trace dependencies on this device</a></p>'
         if f["candidate"]:
             detail += f'<p><a href="{url(root, "advisor", snapshot=name, finding="remove_override", module=f["module"], persona=persona, scope=f["device"], identity=f["identity"])}">Open matching consolidation preview</a></p>'
         action_label = short_action[state]
