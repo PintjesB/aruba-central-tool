@@ -830,7 +830,7 @@ def coverage_view(workspace, query):
             ("Profile collections in catalog", len(documented), f'{len(documented & surveyed)} represented in this capture'),
             ("Catalog categories inspected", f'{catalog["folders_read"]}/{catalog["folders_total"]}', "HPE published collection"),
         ])
-        body += '<p class="note">Catalog inclusion does not prove live availability. The independent Global survey does not establish lower-scope completeness. Non-profile operations, keyed reads and service-specific inventories require their own adapters.</p>'
+        body += '<p class="note">Catalog inclusion does not prove live availability. A deep survey attempts unfiltered reads at every discovered scope for documented unadapted collections; successful attempts do not prove semantic completeness. Non-profile operations, keyed reads and service-specific inventories require their own adapters.</p>'
         if pending:
             body += '<p>Profile collections not captured: ' + e(", ".join(sorted(pending))) + '</p>'
         body += f'<p><a href="{e(catalog["source"])}" target="_blank" rel="noopener noreferrer">HPE published API catalog</a> · Revision {e(catalog["source_updated_at"])}</p></section>'
@@ -861,13 +861,13 @@ def coverage_view(workspace, query):
             captured = sum(r.get("status") == "response_received" for r in reads)
             counted = sum(r.get("collection_count_verified") is True for r in reads)
             catalog_scope = v.get("catalog_scope_coverage", {})
-            gap = catalog_scope.get("all_function_scopes_not_surveyed")
+            gap = catalog_scope.get("unfiltered_scopes_not_surveyed", catalog_scope.get("all_function_scopes_not_surveyed"))
             scoped.append(tr(e(module_label(m)), str(len(v.get("source_views", []))),
                              f"{captured}/{len(reads)}", str(counted),
                              str(gap) if gap is not None else "Unavailable",
                              f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Inspect settings</a>'))
-        body += '<section><h2>Additional scoped configuration</h2><p class="filter-hint">These reads preserve returned data without assuming profile identity or scope applicability. Remaining all-function surveys are not necessarily missing configuration; targeted reads may already exist.</p>' + table(
-            ("Profile type", "Scope views attempted", "Responses captured", "Count-confirmed reads", "All-function scopes not surveyed", ""), scoped, search=True) + '</section>'
+        body += '<section><h2>Additional scoped configuration</h2><p class="filter-hint">These reads preserve returned data without assuming profile identity or scope applicability. Remaining unfiltered surveys are not necessarily missing configuration; targeted reads may already exist. Rejected or incomplete reads remain visible.</p>' + table(
+            ("Profile type", "Scope views attempted", "Responses captured", "Count-confirmed reads", "Unfiltered scopes not surveyed", ""), scoped, search=True) + '</section>'
 
     return page("Module coverage", body, workspace.nav(name))
 
