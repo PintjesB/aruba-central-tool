@@ -53,6 +53,15 @@ ACTION_GUIDE = {
     "unassigned_library": ("No assignment observed", "The captured assignment records contain no matching entry. This does not prove the profile is unused or safe to delete.", "Check references and intended future use; retain by default."),
 }
 OPPORTUNITIES = ("remove_override", "promote_local", "reuse_library")
+SHORT_REASON = {
+    "remove_override": "Exact match with Global",
+    "promote_local": "Identical settings at multiple scopes",
+    "reuse_library": "Exact match with an existing profile",
+    "create_library": "Reuse not established",
+    "conflict": "Same identity, different settings",
+    "default_review": "Defaults, omitted fields or Layer 3 state",
+    "unassigned_library": "Assignment coverage not verified",
+}
 ASSESSMENT_LABELS = {
     "documented_default_candidate": "May equal documented default",
     "verify_multicast_default": "Verify multicast snooping behavior on this firmware",
@@ -135,12 +144,12 @@ def advisor_view(workspace, query):
             '<h3>Validation required</h3>' + list_items(f["blockers"]) + raw(f))
         matching = len(observed.get("matching", []))
         unknown = len(observed.get("unknown", []))
-        device_summary = f'<strong>{matching}</strong><small>{unknown} unknown</small>' if observed else '<span class="muted">Not assessed</span>'
+        device_summary = f'<strong>{matching} / {sum(len(v) for v in observed.values())}</strong>' + (f'<small>{unknown} not comparable</small>' if unknown else "") if observed else '<span class="muted">Not assessed</span>'
         # Filter by row metadata; the inspector and plan payload are inert.
         rows.append(tr(
             f'<input type="checkbox" class="choose" aria-label="Select {e(profile)}" data-plan="{e(json.dumps(f, ensure_ascii=False))}"{" disabled" if action not in OPPORTUNITIES else ""}>',
-            summary, badge(short[action], "warn" if action in ("conflict", "default_review") else "info" if action in OPPORTUNITIES else "neutral") + f'<small>{e(ACTION_GUIDE[action][1])}</small>',
-            f'<strong>{len(sources)}</strong><small>{e(names or "Library")}</small>', placement, device_summary,
+            summary, badge(short[action], "warn" if action in ("conflict", "default_review") else "info" if action in OPPORTUNITIES else "neutral") + f'<small>{e(SHORT_REASON[action])}</small>',
+            f'<strong>{len(sources)}</strong><small>{e(names or "Library definition")}</small>', placement, device_summary,
             inspect(profile, details, "Review"),
             attrs=f' data-action="{e(action)}" data-module="{e(f["module"])}" data-persona="{e(f["persona"])}" data-search="{e(profile+" "+str([s["name"] for s in sources]))}"'))
     filters = (
@@ -273,10 +282,10 @@ def engineering_view(workspace, query):
                    + '<h3>Validation required</h3>' + list_items(record.get("blockers", [])) + raw(record))
         rows.append(tr(f'<strong>Port group {i}</strong><small>{e(persona_label(record["persona"]))}</small>',
                        str(len(ports)), str(len(devices)), e(", ".join(m["identity"] for m in matches) or "New profile candidate"),
-                       badge("Unsupported fields" if record["unsupported_fields"] else "Review mapping", "warn" if record["unsupported_fields"] else "info"),
+                       badge("Unsupported fields" if record["unsupported_fields"] else "Review port mapping", "warn" if record["unsupported_fields"] else "info"),
                        inspect(f"Port group {i}", details)))
     panel("ports", "Port consolidation", "Repeated settings grouped by exact body. Physical mapping and descriptions are preserved.",
-          ("Group", "Ports", "Devices", "Library match", "Review", ""), rows, len(rows))
+          ("Group", "Ports", "Devices", "Existing Library profile", "Next step", ""), rows, len(rows))
     rows = []
     # Group the same winning/higher scope and bodies across devices instead of repeating rows.
     grouped = {}
@@ -301,7 +310,7 @@ def engineering_view(workspace, query):
         rows.append(tr(e(module_label(r["module"])), e(", ".join(r["identities"])), str(len(r["assignments"])), str(len(refs)),
                        str(r.get("unresolved_reference_count", 0)), inspect(", ".join(r["identities"]), detail)))
     panel("duplicates", "Duplicate Library profiles", "Matching bodies after excluding the identity field; not proof that names are interchangeable.",
-          ("Module", "Identities", "Assignments", "References", "Unresolved", ""), rows, len(rows))
+          ("Module", "Matching profile names", "Observed assignments", "Observed references", "Unresolved references", ""), rows, len(rows))
     for key, label, records in (("references", "Reference review", [r for r in data["references"] if r["status"] != "observed"]),
                                 ("resolved", "Observed references", [r for r in data["references"] if r["status"] == "observed"])):
         rows = [tr(e(r["device"]), f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
@@ -359,7 +368,7 @@ def library_view(workspace, query):
             rows.append(tr(f'<strong>{e(title_profile(identity, profile))}</strong>', str(len(matches)), str(len(variants)),
                            badge(str(conflict), "warn" if conflict else "neutral"), inspect(identity, detail)))
         body += f'<section><h2>{e(module_label(module))} · {len(rows)} profiles</h2>' + table(("Profile", "Observed assignments", "Local instances", "Different bodies", ""), rows, search=True) + '</section>'
-    body += '<p class="note">Assignment completeness is not verified. Zero observed assignments is not proof that a profile is unused.</p>' + raw(assignments, "Assignment capture diagnostics")
+    body += '<p class="note">Assignments link a Library profile to a scope and device function. A zero count means no assignment was observed in this snapshot, not that the profile is unused.</p>' + raw(assignments, "Assignment capture diagnostics")
     return page("Library", body, workspace.nav(name))
 
 
