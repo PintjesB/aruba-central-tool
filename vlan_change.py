@@ -318,12 +318,12 @@ def execute(client, plan, journal, *, reader=capture, attempts=3, pause=time.sle
     expected = baseline
     applied = []
     journal.record("prepared", plan=plan)
-    def confirm(expected_state, preserve_devices=True):
+    def confirm(expected_state, preserve_devices=True, predicate=None):
         current = None
         for i in range(attempts):
             current = read()
             if direct_state(current) == direct_state(expected_state):
-                if not preserve_devices or device_state(current) == device_state(baseline):
+                if (not preserve_devices or device_state(current) == device_state(baseline)) and (predicate is None or predicate(current)):
                     return current, True
             if i + 1 < attempts:
                 pause(2)
@@ -350,7 +350,19 @@ def execute(client, plan, journal, *, reader=capture, attempts=3, pause=time.sle
             journal.record("write_acknowledged", operation=op)
             applied.append(op)
             expected = after
-            current, ok = confirm(expected)
+            def postcondition(current):
+                if op["kind"] == "delete_local":
+                    ann = current["annotations"][op["scope"]].get(vid, {})
+                    return ann.get("aruba-annotation:inherited") is True
+                if op["kind"] == "create_local":
+                    return direct_local(current, op["scope"], vid, op["body"])
+                if op["kind"] == "assign":
+                    ann = current["annotations"][op["scope"]].get(vid, {})
+                    return (ann.get("aruba-annotation:object_type") == "SHARED"
+                            and ann.get("aruba-annotation:inherited") is False
+                            and current["effective"][op["scope"]].get(vid) == current["library"].get(vid))
+                return True
+            current, ok = confirm(expected, predicate=postcondition)
             if not ok:
                 raise RuntimeError("Post-write verification failed")
             journal.record("verified_step", operation=op)
@@ -371,7 +383,7 @@ def execute(client, plan, journal, *, reader=capture, attempts=3, pause=time.sle
                 require(ok, "Rollback operation not confirmed")
                 expected = after
                 journal.record("rollback_verified", operation=undo)
-            current, ok = confirm(baseline)
+            current, ok = confirm(baseline, predicate=lambda s: all(direct_local(s, sid, vid, baseline["local"][sid][vid]) for sid in sources))
             require(ok, "Original observed state not restored")
             journal.record("restored")
             return "restored"
@@ -414,8 +426,8 @@ def main():
         client = Central(preferred or EU_REGIONS[0], os.getenv("CENTRAL_ACCESS_TOKEN"),
                          os.getenv("CENTRAL_CLIENT_ID") or (None if os.getenv("CENTRAL_ACCESS_TOKEN") else input("Client ID: ")),
                          os.getenv("CENTRAL_CLIENT_SECRET") or (None if os.getenv("CENTRAL_ACCESS_TOKEN") else getpass.getpass("Client secret: ")))
-        detect_region(client, preferred)
         try:
+            detect_region(client, preferred)
             if args.command == "plan":
                 plan = prepare(capture(client, args.persona, str(args.vlan), args.source),
                                args.mode, args.source, args.target)
