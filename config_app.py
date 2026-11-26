@@ -91,6 +91,39 @@ def credential_refresh(client_id, client_secret, region):
     return run
 
 
+def library_profile_comparison(bundle, module):
+    """Join only exact profile identities; absence of assignments proves nothing."""
+    from central_tool import canonical, field_differences, profile_body
+    library = bundle.get("library", {})
+    view = library.get("modules", {}).get(module, {})
+    if view.get("status") != "list_parsed":
+        return {}
+    assignments = library.get("assignments", {})
+    by_identity = {}
+    for identity, profile in view["profiles"].items():
+        matches = [r for r in assignments.get("rows", [])
+                   if r.get("profile-type") == module and type(r.get("profile-instance")) in (str, int)
+                   and str(r["profile-instance"]) == identity]
+        by_identity[identity] = {"profile": profile_body(profile), "assignments": matches,
+                                 "assignment_completeness_verified": False, "local_variants": []}
+    for persona, data in bundle["results"].items():
+        scope_names = {s["id"]: s.get("name") or s["id"] for s in data["scopes"]}
+        for scope in data["modules"].get(module, {}).get("scope_results", []):
+            if not scope["review"]["qualified"]:
+                continue
+            for row in scope["review"]["profiles"]:
+                identity = row["identity"]
+                if identity not in by_identity or row.get("local") is None:
+                    continue
+                target = by_identity[identity]
+                differences = field_differences(row["local"], target["profile"])
+                target["local_variants"].append({"persona": persona, "scope": scope["scope"],
+                                                 "scope_name": scope_names.get(scope["scope"], scope["scope"]),
+                                                 "classification": "exact_match" if canonical(row["local"]) == canonical(target["profile"])
+                                                 else "different_body", "differences": differences})
+    return by_identity
+
+
 def compare_devices(bundle, persona, left, right, module=None):
     """Compare captured effective bodies only, within one persona and capture."""
     from central_tool import field_differences, profile_body
@@ -205,7 +238,8 @@ class Workspace:
         if not files:
             return page("Library", "<p>No snapshots available.</p>", self.nav())
         name = query.get("snapshot", files[0].name)
-        bundle = read_audit(self.directory, name)
+        from central_tool import refresh_configuration_review
+        bundle = refresh_configuration_review(read_audit(self.directory, name))
         library = bundle.get("library")
         select = (f'<form method="get" action="{root}library"><label>Snapshot<select name="snapshot">'
                   + options([(p.name, p.name) for p in files], name)
@@ -229,9 +263,16 @@ class Workspace:
         if module:
             view = modules[module]
             detail = f'<section><h2>{e(module)}</h2><p>Observed profiles: {len(view["profiles"])}</p>'
+            comparison = library_profile_comparison(bundle, module)
             for identity, profile in sorted(view["profiles"].items()):
-                detail += (f'<details><summary>{e(identity)}</summary>'
-                           f'<pre>{e(json.dumps(profile, indent=2, ensure_ascii=False))}</pre></details>')
+                review = comparison.get(identity, {})
+                matches = review.get("assignments", [])
+                variants = review.get("local_variants", [])
+                conflicts = sum(v["classification"] == "different_body" for v in variants)
+                detail += (f'<details><summary>{e(identity)} · {len(matches)} observed assignments · '
+                           f'{len(variants)} local instances · {conflicts} different bodies</summary>'
+                           '<p>Zero observed assignments does not establish that a profile is unused.</p>'
+                           f'<pre>{e(json.dumps({"profile": profile, **review}, indent=2, ensure_ascii=False))}</pre></details>')
             detail += "</section>"
         assignment_detail = (f'<section><h2>Observed assignment response</h2><p>{e(assignments.get("status", "unknown"))} · '
                              f'{len(assignment_rows)} records. Assignment completeness is not verified.</p>'
@@ -239,6 +280,23 @@ class Workspace:
         return page("Library", select + '<section><h2>Tenant Library</h2><p>Read-only shared profile inventory; counts are observed, not proof of completeness.</p>'
                     '<table><thead><tr><th>Module</th><th>Response status</th><th>Observed profiles</th></tr></thead><tbody>'
                     + body + '</tbody></table></section>' + detail + assignment_detail, self.nav())
+
+    def unadapted(self, query):
+        root = "/" + self.token + "/"
+        bundle = read_audit(self.directory, query["snapshot"])
+        module = query["module"]
+        evidence = bundle.get("unadapted_profiles", {}).get(module)
+        if evidence is None:
+            return page("Profile evidence", "<p>No captured evidence for this profile type. Collect a fresh audit.</p>", self.nav())
+        body = f'<section><h2>{e(module)}</h2><p>Raw read-only evidence. This profile type has no qualified identity adapter.</p>'
+        library = evidence["library"]
+        body += (f'<details><summary>Library · {e(library["status"])}</summary>'
+                 f'<pre>{e(json.dumps(library, indent=2, ensure_ascii=False))}</pre></details>')
+        for view in evidence["source_views"]:
+            body += (f'<details><summary>{e(view["persona"])} / Scope {e(view["scope"])} · '
+                     f'{len(view["observed_instances"])} observed instances</summary>'
+                     f'<pre>{e(json.dumps(view, indent=2, ensure_ascii=False))}</pre></details>')
+        return page("Profile evidence", body + "</section>", self.nav())
 
     def coverage(self, query):
         from central_tool import refresh_configuration_review
@@ -264,7 +322,9 @@ class Workspace:
             unknown = set(observed["unknown_adapter_modules"])
             observed_rows = "".join(
                 f'<tr><td>{e(module)}</td><td>{e(", ".join(personas))}</td>'
-                f'<td>{e("Adapter needed" if module in unknown else "Adapter available")}</td></tr>'
+                f'<td>{e("Adapter needed" if module in unknown else "Adapter available")}'
+                + (f' · <a href="{e(root + "unadapted?" + urlencode({"snapshot": name, "module": module}))}">Raw evidence</a>'
+                   if module in unknown else "") + '</td></tr>'
                 for module, personas in observed["modules"].items())
             assignments = library.get("assignments") or {}
             maps = library.get("scope_maps") or {}
@@ -411,6 +471,8 @@ def handler_for(workspace):
                     body = workspace.report(query)
                 elif parsed.path == root + "library":
                     body = workspace.library(query)
+                elif parsed.path == root + "unadapted":
+                    body = workspace.unadapted(query)
                 elif parsed.path == root + "coverage":
                     body = workspace.coverage(query)
                 elif parsed.path == root + "scopes":
