@@ -1353,7 +1353,61 @@ def read_module_view(client, module, identity, params):
             raise
         return {"status": "permission_denied" if exc.status == 403 else "request_rejected",
                 "http_error": exc.status, "profiles": {}}
-    return {**module_view(raw, identity, params.get("object-type", "ANY")), "raw": raw}
+    object_type = params.get("object-type", "ANY")
+    parsed = module_view(raw, identity, object_type)
+    # Central often returns complete unpaginated views. Recover only a proven
+    # truncated collection, never reinterpret contradictory source counts.
+    if parsed["status"] != "count_mismatch" or not isinstance(raw, dict):
+        return {**parsed, "raw": raw}
+    meta = raw.get("metadata")
+    lists = [(k, v) for k, v in raw.items() if k != "metadata" and isinstance(v, list)]
+    if not isinstance(meta, dict) or len(lists) != 1 or set(raw) != {"metadata", lists[0][0]}:
+        return {**parsed, "raw": raw}
+    envelope, initial = lists[0]
+    total = meta.get("total")
+    counts = meta.get("count_objects_in_module", {})
+    if (type(total) is not int or not len(initial) < total
+            or not isinstance(counts, dict)
+            or counts.get(object_type, total) != total):
+        return {**parsed, "raw": raw}
+    pages, items, seen = [], [], set()
+    def incomplete(reason):
+        return {**parsed, "raw": raw, "pagination_status": reason, "raw_pages": pages}
+    # Start at zero so offset semantics do not depend on the implicit limit.
+    for _ in range(10000):
+        try:
+            page = client.get(ALPHA + "/" + module, **params, limit=100, offset=len(items))
+        except APIError as exc:
+            if exc.status == 401:
+                raise
+            return {**incomplete("request_failed"), "http_error": exc.status}
+        except (RuntimeError, OSError, ValueError):
+            return incomplete("read_failed")
+        pages.append(page)
+        if not isinstance(page, dict) or set(page) != {"metadata", envelope}:
+            return incomplete("schema_changed")
+        page_meta, batch = page["metadata"], page[envelope]
+        if (not isinstance(page_meta, dict) or page_meta.get("total") != total
+                or not isinstance(batch, list) or not batch
+                or page_meta.get("count", len(batch)) != len(batch)
+                or page_meta.get("count_objects_in_module", {}) != counts
+                or len(items) + len(batch) > total):
+            return incomplete("count_changed")
+        # Validate identities per page without comparing collection totals
+        # against the page size. Duplicate identities across pages are unsafe.
+        page_view = module_view({envelope: batch}, identity, object_type)
+        if page_view["status"] != "list_parsed" or seen.intersection(page_view["profiles"]):
+            return incomplete("duplicate_or_invalid_identity")
+        seen.update(page_view["profiles"])
+        items.extend(batch)
+        if len(items) == total:
+            if Counter(canonical(item) for item in initial) - Counter(canonical(item) for item in items):
+                return incomplete("initial_response_changed")
+            combined = {"metadata": {**meta, "count": total}, envelope: items}
+            result = module_view(combined, identity, object_type)
+            return {**result, "raw": combined, "initial_raw": raw, "raw_pages": pages,
+                    "pagination_status": "complete"}
+    return incomplete("page_limit_reached")
 
 
 def recover_local_view(client, module, identity, params, local):
