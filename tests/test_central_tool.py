@@ -271,6 +271,23 @@ class Tests(unittest.TestCase):
         self.assertFalse(records[2]["vlan_scan_supported_persona"])
         self.assertEqual(records[3]["identity"]["persona"], "UNKNOWN")
 
+    def test_scan_all_uses_discovered_personas(self):
+        from unittest.mock import patch
+        from central_tool import scan_all, select_snapshot
+        devices = [{"deviceFunction": "Access Switch"}, {"deviceFunction": "Core Switch"},
+                   {"deviceFunction": "Campus AP"}, {"deviceFunction": "Access Switch"}]
+        class Client:
+            base = "test"
+        with patch("central_tool.inventory", return_value=devices), patch("central_tool.scan") as scan:
+            scan.side_effect = lambda client, persona, devices: {"persona": persona}
+            result = scan_all(Client())
+        self.assertEqual(set(result["snapshots"]), {"ACCESS_SWITCH", "CORE_SWITCH"})
+        self.assertEqual(len(result["inventory"]), 4)
+        self.assertEqual(scan.call_count, 2)
+        self.assertEqual(select_snapshot(result, "CORE_SWITCH")["persona"], "CORE_SWITCH")
+        with self.assertRaises(ValueError):
+            select_snapshot(result)
+
     def test_dependencies_probe_distinguishes_empty_from_permission(self):
         from central_tool import discover_dependencies
         class Probe:
