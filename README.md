@@ -56,7 +56,7 @@ Run `python central_tool.py config-audit --region-file region.txt --output confi
 
 ### Offline configuration browser
 
-Run `python central_tool.py review-config config-audit.json --output review.html` and open the generated HTML locally. It supports device function, module, status and text filters, with expandable exact field-level comparisons and source annotations. Unqualified scopes are displayed explicitly, and the terminal reports anonymous response shapes for further adapter qualification. No API calls, credentials, server or external assets are needed. Both the input and HTML report contain confidential configuration evidence; keep them outside the repository and do not publish or upload them.
+Run `python central_tool.py review-config config-audit.json --output review.html` and open the generated HTML locally. The dashboard includes coverage and finding counters, color-coded status, quick views, device function/module/scope/status filters, searchable and sortable paginated findings, side-by-side field differences, raw evidence and filtered CSV export. The offline review reparses saved raw responses using current adapters; explicitly zero metadata-only local responses can be qualified without new API requests. Ambiguous nonempty responses remain unresolved. Unqualified scopes are displayed explicitly, and the terminal reports anonymous response shapes for further adapter qualification. No API calls, credentials, server or external assets are needed. Both the input and HTML report contain confidential configuration evidence; keep them outside the repository and do not publish or upload them.
 
 ## Safety boundary
 
