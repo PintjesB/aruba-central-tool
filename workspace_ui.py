@@ -1,6 +1,6 @@
 """Shared, self-contained UI for the local Central workspace.
 
-All captured data is escaped. No third-party assets, storage, or network calls.
+All captured data is escaped. No third-party assets or network calls.\nOnly the color theme preference is stored in browser session storage.
 """
 import json
 from html import escape
@@ -352,16 +352,81 @@ dialog.addEventListener('close',()=>{
  opener=null;
 });
 const theme=document.getElementById('workspace-theme');
+const menu=document.getElementById('workspace-menu');
+const shell=document.documentElement;
+const mobile=matchMedia('(max-width: 820px)');
+function syncMenu(){
+ menu.setAttribute('aria-expanded',String(mobile.matches?shell.classList.contains('mobile-nav'):!shell.classList.contains('compact-nav')));
+}
+menu.addEventListener('click',()=>{
+ shell.classList.toggle(mobile.matches?'mobile-nav':'compact-nav');
+ syncMenu();
+});
+mobile.addEventListener('change',()=>{shell.classList.remove('mobile-nav');syncMenu();});
+syncMenu();
+const picker=document.querySelector('.page-intro .snapshot-picker');
+if(picker)document.getElementById('snapshot-slot').append(picker);
+const palette=document.getElementById('workspace-palette');
+const query=document.getElementById('command-query');
+const results=document.getElementById('command-results');
+const commandButton=document.getElementById('workspace-command');
+const pages=Array.from(document.querySelectorAll('.sidebar a[data-nav]'));
+let selected=0, matching=[], paletteOpener=null;
+function highlight(){
+ matching.forEach((link,index)=>link.classList.toggle('selected',index===selected));
+ if(matching[selected])matching[selected].scrollIntoView({block:'nearest'});
+}
+function renderCommands(){
+ const terms=query.value.trim().toLowerCase().split(/\s+/);
+ matching=pages.filter(a=>terms.every(term=>a.dataset.nav.toLowerCase().includes(term))).map(a=>{
+  const item=a.cloneNode(true);
+  item.removeAttribute('aria-current');
+  item.removeAttribute('data-nav');
+  item.className='command-result';
+  return item;
+ });
+ results.replaceChildren(...matching);selected=0;
+ document.getElementById('command-empty').hidden=matching.length>0;
+ highlight();
+}
+function openPalette(){
+ if(palette.open||document.querySelector('.inspector[open]'))return;
+ paletteOpener=document.activeElement;query.value='';renderCommands();palette.showModal();query.focus();
+}
+commandButton.addEventListener('click',openPalette);
+query.addEventListener('input',renderCommands);
+query.addEventListener('keydown',event=>{
+ if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+  event.preventDefault();if(matching.length){selected=(selected+(event.key==='ArrowDown'?1:-1)+matching.length)%matching.length;highlight();}
+ }else if(event.key==='Enter'&&matching[selected]){
+  event.preventDefault();matching[selected].click();
+ }
+});
+document.addEventListener('keydown',event=>{
+ if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){
+  if(document.querySelector('.inspector[open]'))return;
+  event.preventDefault();if(palette.open)palette.close();else openPalette();
+ }else if(event.key==='Escape'&&!palette.open&&shell.classList.contains('mobile-nav')){
+  shell.classList.remove('mobile-nav');syncMenu();
+ }
+});
+palette.addEventListener('click',event=>{if(event.target===palette)palette.close();});
+palette.addEventListener('close',()=>{if(paletteOpener&&paletteOpener.isConnected)paletteOpener.focus({preventScroll:true});});
+
 function updateThemeLabel(){
  const dark=getComputedStyle(document.documentElement).colorScheme==='dark';
- theme.textContent=dark?'Light mode':'Dark mode';
+ theme.title=dark?'Switch to light mode':'Switch to dark mode';
+ theme.setAttribute('aria-label',theme.title);
+ theme.dataset.mode=dark?'dark':'light';
  theme.setAttribute('aria-pressed',String(dark));
 }
 theme.addEventListener('click',()=>{
  const dark=getComputedStyle(document.documentElement).colorScheme==='dark';
  document.documentElement.dataset.theme=dark?'light':'dark';
+ try{sessionStorage.setItem('central-theme',document.documentElement.dataset.theme);}catch{}
  updateThemeLabel();
 });
+try{const saved=sessionStorage.getItem('central-theme');if(saved==='dark'||saved==='light')shell.dataset.theme=saved;}catch{}
 updateThemeLabel();
 for(const picker of document.querySelectorAll('.snapshot-picker, .auto-select')){
  picker.querySelector('select').addEventListener('change',()=>picker.requestSubmit());
