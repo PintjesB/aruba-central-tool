@@ -90,6 +90,14 @@ The local workspace shows authentication/discovery, scoped configuration, Librar
 
 Scoped reads across modules within a persona, Library collections and additional profile types use at most twelve concurrent read workers. OAuth token renewal is serialized; HTTP 429 retries share a cooldown across workers. Scope review occurs after capture so the Global baseline is available independently of request completion order. No modules or applicable scopes are skipped for speed. Actual latency and throughput depend on Central and its rate limits; validate against a live capture.
 
+### Saved standards and exceptions
+
+From Standards compliance, choose an approved baseline snapshot, reference device, module or all standard modules, and target scope. Run the assessment and save a named local version. The version pins the original snapshot checksum and module set; keep that snapshot in the private workspace. Select the saved version and a newer current snapshot to reassess it. Confirm same-tenant identity for historical comparisons. Use one workspace directory per customer.
+
+Open a device result to approve an exact, complete observed profile deviation with a reason and expiry date. Missing reads cannot be approved. An approval applies only to the same standard version, device serial and exact before/after profile bodies. Changed values or expiry require review again. Exception history preserves approvals and reasoned revocations; expired, revoked and currently unobserved approvals remain visible. The files contain private customer configuration: keep them with the audit snapshots and out of source control. They are local review records, not centrally authenticated approvals.
+
+Bulk consolidation previews summarize selected proposals, source and destination recipients, scope/Library overlaps and preparation, verification and cleanup phases. Resolve overlaps and select destinations before export. Duplicate Library migration previews show assignment and reference worklists plus the retained profile's visibility for affected devices. These are review-only plans, not executable API operations.
+
 ### Consolidation advisor
 
 Open Consolidation advisor for any saved configuration audit. It groups qualified reusable local bodies and recommends review of Global-matching overrides, exact repeated locals, existing Library reuse, conflicting definitions, VLAN default differences and possible Library placement. It also flags profiles with no observed assignments when assignment evidence exists. Inspect captured device and higher-scope coverage, select recommendations and export a private, non-executable change preview. Device-specific system settings and topology objects are excluded from generic promotion. All recommendations are blocked from automatic application pending inheritance, target support, dependency and rollback validation; the application performs no configuration writes.
