@@ -513,6 +513,8 @@ class Tests(unittest.TestCase):
             def get(self, path, **params):
                 if path.endswith("/config-assignments"):
                     return {"config-assignment": []}
+                if path.endswith("/scope-maps"):
+                    return {"scope-map": []}
                 return {"profiles": []}
         devices = [{"deviceFunction": "Campus AP"}, {"deviceFunction": "Access Switch"},
                    {"deviceFunction": "Hybrid NAC"}]
@@ -627,6 +629,20 @@ class Tests(unittest.TestCase):
         self.assertNotIn("ethernet-interfaces", result["modules"])
         self.assertEqual(result["modules"]["auth-profiles"]["status"], "list_parsed")
         self.assertFalse(result["assignment_coverage_verified"])
+
+    def test_profile_type_discovery_keeps_unknown_and_scope_map_evidence(self):
+        from central_tool import discover_profile_types
+        assignments = {"rows": [{"profile-type": "layer2-vlan", "device-function": "ACCESS_SWITCH"},
+                               {"profile-type": "dns", "device-function": "CAMPUS_AP"},
+                               {"profile-type": "../private", "device-function": "ACCESS_SWITCH"}]}
+        maps = {"rows": [{"resource": "dns/example", "persona": "ACCESS_SWITCH"},
+                         {"resource": "unknown-profile/a/b", "persona": "CAMPUS_AP"},
+                         {"resource": "policy-groups", "persona": "ACCESS_SWITCH"}]}
+        data = discover_profile_types(assignments, maps)
+        self.assertEqual(data["modules"]["dns"], ["ACCESS_SWITCH", "CAMPUS_AP"])
+        self.assertEqual(data["unknown_adapter_modules"], ["policy-groups", "unknown-profile"])
+        self.assertEqual(data["unresolved_records"], 1)
+        self.assertFalse(data["complete"])
 
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
