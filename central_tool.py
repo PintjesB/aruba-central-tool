@@ -1700,12 +1700,26 @@ def read_raw_profile_collection(client, module, params):
     if not isinstance(meta, dict) or len(lists) != 1 or set(raw) - {"metadata", lists[0][0]}:
         return result
     envelope, initial = lists[0]
-    total = meta.get("total")
-    if type(total) is not int:
+    def declared_total(metadata):
+        counts = metadata.get("count_objects_in_module", {})
+        if not isinstance(counts, dict):
+            return None, False
+        expected = counts.get(params.get("object-type", "ANY"))
+        total = metadata.get("total", expected)
+        valid = ((total is None or (type(total) is int and total >= 0))
+                 and (expected is None or (type(expected) is int and expected == total)))
+        return total, valid
+    total, valid = declared_total(meta)
+    if (not valid or ("count" in meta and (type(meta["count"]) is not int or meta["count"] != len(initial)))
+            or ("offset" in meta and (type(meta["offset"]) is not int or meta["offset"] not in (0, len(initial))))):
+        return {**result, "status": "count_mismatch"}
+    if total is None:
         return result
-    if total == len(initial) and meta.get("count", len(initial)) == len(initial) and meta.get("offset", 0) in (0, len(initial)):
+    if total == len(initial):
+        if len({canonical(item) for item in initial}) != total:
+            return {**result, "status": "count_mismatch"}
         return {**result, "collection_count_verified": True}
-    if total <= len(initial):
+    if total < len(initial):
         return {**result, "status": "count_mismatch"}
     pages, combined, signatures = [], [], set()
     def incomplete(reason):
@@ -1724,7 +1738,9 @@ def read_raw_profile_collection(client, module, params):
             return incomplete("schema_changed")
         batch, page_meta = page[envelope], page["metadata"]
         if (not isinstance(batch, list) or not batch or not isinstance(page_meta, dict)
-                or page_meta.get("total") != total or page_meta.get("count", len(batch)) != len(batch)
+                or declared_total(page_meta) != (total, True)
+                or page_meta.get("count_objects_in_module", {}) != meta.get("count_objects_in_module", {})
+                or page_meta.get("count", len(batch)) != len(batch)
                 or page_meta.get("offset", len(combined)) not in (len(combined), len(combined) + len(batch))
                 or len(combined) + len(batch) > total):
             return incomplete("count_or_offset_changed")
