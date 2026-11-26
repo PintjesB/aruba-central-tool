@@ -295,9 +295,9 @@ def library_view(workspace, query):
         link = url(root, "library", snapshot=name, module=key)
         rows.append(tr(f'<a href="{link}">{e(module_label(key))}</a>', str(len(view["profiles"])), status(view["status"])))
     body = intro("Library", "Shared profiles and their observed assignments.", picker)
-    body += '<div class="toolbar"><a class="button" href="' + url(root, "library", snapshot=name) + '">All modules</a>' + ''.join(
-        f'<a class="button{" primary" if k == module else ""}" href="{url(root, "library", snapshot=name, module=k)}">{e(module_label(k))}</a>'
-        for k, v in sorted(modules.items()) if v["status"] == "list_parsed" and v["profiles"]) + '</div>'
+    body += (f'<section><form method="get" action="{root}library"><input type="hidden" name="snapshot" value="{e(name)}">'
+             + select("module", [("", "All collections")] + [(k, module_label(k)) for k in sorted(modules)], module, "Profile collection")
+             + '<button type="submit" class="quiet">Open collection</button></form></section>')
     if not module:
         body += '<section><h2>Profile collections</h2>' + table(("Module", "Profiles", "State"), rows, search=True) + '</section>'
     else:
@@ -426,7 +426,7 @@ def explorer_view(workspace, query):
         raise ValueError("Unknown module")
     if scope and scope not in {s["id"] for s in entry["scopes"]}:
         raise ValueError("Unknown scope")
-    mode = query.get("view", "all" if scope or query.get("diagnostics") else "local")
+    mode = query.get("view", "diagnostics" if query.get("diagnostics") else "all" if scope else "local")
     if mode not in ("all", "local", "diagnostics"):
         raise ValueError("Unknown view")
     scope_names = [(s["id"], f'{pretty(s["kind"])} / {s.get("name") or s["id"]}') for s in entry["scopes"]]
