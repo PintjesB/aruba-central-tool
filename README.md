@@ -42,6 +42,10 @@ Run `python central_tool.py audit --region-file region.txt --output audit.json` 
 
 The audit probes interface profiles, roles and port channels in addition to the original dependency modules. It indexes explicitly VLAN-shaped configuration fields, keeping wildcard, unknown and ambiguous expressions unresolved. Candidate paths and values remain in the private report; this is not a complete dependency graph. The audit also attempts the documented switch VLAN monitoring endpoint using the discovered inventory serial or stack identity. Responses are saved as evidence; schema and completeness must be validated before deriving operational equivalence. No profile is marked migration eligible.
 
+### Offline audit comparison and reference preview
+
+Run `python central_tool.py review-audit audit.json --previous earlier-audit.json --output review.json` to regenerate the review and compare two captures without credentials or network requests. Omit `--previous` to review just one capture. Match scopes by ID and compare exact local, effective and Library bodies. The private report includes before/reference field differences and blockers per profile. Reference bodies are not predictions of actual post-change inheritance and no preview is executable. Region and Global scope checks are not independent proof of tenant identity; compare only captures from the same tenant.
+
 ## Safety boundary
 
 No configuration mutation API calls exist yet. Only OAuth token issuance uses POST. Candidate findings are not executable plans. The API is v1alpha1 and real tenant response shapes, group access, annotation semantics, and Classic/New configuration authority must be validated before enabling writes. Scope IDs are strings, not floating-point numbers.

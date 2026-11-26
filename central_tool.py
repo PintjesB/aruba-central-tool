@@ -1133,6 +1133,129 @@ def audit(client):
             "results": results, "safe_to_apply": False}
 
 
+def audit_snapshots(bundle):
+    if bundle.get("schema") != 1 or bundle.get("kind") != "tenant_audit":
+        raise ValueError("Expected a tenant audit bundle")
+    snapshots = {p: entry["snapshot"] for p, entry in bundle["results"].items()}
+    if any(s.get("persona") != p or s.get("region") != bundle["region"] for p, s in snapshots.items()):
+        raise ValueError("Audit snapshot persona or region mismatch")
+    return snapshots
+
+
+def compare_vlan_views(before, after):
+    old, new = vlan_map(before), vlan_map(after)
+    return {"added": sorted(new.keys() - old.keys(), key=int),
+            "removed": sorted(old.keys() - new.keys(), key=int),
+            "modified": [{"vlan": vid, "differences": field_differences(old[vid], new[vid])}
+                         for vid in sorted(old.keys() & new.keys(), key=int)
+                         if canonical(old[vid]) != canonical(new[vid])]}
+
+
+def compare_audits(previous, current):
+    """Compare captured bodies, not presumed device behavior or inferred causality."""
+    old, new = audit_snapshots(previous), audit_snapshots(current)
+    if previous["region"] != current["region"]:
+        raise ValueError("Audit region mismatch")
+    results = {}
+    for persona in sorted(old.keys() & new.keys()):
+        a, b = old[persona], new[persona]
+        def index(snapshot):
+            result = {s["id"]: s for s in snapshot["scopes"]}
+            if len(result) != len(snapshot["scopes"]):
+                raise ValueError("Duplicate scope IDs")
+            return result
+        x, y = index(a), index(b)
+        global_a = [s["id"] for s in x.values() if s["kind"] == "global"]
+        global_b = [s["id"] for s in y.values() if s["kind"] == "global"]
+        if len(global_a) != 1 or global_a != global_b:
+            raise ValueError("Audit Global scope mismatch")
+        changes = []
+        for sid in sorted(x.keys() & y.keys()):
+            if x[sid]["kind"] != y[sid]["kind"]:
+                raise ValueError("Scope kind changed")
+            local = compare_vlan_views(x[sid]["local"], y[sid]["local"])
+            effective = compare_vlan_views(x[sid]["effective"], y[sid]["effective"])
+            if any(local.values()) or any(effective.values()):
+                before_effective, after_effective = vlan_map(x[sid]["effective"]), vlan_map(y[sid]["effective"])
+                removals = []
+                for vid in local["removed"]:
+                    if vid not in after_effective:
+                        status = "effective_vlan_absent"
+                    elif vid not in before_effective:
+                        status = "previous_effective_vlan_absent"
+                    elif canonical(before_effective[vid]) == canonical(after_effective[vid]):
+                        status = "effective_body_unchanged"
+                    else:
+                        status = "effective_body_changed"
+                    removals.append({"vlan": vid, "status": status})
+                changes.append({"scope": sid, "kind": y[sid]["kind"], "local": local,
+                                "effective": effective, "local_removal_outcomes": removals})
+        results[persona] = {"added_scopes": sorted(y.keys() - x.keys()),
+                            "removed_scopes": sorted(x.keys() - y.keys()),
+                            "library": compare_vlan_views(a["library"], b["library"]),
+                            "assignment_response_changed": canonical(a.get("assignments_raw")) != canonical(b.get("assignments_raw")),
+                            "scope_changes": changes}
+    return {"added_personas": sorted(new.keys() - old.keys()), "removed_personas": sorted(old.keys() - new.keys()),
+            "results": results, "same_tenant_verified": False,
+            "warning": "Region and Global scope checks do not independently prove tenant identity. Captures are not atomic."}
+
+
+def offline_audit_review(bundle, previous=None):
+    """Regenerate private review and reference previews without contacting Central."""
+    snapshots = audit_snapshots(bundle)
+    results = {}
+    for persona, snapshot in sorted(snapshots.items()):
+        dependencies = bundle["results"][persona]["dependencies"]
+        review = dependency_review(snapshot, dependencies, report(snapshot))
+        baseline = vlan_map(next(s["effective"] for s in snapshot["scopes"] if s["kind"] == "global"))
+        library = vlan_map(snapshot["library"])
+        previews = []
+        for row in review["local_profile_review"]:
+            if row["proposed_review"] == "retain_default":
+                continue
+            vid = row["vlan"]
+            # The Global body is a comparison reference, not a prediction of
+            # inheritance after deletion; intermediate assignments may intervene.
+            target = baseline.get(vid) if row["scope_kind"] != "global" else None
+            target_kind = "global_effective_reference" if target is not None else "library_reference"
+            if target is None:
+                target = library.get(vid)
+            previews.append({"scope": row["scope"], "scope_kind": row["scope_kind"], "vlan": vid,
+                             "current_local_body": row["profile"], "reference_kind": target_kind,
+                             "reference_body": target,
+                             "reference_differences": field_differences(row["profile"], target) if target is not None else None,
+                             "proposed_review": row["proposed_review"],
+                             "blockers": row["dependency_blockers"],
+                             "reference_candidate_modules": row["reference_candidate_modules"],
+                             "effective_after_change_verified": False, "executable": False})
+        results[persona] = {"review": review, "previews": previews}
+        print(f"Offline review: {persona}")
+        print(f"  Reference previews: {len(previews)}; executable: 0")
+        for action, count in sorted(Counter(p["proposed_review"] for p in previews).items()):
+            print(f"  {action}: {count}")
+    data = {"schema": 1, "kind": "offline_audit_review", "region": bundle["region"],
+            "results": results, "safe_to_apply": False}
+    if previous is not None:
+        comparison = compare_audits(previous, bundle)
+        data["comparison"] = comparison
+        print("Audit comparison (exact captured bodies):")
+        for persona, change in comparison["results"].items():
+            print(f"  {persona}: changed scopes={len(change['scope_changes'])}, "
+                  f"added scopes={len(change['added_scopes'])}, removed scopes={len(change['removed_scopes'])}")
+            print(f"    Library added={len(change['library']['added'])}, removed={len(change['library']['removed'])}, "
+                  f"modified={len(change['library']['modified'])}")
+            for view in ("local", "effective"):
+                totals = Counter()
+                for scope in change["scope_changes"]:
+                    for kind, values in scope[view].items():
+                        totals[kind] += len(values)
+                print(f"    {view}: added={totals['added']}, removed={totals['removed']}, modified={totals['modified']}")
+            for status, count in sorted(Counter(r["status"] for s in change["scope_changes"]
+                    for r in s["local_removal_outcomes"]).items()):
+                print(f"    local removal: {status} x{count}")
+    return data
+
+
 def select_snapshot(data, persona=None):
     if data.get("kind") != "multi_persona_scan":
         if persona and data.get("persona") != persona:
@@ -1166,6 +1289,10 @@ def main():
     dep.add_argument("snapshot", type=Path)
     dep.add_argument("--output", required=True, type=Path)
     dep.add_argument("--persona", choices=sorted(PERSONAS), help="Select a persona from a scan-all snapshot")
+    offline = commands.add_parser("review-audit", help="Review saved audit and optionally compare with an earlier audit")
+    offline.add_argument("audit", type=Path)
+    offline.add_argument("--previous", type=Path)
+    offline.add_argument("--output", required=True, type=Path)
     analysis = commands.add_parser("report")
     analysis.add_argument("snapshot", type=Path)
     analysis.add_argument("--output", required=True, type=Path)
@@ -1203,6 +1330,10 @@ def main():
                 print_inventory_summary(records)
             else:
                 data = discover_dependencies(client, source)
+        elif args.command == "review-audit":
+            bundle = json.loads(args.audit.read_text(encoding="utf-8"))
+            previous = json.loads(args.previous.read_text(encoding="utf-8")) if args.previous else None
+            data = offline_audit_review(bundle, previous)
         else:
             snapshot = select_snapshot(json.loads(args.snapshot.read_text(encoding="utf-8")), args.persona)
             data = report(snapshot)
