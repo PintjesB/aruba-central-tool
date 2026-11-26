@@ -447,13 +447,15 @@ def usage_detail(usage):
                 tr("Distinct scope/function assignments", usage_cells(usage)[0]),
                 tr("Devices with matching shared profile", usage_cells(usage)[1]),
                 tr("Distinct configuration objects referencing this name", usage_cells(usage)[2]),
+                tr("Saved definitions referencing this name", str(usage.get("definition_reference_count", 0))),
+                tr("Effective objects referencing this name", str(usage.get("effective_reference_count", 0))),
                 tr("Devices with incomplete module reads", usage_cells(usage)[3]),
                 tr("Devices with matching settings but unverified Library source", str(len(usage["matching_other_devices"])))])
             + '<h3>Assigned at</h3>' + table(("Scope", "Device function"), [
                 tr(e(a.get("scope-name", a.get("scope-id", "Unknown"))), e(persona_label(a.get("device-function", "")))) for a in usage["assignments"]])
             + '<h3>Devices with matching shared configuration</h3>' + list_items([d["name"] for d in usage["shared_devices"]])
-            + '<h3>Configuration references</h3>' + table(("Source scope", "Module", "Object"), [
-                tr(e(r["device"]), e(module_label(r["source_module"])), e(r["source"])) for r in usage["references"]])
+            + '<h3>Configuration references</h3>' + table(("Source scope", "View", "Module", "Object", "Field"), [
+                tr(e(r["device"]), e(pretty(r.get("source_view", "effective"))), e(module_label(r["source_module"])), e(r["source"]), e(".".join(map(str, r.get("path", []))))) for r in usage["references"]])
             + '<p class="note">These are separate observations, not traffic usage. Zero observed references does not prove a profile is unused. Reference coverage is incomplete.</p>')
 
 
@@ -580,11 +582,13 @@ def engineering_view(workspace, query):
                          badge("Suggested to keep", "info") if identity == keep else "Review")
                       for identity, u in usage.items()]
         choose_keep = '<label>Profile to retain<select data-keep>' + '<option value="">Choose a profile</option>' + "".join(f'<option value="{e(identity)}"{" selected" if identity == keep else ""}>{e(identity)}</option>' for identity in usage) + '</select></label>'
+        from advanced_review import duplicate_migration_preview
         preview_data = {identity: {"assignments": usage_cells(u)[0], "shared_devices": len(u["shared_devices"]), "referencing_objects": u["reference_count"], "unknown_reads": len(u["unknown_devices"])} for identity, u in usage.items()}
+        migration_plans = {identity: duplicate_migration_preview(r["module"], usage, identity) for identity in usage}
         unresolved = r["unresolved_reference_count"]
         detail = ('<div class="review-decision"><div><strong>Choose the canonical Library profile</strong><p>Use observed references and assignments to estimate migration work. No profile is proven safe to delete.</p></div></div>'
                   + table(("Profile", "Assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Suggestion"), comparison)
-                  + f'<div data-duplicate-preview data-usage="{e(json.dumps(preview_data))}"><h3>Migration preview</h3>{choose_keep}<div data-migration-summary aria-live="polite">Choose a profile to preview the observed migration workload.</div></div>'
+                  + f'<div data-duplicate-preview data-usage="{e(json.dumps(preview_data))}" data-migration-plans="{e(json.dumps(migration_plans))}"><h3>Migration preview</h3>{choose_keep}<div data-migration-summary aria-live="polite">Choose a profile to preview the observed migration workload.</div></div>'
                   + (f'<p class="note"><strong>{unresolved} unresolved reference observations in this module.</strong> Their target identities are not established; they may affect this migration.</p>' if unresolved else "")
                   + "".join(f'<details><summary>{e(identity)} · Where it is used</summary>{usage_detail(u)}</details>' for identity, u in usage.items())
                   + '<details><summary>Validation before consolidation</summary><ol><li>Choose the canonical name based on usage and naming standards.</li><li>Move assignments and references to that name.</li><li>Verify effective configuration and complete reverse references before deleting the old profile.</li></ol></details>'
@@ -642,6 +646,24 @@ function update(panel){
   for(const value of [name,u.assignments,u.shared_devices,u.referencing_objects,u.unknown_reads])row.insertCell().textContent=String(value);
  }
  wrap.append(table);target.append(wrap);
+ const plan=JSON.parse(panel.dataset.migrationPlans)[keep];
+ if(!plan)return;
+ const heading2=document.createElement('h4');heading2.textContent='Exact observed migration worklist';target.append(heading2);
+ function records(title,headers,values){
+  const heading=document.createElement('h4');heading.textContent=title+' ('+values.length+')';target.append(heading);
+  if(!values.length){const p=document.createElement('p');p.textContent='No records observed; coverage is incomplete.';target.append(p);return;}
+  const wrap=document.createElement('div');wrap.className='table-scroll';
+  const table=document.createElement('table'),head=table.createTHead().insertRow(),body=table.createTBody();
+  for(const label of headers){const cell=document.createElement('th');cell.scope='col';cell.textContent=label;head.append(cell);}
+  for(const valuesRow of values){const row=body.insertRow();for(const v of valuesRow)row.insertCell().textContent=String(v??'Unknown');}
+  wrap.append(table);target.append(wrap);
+ }
+ records('Assignment review',['From','To','Scope ID','Function','Action'],plan.assignments.map(a=>[a.from,a.to,a.scope,a.persona,a.action.replaceAll('_',' ')]));
+ records('Saved references to review',['From','To','Scope','Module','Profile','Field'],plan.saved_references.map(r=>[r.from,r.to,r.device,r.source_module,r.source,r.path.join('.')]));
+ records('Effective reference impact',['From','Device','Module','Profile','Field'],plan.effective_references.map(r=>[r.from,r.device,r.source_module,r.source,r.path.join('.')]));
+ const note=document.createElement('p');note.textContent=plan.target_conflicts.length+' devices have a differing retained-name definition; '+plan.target_unknown_reads.length+' device reads are unavailable. Review before migration.';target.append(note);
+ const button=document.createElement('button');button.type='button';button.textContent='Export private migration preview JSON';
+ button.addEventListener('click',()=>{const u=URL.createObjectURL(new Blob([JSON.stringify({schema:1,kind:'library_migration_preview',...plan},null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=u;a.download='library-migration-preview.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);});target.append(button);
 }
 document.addEventListener('change',event=>{
  if(event.target.matches('[data-keep]'))update(event.target.closest('[data-duplicate-preview]'));

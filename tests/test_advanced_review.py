@@ -125,3 +125,27 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(usage["reference_count"], 2)
         self.assertEqual(usage["reference_devices"], 0)
         self.assertFalse(usage["coverage_complete"])
+
+
+    def test_duplicate_migration_preview_separates_saved_edits_from_effective_impact(self):
+        from advanced_review import duplicate_migration_preview
+        base_ref = {"persona": "ACCESS_SWITCH", "scope": "2", "device": "Switch",
+                    "source_module": "ethernet-interfaces", "source": "1/1/1",
+                    "target_module": "sw-port-profiles", "target": "old",
+                    "path": ["sw-profile"], "status": "observed"}
+        common = {"different_devices": [], "unknown_devices": [], "references": [],
+                  "assignments": []}
+        usage = {"keep": {**common, "assignments": [{"scope-id": "1", "device-function": "ACCESS_SWITCH"}]},
+                 "old": {**common, "assignments": [{"scope-id": "1", "device-function": "ACCESS_SWITCH"},
+                                                   {"scope-id": "2", "device-function": "ACCESS_SWITCH"}],
+                         "references": [{**base_ref, "source_view": "saved"},
+                                        {**base_ref, "source_view": "effective"}]}}
+        plan = duplicate_migration_preview("sw-port-profiles", usage, "keep")
+        self.assertEqual(len(plan["assignments"]), 2)
+        self.assertEqual([a["action"] for a in plan["assignments"]],
+                         ["verify_existing_assignment", "review_target_assignment"])
+        self.assertEqual(len(plan["saved_references"]), 1)
+        self.assertEqual(len(plan["effective_references"]), 1)
+        self.assertEqual(plan["saved_references"][0]["to"], "keep")
+        self.assertFalse(plan["complete"])
+        self.assertFalse(plan["safe_to_apply"])
