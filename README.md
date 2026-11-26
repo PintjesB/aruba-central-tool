@@ -54,6 +54,10 @@ Offline reference previews include observed Library assignments matching the VLA
 
 Run `python central_tool.py config-audit --region-file region.txt --output config-audit.json` to discover the device functions and probe documented profile modules using committed local and annotated effective views. An optional `--persona ACCESS_SWITCH` limits the run. The catalog covers switch, AP, gateway and bridge candidate modules; unsupported requests, unknown shapes, duplicate profile identities and contradictory annotations are recorded as unqualified. Ethernet interface configuration is device-scoped. Profile keys and applicable personas are explicit documented adapters, not a universal API catalog. Global matches/differences are comparison evidence, not proof of a specific ancestor or of redundant configuration. Raw responses and per-field values remain private; the terminal shows counts. This audit is read-only and does not replace the VLAN dependency audit.
 
+### Offline configuration browser
+
+Run `python central_tool.py review-config config-audit.json --output review.html` and open the generated HTML locally. It supports device function, module, status and text filters, with expandable exact field-level comparisons and source annotations. Unqualified scopes are displayed explicitly, and the terminal reports anonymous response shapes for further adapter qualification. No API calls, credentials, server or external assets are needed. Both the input and HTML report contain confidential configuration evidence; keep them outside the repository and do not publish or upload them.
+
 ## Safety boundary
 
 No configuration mutation API calls exist yet. Only OAuth token issuance uses POST. Candidate findings are not executable plans. The API is v1alpha1 and real tenant response shapes, group access, annotation semantics, and Classic/New configuration authority must be validated before enabling writes. Scope IDs are strings, not floating-point numbers.
