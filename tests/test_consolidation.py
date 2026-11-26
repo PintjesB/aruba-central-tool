@@ -349,3 +349,23 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(f["result"], "source_uncertain")
         self.assertIn("device.name", f["evidence"]["conflicts"])
         self.assertFalse(f["candidate"])
+
+    def test_vlan_summary_reports_counts_without_tenant_values(self):
+        from central_tool import vlan_evidence_summary, refresh_configuration_review
+        import json
+        data = fixture()
+        views = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]
+        views[0]["effective_view"]["profiles"]["70"] = {"vlan": 70, "name": "PRIVATE-CUSTOMER", "enable": True}
+        for key in ("local_view", "effective_view"):
+            views[2][key]["profiles"]["70"] = {"vlan": 70}
+        refresh_configuration_review(data)
+        summary = vlan_evidence_summary(data)
+        self.assertGreaterEqual(summary["remaining_fields"]["name"], 1)
+        self.assertGreaterEqual(summary["remaining_fields"]["enable"], 1)
+        self.assertNotIn("PRIVATE-CUSTOMER", json.dumps(summary))
+        data["switch_vlan_cli"] = {"ACCESS_SWITCH": {"3": {"status": "observed",
+            "vlans": {"70": {"name": "PRIVATE-CUSTOMER", "enable": True}}}}}
+        after = vlan_evidence_summary(data)
+        self.assertEqual(after["recovered_values"]["Switch show vlan"], 2)
+        self.assertGreater(after["comparisons"]["observed_match"], summary["comparisons"].get("observed_match", 0))
+        self.assertNotIn("PRIVATE-CUSTOMER", json.dumps(after))
