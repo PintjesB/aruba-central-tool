@@ -259,6 +259,18 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(by_id["10"]["result"], "identical")
         self.assertEqual(by_id["40"]["result"], "different")
         self.assertEqual(by_id["20"]["result"], "no_global")
+        self.assertTrue(by_id["10"]["review_candidate"])
+        self.assertFalse(by_id["40"]["review_candidate"])
+        self.assertFalse(by_id["20"]["review_candidate"])
+        self.assertFalse(by_id["10"]["safe_to_apply"])
+        # Matching Global does not mean a different applicable site is redundant.
+        entry["scopes"][2]["metadata"] = {"siteId": 2}
+        findings, _ = device_override_rows(data, "ACCESS_SWITCH")
+        matched = next(f for f in findings if f["device"] == "3" and f["module"] == "layer2-vlan" and f["identity"] == "10")
+        self.assertEqual(matched["result"], "identical")
+        self.assertEqual(matched["removal"], "higher_scope_differs")
+        self.assertTrue(matched["review_candidate"])
+        entry["scopes"][2].pop("metadata")
         self.assertTrue(any(f["device"] == "5" for f in missing))
         self.assertFalse(any(f["module"] == "ethernet-interfaces" for f in findings))
         with tempfile.TemporaryDirectory() as directory:
@@ -267,8 +279,8 @@ class ConsolidationTests(unittest.TestCase):
             w = Workspace(directory)
             html = w.overrides({"snapshot": name, "device": "3", "module": "layer2-vlan", "result": "identical"})
             self.assertIn("Compare with Global", html)
-            self.assertIn("Identical to Global", html)
-            self.assertIn("Review possible override removal", html)
+            self.assertIn("Redundant override", html)
+            self.assertIn("Remove the redundant local copy", html)
             self.assertIn("Open matching consolidation preview", html)
             self.assertIn("identity=10", html)
             self.assertNotIn("VLAN 40", html)
@@ -422,7 +434,7 @@ class ConsolidationTests(unittest.TestCase):
             (Path(directory) / name).write_text(json.dumps(data))
             html = Workspace(directory).overrides({"snapshot": name, "result": "cleanup", "module": "layer2-vlan"})
             self.assertIn("VLAN 70", html)
-            self.assertIn("No observed differences", html)
+            self.assertIn("Likely redundant", html)
             self.assertIn("5 match · 2 unavailable", html)
             self.assertNotIn("VLAN 40", html)
         # A real observed difference or a conflicting saved value excludes cleanup.
