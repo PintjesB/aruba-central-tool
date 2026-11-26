@@ -2,11 +2,13 @@
 from collections import Counter
 from central_tool import canonical, profile_body, PERSONAS, vlan_comparison_evidence, comparison_fields, field_differences
 from consolidation import scope_memberships, REUSABLE
+from inheritance_review import nearest_fallback
 from workspace_ui import e, page, intro, badge, raw, table, tr, inspect, diff_table, property_table, module_label, persona_label
 from workspace_views import load, url, select, title_profile, vlan_explanation, operational_vlan_context, vlan_instance_context, scope_filter_form, device_options, module_options
 
 RESULTS = {
-    "identical": "Redundant override",
+    "identical": "Matches Global",
+    "nearest_match": "Matches nearest inherited definition",
     "effective_match": "Effective settings match Global",
     "partial_match": "Likely redundant",
     "omitted": "Insufficient comparable settings",
@@ -17,7 +19,8 @@ RESULTS = {
     "source_uncertain": "Local source or effective settings disagree",
 }
 NEXT_STEP = {
-    "identical": "Remove the redundant local copy if inheritance preserves these settings",
+    "identical": "Review whether removing the local copy preserves these settings",
+    "nearest_match": "Review removal against the observed nearest inherited definition",
     "effective_match": "Potentially redundant: verify saved definition and inheritance before removal",
     "partial_match": "Known settings match Global; verify unavailable settings before removal",
     "omitted": "No sufficient observed settings to assess redundancy",
@@ -134,11 +137,21 @@ def device_override_rows(bundle, persona):
                     removal = "verification_required"
                 else:
                     removal = "review_removal"
+                fallback = nearest_fallback(entry, module, sid, identity, local, row["effective"], row.get("annotations", {}))
+                if fallback["status"] == "matching_fallback" and state in ("different", "no_global", "global_unknown"):
+                    state = "nearest_match"
+                if fallback["status"] == "matching_fallback":
+                    removal = "review_removal"
+                elif fallback["status"] == "different_fallback":
+                    removal = "higher_scope_differs"
+                elif removal == "review_removal":
+                    removal = "verification_required"
                 findings.append({"device": sid, "device_name": names[sid], "module": module,
                                  "identity": identity, "result": state, "profile": row, "chain": chain,
                                  "direct_confirmed": direct, "evidence": evidence, "assessment": assessment,
                                  "candidate": state == "identical" and module in REUSABLE and direct,
-                                 "review_candidate": state in ("identical", "effective_match", "partial_match"),
+                                 "review_candidate": state in ("identical", "effective_match", "partial_match", "nearest_match"),
+                                 "fallback": fallback,
                                  "removal": removal,
                                  "safe_to_apply": False})
     return findings, incomplete
@@ -171,7 +184,8 @@ def overrides_view(workspace, query):
         submit="Compare with Global", extra_fields=(("result", "Result", result,
             [("cleanup", "Redundant and likely redundant"), ("", "All local definitions")] + list(RESULTS.items())),))
     short_action = {
-        "identical": "Remove redundant local copy",
+        "identical": "Review redundant local copy",
+        "nearest_match": "Review nearest-scope match",
         "effective_match": "Verify inheritance",
         "partial_match": "Potential cleanup; verify gaps",
         "omitted": "Not enough evidence",
@@ -212,11 +226,23 @@ def overrides_view(workspace, query):
             extra += vlan_instance_context(bundle, persona, sources, f["identity"]) + operational_vlan_context(bundle, persona, sources, f["identity"])
         higher_differences = [v["name"] for v in f["chain"] if v["state"].startswith("Observed differences") and v.get("kind") != "global"]
         inheritance_warning = ('<p class="note"><strong>Higher-scope exception:</strong> observed differences at '
-                               + e(", ".join(higher_differences)) + '. A Global match alone is not enough to remove this override.</p>') if higher_differences else ""
+                               + e(", ".join(higher_differences)) + '. A Global match alone is not enough to remove this override.</p>') if higher_differences and f["fallback"]["status"] != "matching_fallback" else ""
+        fallback = f["fallback"]
+        fallback_html = '<h3>Expected fallback after removing device-local copy</h3>'
+        if fallback["source"]:
+            source = fallback["source"]
+            fallback_html += '<p><strong>' + e(source["kind"].title() + " / " + source["name"]) + '</strong> · ' + e(fallback["status"].replace("_", " ")) + '</p>'
+            fallback_html += diff_table(fallback["differences"], "Saved device", "Nearest higher scope") + property_table(source["body"])
+        else:
+            fallback_html += '<p>Cannot identify a direct higher-scope definition.</p>'
+        fallback_html += table(("Precedence", "Scope", "Evidence"), [tr(e(v["kind"]), e(v.get("name") or "Unknown"), e(v["status"].replace("_", " "))) for v in fallback["chain"]])
+        if fallback["blockers"]:
+            fallback_html += "<ul>" + "".join("<li>" + e(v) + "</li>" for v in fallback["blockers"]) + "</ul>"
+        fallback_html += '<p class="note">Observed candidate only. Verify assignment restoration, full field coverage and dependencies before any removal.</p>'
         detail = ('<div class="review-decision"><div>' + badge(RESULTS[state], "warn" if state in ("different", "omitted", "source_uncertain") else "info" if state in ("partial_match", "effective_match") else "neutral")
                   + '<p><strong>Next step:</strong> ' + e(next_step) + '.</p></div><div class="review-context"><small>Device</small><strong>'
                   + e(f["device_name"]) + '</strong></div></div>'
-                  + inheritance_warning + comparison
+                  + inheritance_warning + fallback_html + comparison
                   + '<details><summary>Inheritance and higher scopes</summary>'
                   + table(("Scope", "Observed device vs scope settings"), [tr(e(v["name"]), e(v["state"])) for v in f["chain"]])
                   + '<p class="note">Scope membership does not establish inheritance precedence. Compare the actual inherited source and dependencies before removal.</p></details>'
@@ -241,7 +267,7 @@ def overrides_view(workspace, query):
                        inspect(label, detail, "Compare settings")))
     result_summary = '<div class="result-summary" aria-label="Comparison results">' + "".join(
         f'<span><strong>{counts[key]}</strong> {e(label)}</span>' for key, label in (
-            ("identical", "redundant overrides"), ("effective_match", "effective matches"),
+            ("identical", "Global matches"), ("nearest_match", "nearest-scope matches"), ("effective_match", "effective matches"),
             ("partial_match", "likely redundant"), ("different", "different"), ("omitted", "insufficient evidence"), ("no_global", "no Global profile"),
             ("protected", "protected"), ("global_unknown", "Global unavailable"),
             ("source_uncertain", "source conflict")) if counts[key]) + '</div>'
@@ -254,10 +280,10 @@ def overrides_view(workspace, query):
                             ("remaining_fields", "Unresolved field occurrences"))] +
         [tr(e(field), e(", ".join(f"{key}: {value}" for key, value in outcomes.items())))
          for field, outcomes in sorted(diagnostics["feature_cli"].items())]) + '</details>'
-    body = (intro("Device overrides", "Find unnecessary device-local copies of Global configuration. Review genuine exceptions separately.", picker)
+    body = (intro("Device overrides", "Find device-local copies that match Global or the observed nearest higher-scope definition. Review genuine exceptions separately.", picker)
             + '<section class="worklist"><div class="worklist-controls">' + filters + '</div>'
             + '<div class="worklist-summary"><h2>Device-local configuration</h2>' + result_summary + '</div>'
-            + '<p class="filter-hint">Redundant means the saved local definition matches Global. Likely redundant means known settings match. Removal readiness is assessed separately.</p>'
+            + '<p class="filter-hint">Global matches are not proof of redundancy. Nearest-scope matches use the observed precedence chain. Removal readiness is assessed separately.</p>'
             + table(("Device", "Profile / configuration", "Assessment", ""), rows, search=True, style="override-table")
             + f'<p class="filter-hint">{len(missing)} device/module reads unavailable. VLAN 1 is protected; device-only interfaces are excluded. Review only.</p></section>'
             + report)
