@@ -601,28 +601,42 @@ DEPENDENCY_MODULES = ("vlan-interfaces", "mgmd-global", "ethernet-interfaces", "
 
 
 def probe_operational_vlans(client, metadata):
-    """Retrieve monitoring evidence without guessing serials or trusting partial pages."""
-    serial = next((metadata.get(k) for k in ("stackId", "stackID", "serialNumber", "serial")
-                   if metadata.get(k)), None)
-    if not isinstance(serial, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,16}", serial):
+    """Try discovered stack/conductor/serial identities; retain safe failure evidence."""
+    candidates = []
+    for key in ("stackId", "stackID", "conductorSerialNumber", "conductorSerial",
+                "serialNumber", "serial"):
+        serial = metadata.get(key)
+        if (isinstance(serial, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,16}", serial)
+                and serial not in {value for _, value in candidates}):
+            candidates.append((key, serial))
+    if not candidates:
         return {"status": "identity_unresolved"}
-    path = "/network-monitoring/v1/switches/" + quote(serial, safe="") + "/vlans"
-    try:
-        payload = client.get(path, limit=1000, offset=0)
-    except APIError as exc:
-        if exc.status not in (400, 403, 404, 405, 422):
-            raise
-        return {"status": "permission_denied" if exc.status == 403 else "request_rejected",
-                "http_error": exc.status}
-    return {"status": "response_received" if isinstance(payload, dict) else "schema_unresolved",
-            "payload": payload}
+    attempts = []
+    for key, serial in candidates:
+        path = "/network-monitoring/v1/switches/" + quote(serial, safe="") + "/vlans"
+        try:
+            payload = client.get(path, limit=1000, offset=0)
+        except APIError as exc:
+            if exc.status not in (400, 403, 404, 405, 422):
+                # Do not print a URL containing the inventory identifier.
+                raise RuntimeError(f"Operational VLAN monitoring: HTTP {exc.status}") from None
+            attempts.append({"identity_field": key, "http_error": exc.status})
+            if exc.status == 403:
+                return {"status": "permission_denied", "http_error": 403, "attempts": attempts}
+            if exc.status not in (400, 404, 422):
+                break
+        else:
+            return {"status": "response_received" if isinstance(payload, dict) else "schema_unresolved",
+                    "payload": payload, "identity_field": key, "attempts": attempts}
+    return {"status": "request_rejected", "http_error": attempts[-1]["http_error"],
+            "attempts": attempts}
 
 
 # Explicit reference-shaped fields, not arbitrary integers or VLAN names.
 # This is a candidate index, never proof that every reference was discovered.
 VLAN_REFERENCE_FIELDS = {"vlan", "vlan-id", "access-vlan", "native-vlan", "allowed-vlans",
                          "trusted-vlans", "tagged-vlans", "untagged-vlans",
-                         "primary-vlan", "secondary-vlan", "voice-vlan"}
+                         "primary-vlan", "secondary-vlan", "voice-vlan", "access-vlan-id"}
 VLAN_LIST_FIELDS = {"allowed-vlans", "trusted-vlans", "tagged-vlans", "untagged-vlans"}
 
 
@@ -656,16 +670,31 @@ def parse_reference_ids(value, allow_list=False):
     return result
 
 
-def reference_candidates(payload):
+def reference_candidates(payload, effective=None):
     """Index candidate VLAN references and unresolved VLAN-shaped paths privately."""
     references, unresolved = [], []
+    names = defaultdict(set)
+    for vid, profile in (effective or {}).items():
+        if isinstance(profile.get("name"), str):
+            names[profile["name"]].add(vid)
     def visit(value, path):
         if isinstance(value, dict):
             for key, item in value.items():
                 if key in ("@", "metadata"):
                     continue
                 current = path + [key]
-                if key in VLAN_REFERENCE_FIELDS:
+                if key == "access-vlan-name":
+                    ids = names.get(item, set()) if isinstance(item, str) else set()
+                    if len(ids) == 1:
+                        references.append({"path": current, "vlan_ids": sorted(ids, key=int),
+                                           "resolution": "effective_vlan_name"})
+                    else:
+                        unresolved.append(current)
+                elif key == "vlan-type" and item in ("VLAN_ID", "VLAN_NAME"):
+                    continue
+                elif key == "vlan-parameters" and isinstance(item, dict):
+                    visit(item, current)
+                elif key in VLAN_REFERENCE_FIELDS:
                     ids = parse_reference_ids(item, key in VLAN_LIST_FIELDS)
                     if ids is not None:
                         references.append({"path": current, "vlan_ids": sorted(ids, key=int)})
@@ -685,10 +714,13 @@ def reference_candidates(payload):
     return {"references": references, "unresolved_paths": unresolved}
 
 
-def operational_vlan_summary(evidence):
+def operational_vlan_summary(evidence, effective=None):
     """Report observed response structure, without inferring unsupported state fields."""
     if not isinstance(evidence, dict) or evidence.get("status") != "response_received":
-        return {"status": evidence.get("status", "not_collected") if isinstance(evidence, dict) else "not_collected"}
+        result = {"status": evidence.get("status", "not_collected") if isinstance(evidence, dict) else "not_collected"}
+        if isinstance(evidence, dict):
+            result.update({k: evidence[k] for k in ("http_error", "attempts") if k in evidence})
+        return result
     payload = evidence.get("payload")
     if not isinstance(payload, dict):
         return {"status": "schema_unresolved"}
@@ -696,9 +728,29 @@ def operational_vlan_summary(evidence):
     if len(lists) != 1 or not all(isinstance(item, dict) for item in lists[0]):
         return {"status": "schema_unresolved"}
     items = lists[0]
-    return {"status": "schema_observed", "rows": len(items),
-            "fields": sorted({k for item in items for k in item}),
-            "may_be_truncated": len(items) >= 1000}
+    result = {"status": "schema_observed", "rows": len(items),
+              "fields": sorted({k for item in items for k in item}),
+              "may_be_truncated": len(items) >= 1000,
+              "identity_field": evidence.get("identity_field"), "attempts": evidence.get("attempts", [])}
+    if effective is None:
+        return result
+    observed = {}
+    for item in items:
+        ids = parse_reference_ids(item.get("id"))
+        if not ids or next(iter(ids)) in observed:
+            result["comparison"] = "identity_unresolved"
+            return result
+        observed[next(iter(ids))] = item
+    result["comparison"] = "observed_ids_compared"
+    result["missing_ids"] = sorted(set(effective) - set(observed), key=int)
+    result["additional_ids"] = sorted(set(observed) - set(effective), key=int)
+    result["name_mismatches"] = sorted((vid for vid in effective.keys() & observed.keys()
+        if isinstance(effective[vid].get("name"), str) and isinstance(observed[vid].get("name"), str)
+        and effective[vid]["name"] != observed[vid]["name"]), key=int)
+    result["names_not_comparable"] = sorted((vid for vid in effective.keys() & observed.keys()
+        if not isinstance(effective[vid].get("name"), str) or not isinstance(observed[vid].get("name"), str)), key=int)
+    result["multicast_operational_verified"] = False
+    return result
 
 
 
@@ -818,12 +870,13 @@ def dependency_review(snapshot, dependencies, data):
         else:
             multicast_state = "unresolved"
             issues.append("mgmd-global_unresolved")
+        effective_map = vlan_map(scope["effective"])
         candidate_map = {}
         for module in ("ethernet-interfaces", "sw-port-profiles", "interface-profiles", "roles", "portchannels"):
             payload = modules.get(module)
             if isinstance(payload, dict) and payload and "http_error" not in payload:
-                candidate_map[module] = reference_candidates(payload)
-        operational = operational_vlan_summary(operational_by_id.get(sid))
+                candidate_map[module] = reference_candidates(payload, effective_map)
+        operational = operational_vlan_summary(operational_by_id.get(sid), effective_map)
         device_reviews.append({"scope": sid, "model": model, "firmware": firmware,
                                "reference_candidates": candidate_map, "operational_vlan_summary": operational,
                                "counts": counts, "module_fields": shapes,
@@ -886,6 +939,13 @@ def print_dependency_summary(data):
                   f"unresolved paths={len(evidence['unresolved_paths'])}")
         operational = device.get("operational_vlan_summary", {})
         print(f"    operational VLANs: {operational.get('status', 'not_collected')}")
+        if "http_error" in operational:
+            print(f"    monitoring HTTP status={operational['http_error']}")
+        if operational.get("comparison") == "observed_ids_compared":
+            print(f"    observed VLAN ID comparison: missing={len(operational['missing_ids'])}, "
+                  f"additional={len(operational['additional_ids'])}, "
+                  f"name differences={len(operational['name_mismatches'])}, "
+                  f"names not comparable={len(operational['names_not_comparable'])}")
         if "rows" in operational:
             print(f"    monitoring rows={operational['rows']}; possible truncation={operational['may_be_truncated']}")
             # Only print known, non-identifying schema field names.

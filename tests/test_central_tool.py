@@ -373,6 +373,36 @@ class Tests(unittest.TestCase):
         self.assertEqual(operational_vlan_summary(result)["rows"], 1)
         self.assertEqual(operational_vlan_summary(result)["status"], "schema_observed")
 
+    def test_operational_probe_falls_back_to_discovered_serial(self):
+        from central_tool import probe_operational_vlans, operational_vlan_summary
+        class Probe:
+            def __init__(self):
+                self.calls = []
+            def get(self, path, **params):
+                self.calls.append(path)
+                if "STACK1" in path:
+                    raise APIError(path, 404)
+                return {"items": [{"id": 10, "name": "A"}, {"id": 20, "name": "B"}]}
+        fake = Probe()
+        result = probe_operational_vlans(fake, {"stackId": "STACK1", "serialNumber": "SERIAL1"})
+        self.assertEqual(result["identity_field"], "serialNumber")
+        self.assertEqual(result["attempts"], [{"identity_field": "stackId", "http_error": 404}])
+        summary = operational_vlan_summary(result, {"10": {"name": "C"}, "30": {"name": "D"}})
+        self.assertEqual(summary["missing_ids"], ["30"])
+        self.assertEqual(summary["additional_ids"], ["20"])
+        self.assertEqual(summary["name_mismatches"], ["10"])
+        self.assertFalse(summary["multicast_operational_verified"])
+
+    def test_role_reference_resolution_is_exact_and_unambiguous(self):
+        from central_tool import reference_candidates
+        payload = {"roles": [{"vlan-type": "VLAN_NAME", "access-vlan-name": "A"},
+                             {"vlan-type": "VLAN_ID", "access-vlan-id": 30},
+                             {"access-vlan-name": "B"}, {"access-vlan-name": "unknown"}]}
+        result = reference_candidates(payload, {"10": {"name": "A"}, "20": {"name": "B"},
+                                                "21": {"name": "B"}})
+        self.assertEqual([r["vlan_ids"] for r in result["references"]], [["10"], ["30"]])
+        self.assertEqual(len(result["unresolved_paths"]), 2)
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
