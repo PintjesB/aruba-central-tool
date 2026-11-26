@@ -663,6 +663,28 @@ class Tests(unittest.TestCase):
         self.assertEqual(fake.calls[0][1]["scope-id"], "12")
         self.assertEqual(fake.calls[2][1], {"view-type": "LIBRARY", "detailed": "true"})
 
+    def test_runtime_identity_requires_unique_inventory_match_and_counts(self):
+        from central_tool import qualify_observed_identities
+        def source(ambiguous=False):
+            rows = [{"identifier": v, "description": v if ambiguous else "example",
+                     "@": {"aruba-annotation:object_type": "LOCAL",
+                           "aruba-annotation:inherited": False}} for v in ("a", "b")]
+            raw = {"profiles": rows, "metadata": {
+                "count_objects_in_module": {"ANY": 2, "LOCAL": 2, "SHARED": 0}}}
+            return {"persona": "ACCESS_SWITCH", "scope": "1", "observed_instances": ["a", "b"],
+                    "committed": {"raw": raw}, "effective": {"raw": raw}}
+        result = qualify_observed_identities({"source_views": [source()]})["ACCESS_SWITCH"]
+        self.assertEqual(result["status"], "source_identity_observed")
+        self.assertEqual(result["identity_field"], "identifier")
+        self.assertEqual(result["comparable_source_scopes"], 1)
+        self.assertFalse(result["safe_to_apply"])
+        ambiguous = qualify_observed_identities({"source_views": [source(True)]})["ACCESS_SWITCH"]
+        self.assertEqual(ambiguous["status"], "identity_unresolved")
+        broken = source()
+        broken["committed"]["raw"]["metadata"]["count_objects_in_module"]["ANY"] = 3
+        self.assertEqual(qualify_observed_identities({"source_views": [broken]})
+                         ["ACCESS_SWITCH"]["status"], "identity_unresolved")
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
