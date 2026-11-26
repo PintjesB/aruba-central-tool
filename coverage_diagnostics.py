@@ -20,6 +20,9 @@ def safe_status(value):
         "complete", "incomplete", "unknown", "count_confirmed", "pagination_exhausted",
         "page_limit_reached", "schema_unqualified", "ambiguous_registration_envelope",
         "duplicate_or_unqualified_registration_identity", "cursor_unqualified", "cursor_repeated_or_empty",
+        "empty_response", "partial_response", "permission_denied", "invalid_selector",
+        "selector_mismatch", "empty_correlated", "empty_contradictory_local_profile",
+        "empty_effective_source_unverified", "not_attempted",
     }
     return value if isinstance(value, str) and value in allowed else "other"
 
@@ -77,8 +80,41 @@ def diagnostics(bundle):
         name = module if module in modules else "other"
         for status, n in entry.get("scope_read_outcomes", {}).items():
             raw[(name, safe_status(status))] += count(n)
+    # Use the original snapshot evidence, not current adapter assumptions.
+    # The keys below are allowlisted; resource identities are never exported.
+    keyed = Counter()
+    selector_shapes = Counter()
+    for persona, scopes in (bundle.get("keyed_profile_details") or {}).get("profiles", {}).items():
+        function = persona if persona in NETWORK_PERSONAS or persona in ("Library", "NAC") else "other"
+        for scope in scopes.values():
+            for module, identities in scope.items():
+                name = module if module in modules else "other"
+                for identity, views in identities.items():
+                    for kind, result in views.items():
+                        side = kind if kind in ("local", "effective", "library", "tenant") else "other"
+                        state = safe_status(result.get("status"))
+                        keyed[(function, name, side, state)] += 1
+                        if state == "invalid_selector":
+                            shape = ("numeric_port" if re.fullmatch(r"[0-9]{1,4}/[0-9]{1,4}/[0-9]{1,4}", identity)
+                                     else "contains_separator" if "/" in identity or "\\" in identity
+                                     else "contains_percent" if "%" in identity else "other")
+                            selector_shapes[(name, shape)] += 1
+    library = bundle.get("library") or {}
+    library_summary = [{"module": module if module in modules else "other", **view_summary(view)}
+                       for module, view in sorted(library.get("modules", {}).items())]
+    scope_totals = Counter()
+    for key, n in scoped.items():
+        scope_totals[key[4]] += n
+    registration = bundle.get("nac_registrations") or {}
+    nac["mac-registrations"]["status"] = safe_status(registration.get("status", "not_collected"))
     return {
         "schema": 1, "kind": "anonymous_collection_diagnostics",
+        "scoped_status_totals": dict(scope_totals),
+        "library_views": library_summary,
+        "keyed_read_outcomes": [{"persona": p, "module": m, "view": v, "status": s, "reads": n}
+                                for (p, m, v, s), n in sorted(keyed.items())],
+        "invalid_selector_shapes": [{"module": m, "shape": shape, "reads": n}
+                                    for (m, shape), n in sorted(selector_shapes.items())],
         "mixed_capture_times": bundle.get("collection_checkpoint", {}).get("mixed_capture_times") is True,
         "scoped_views": [{"persona": p, "module": m, "scope_kind": k, "view": v, "status": s,
                           "count_confirmed": c, "http_error": h, "views": n}
