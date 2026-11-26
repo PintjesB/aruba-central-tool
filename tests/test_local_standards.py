@@ -138,6 +138,22 @@ class LocalStandardTests(unittest.TestCase):
         self.assertEqual(target["status"], "differences_observed")
         self.assertEqual(target["unapproved_deviation_count"], 1)
 
+    def test_template_freezes_observed_module_set(self):
+        standard = create_standard(self.directory, name="Switch access", snapshot=self.current,
+                                   baseline_name=self.base, persona="ACCESS_SWITCH", reference="3",
+                                   module="template:switching", target="2", confirmed=True)
+        self.assertEqual(standard["modules"], ["layer2-vlan"])
+        current = snapshot("Changed")
+        entry = current["results"]["ACCESS_SWITCH"]
+        entry["modules"]["sw-port-profiles"] = {"scope_results": []}
+        self.write(self.current, current)
+        _, result = evaluate_standard(self.directory, standard, self.current, confirmed=True)
+        self.assertEqual(result["modules"], ["layer2-vlan"])
+        with self.assertRaises(ValueError):
+            create_standard(self.directory, name="No services observed", snapshot=self.current,
+                            baseline_name=self.base, persona="ACCESS_SWITCH", reference="3",
+                            module="template:services", target="2", confirmed=True)
+
     def test_standard_ui(self):
         from config_app import Workspace
         standard = self.standard()
