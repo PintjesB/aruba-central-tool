@@ -1823,7 +1823,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
     These are raw read-only diagnostics, not qualified local/effective views.
     Extend observed resource/function pairs across the discovered scope inventory.
     """
-    unknown = set(discovery["unknown_adapter_modules"]) | set(discovery.get("survey_modules", []))
+    unknown = (set(discovery["unknown_adapter_modules"]) | set(discovery.get("survey_modules", []))) - set(discovery.get("tenant_default_modules", []))
     targets = defaultdict(set)
     for view, assignment in ((assignments, True), (scope_maps, False)):
         for row in view.get("rows", []):
@@ -2146,21 +2146,28 @@ def keyed_profile_read(client, module, identity_key, identity, params, collectio
                            if isinstance(collection_profile, dict) else None}
 
 
-def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKERS, progress=None, *, checkpoint=None):
+def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKERS, progress=None, *, checkpoint=None, nac_configuration=None):
     """Deep survey of observed Library definitions and saved local identities.
 
     Effective reads are paired with each local identity. Do not query guessed
     identifiers, inherited-only profiles, or special multi-key resources.
     """
     contracts = keyed_profile_contracts()
+    from nac_authorization import NAC_TENANT_MODULES
+    tenant_contracts = {**NAC_TENANT_MODULES, "auth-profiles": "auth-profile-id"}
     tasks = []
     for module, view in sorted(library.get("modules", {}).items()):
         if module in contracts and view.get("status") == "list_parsed":
             for identity, profile in sorted(view["profiles"].items()):
                 tasks.append(("Library", "", module, identity, "library", profile))
+    for module, view in sorted({**(nac_configuration or {}), "auth-profiles": library.get("modules", {}).get("auth-profiles", {})}.items()):
+        if module in tenant_contracts and view.get("status") == "list_parsed":
+            for identity, profile in sorted(view["profiles"].items()):
+                tasks.append(("NAC", "", module, identity, "tenant", profile))
+    contracts.update(tenant_contracts)
     for persona, entry in sorted(results.items()):
         for module, data in sorted(entry["modules"].items()):
-            if module not in contracts:
+            if module not in contracts or module in tenant_contracts:
                 continue
             for view in data["scope_results"]:
                 sid = str(view["scope"])
@@ -2179,7 +2186,9 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
         params = {"view-type": "LIBRARY", "detailed": "true"} if kind == "library" else {
             "view-type": "LOCAL", "scope-id": sid, "device-function": persona,
             "effective": "true" if kind == "effective" else "false", "detailed": "true"}
-        if kind == "local":
+        if kind == "tenant":
+            params = {}
+        elif kind == "local":
             params["object-type"] = "LOCAL"
         read = lambda: keyed_profile_read(client, module, contracts[module], identity, params, profile)
         evidence = checkpoint.observe("keyed_details", [*task[:5], contracts[module], params, profile], read, lambda v: v.get("status") == "identity_observed") if checkpoint else read()
@@ -2974,7 +2983,8 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     profile_types = discover_profile_types(assignments, scope_maps)
     catalog = documented_profile_catalog()
     profile_types["documented_catalog"] = catalog
-    profile_types["survey_modules"] = sorted((DOCUMENTED_RAW_COLLECTIONS | set(catalog["modules"])) - set(CONFIG_MODULES))
+    profile_types["tenant_default_modules"] = ["auth-profiles", "authz-policies", "identity-stores"]
+    profile_types["survey_modules"] = sorted((DOCUMENTED_RAW_COLLECTIONS | set(catalog["modules"])) - set(CONFIG_MODULES) - set(profile_types["tenant_default_modules"]))
     print(f"Documented catalog: {catalog['get_requests']} GET definitions; "
           f"{len(catalog['modules'])} profile collections; "
           f"{len(profile_types['survey_modules'])} additional Library surveys", flush=True)
@@ -3073,13 +3083,13 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress,
                                            scopes_by_persona=scopes_by_persona, deep_catalog=deep_catalog, checkpoint=checkpoint)
     from nac_authorization import capture_nac_configuration
-    nac_configuration = capture_nac_configuration(client, progress)
+    nac_configuration = capture_nac_configuration(client, progress, checkpoint=checkpoint)
     from nac_review import read_mac_registrations
     audit_progress(progress, "NAC registrations", 0, 0, "Reading Central NAC MAC registrations")
     nac_registrations = read_mac_registrations(client, progress)
     print(f"NAC MAC registration coverage: {nac_registrations['status']}; observed={len(nac_registrations['rows'])}", flush=True)
     health = capture_configuration_health(client, records, workers, progress)
-    keyed_details = capture_keyed_profile_details(client, results, library, workers, progress, checkpoint=checkpoint) if deep_catalog else None
+    keyed_details = capture_keyed_profile_details(client, results, library, workers, progress, checkpoint=checkpoint, nac_configuration=nac_configuration) if deep_catalog else None
     details = capture_vlan_instance_details(client, results, workers, progress)
     operational = capture_configuration_operational_vlans(client, results, workers, progress)
     cli = capture_switch_vlan_cli(client, results, details, workers, progress)

@@ -12,13 +12,14 @@ from central_tool import canonical, profile_body
 NAC_TENANT_MODULES = {"authz-policies": "policy-id", "identity-stores": "id", "static-tag": "tag-id"}
 
 
-def capture_nac_configuration(client, progress=None):
+def capture_nac_configuration(client, progress=None, *, checkpoint=None):
     from central_tool import APIError, read_module_view, audit_progress
     results = {}
     for i, (module, identity) in enumerate(NAC_TENANT_MODULES.items(), 1):
         audit_progress(progress, "NAC configuration", i-1, len(NAC_TENANT_MODULES), module)
         try:
-            results[module] = read_module_view(client, module, identity, {})
+            read = lambda: read_module_view(client, module, identity, {})
+            results[module] = checkpoint.observe("nac_configuration", [module, identity], read, lambda v: v.get("status") == "list_parsed" and v.get("count_confirmed") is True) if checkpoint else read()
         except APIError as exc:
             if exc.status in (401, 429):
                 raise
@@ -33,7 +34,14 @@ def nac_collection(bundle, module):
     from central_tool import module_view
     views = bundle.get("nac_configuration", {})
     if module in views:
-        return views[module]
+        current = views[module]
+        if module != "static-tag" or current.get("status") == "list_parsed":
+            return current
+        raw = bundle.get("unadapted_profiles", {}).get(module, {}).get("library", {})
+        fallback = module_view(raw.get("raw"), NAC_TENANT_MODULES[module]) if raw.get("status") == "response_received" else {}
+        if fallback.get("status") == "list_parsed":
+            return {**fallback, "qualification": "raw_library_fallback", "tenant_read_status": current.get("status")}
+        return current
     if module == "auth-profiles":
         return bundle.get("library", {}).get("modules", {}).get(module, {})
     # Older captures have only generic raw Library evidence.
