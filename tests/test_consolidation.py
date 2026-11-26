@@ -114,3 +114,74 @@ class ConsolidationTests(unittest.TestCase):
             self.assertIn("Library / exact source scopes", html)
             self.assertIn("not executable API operations", html)
             self.assertNotIn("Apply changes</button>", html)
+
+    def test_workspace_overhaul_all_pages_and_snapshot_navigation(self):
+        import tempfile
+        import json
+        from pathlib import Path
+        from config_app import Workspace
+        from html.parser import HTMLParser
+
+        class Inspector(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.links = []
+                self.active = []
+                self.ids = []
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                if tag == "a":
+                    self.links.append(attrs.get("href", ""))
+                    if attrs.get("aria-current") == "page":
+                        self.active.append(attrs.get("data-nav"))
+                if "id" in attrs:
+                    self.ids.append(attrs["id"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            other = "config-audit-other.json"
+            bundle = fixture()
+            bundle["results"]["ACCESS_SWITCH"]["scopes"][2]["name"] = "<script>alert(1)</script>"
+            for filename in (name, other):
+                (Path(directory) / filename).write_text(json.dumps(bundle))
+            workspace = Workspace(directory)
+            root = "/" + workspace.token + "/"
+            query = {"snapshot": name}
+            pages = [
+                ("Overview", workspace.home(query)),
+                ("Consolidation", workspace.advisor(query)),
+                ("Engineering", workspace.advanced(query)),
+                ("Configuration", workspace.report(query)),
+                ("Inventory", workspace.scopes(query)),
+                ("Library", workspace.library(query)),
+                ("Compare", workspace.comparison(query)),
+                ("Coverage", workspace.coverage(query)),
+            ]
+            for active, html in pages:
+                with self.subTest(active=active):
+                    parser = Inspector()
+                    parser.feed(html)
+                    self.assertEqual(parser.active, [active])
+                    self.assertIn(root + "advisor?snapshot=" + name, parser.links)
+                    self.assertIn(root + "report?snapshot=" + name, parser.links)
+                    self.assertIn("workspace-inspector", parser.ids)
+                    self.assertEqual(len(parser.ids), len(set(parser.ids)))
+                    self.assertNotIn("<script>alert(1)</script>", html)
+            html = workspace.advisor(query)
+            self.assertIn("data-action=", html)
+            self.assertIn("Review selected", html)
+            self.assertIn("Destination impact", html)
+            self.assertIn("safe_to_apply:false", html)
+            self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+            html = workspace.report({**query, "persona": "ACCESS_SWITCH", "module": "layer2-vlan", "diagnostics": "1"})
+            self.assertIn("Not qualified", html)
+            self.assertIn("Unqualified scopes", html)
+            self.assertIn("legacy-report", html)
+            html = workspace.comparison({**query, "persona": "ACCESS_SWITCH", "left": "3", "right": "4"})
+            self.assertIn("Differences", html)
+            self.assertIn("Identical modules", html)
+            self.assertIn("Not comparable", html)
+            self.assertIn("data-inspect", html)
+            html = workspace.library({**query, "module": "layer2-vlan"})
+            self.assertIn("Observed assignments", html)
+            self.assertIn("Local instances", html)
