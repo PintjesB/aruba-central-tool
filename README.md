@@ -162,3 +162,7 @@ Run unit tests: `python -m unittest discover -s tests -v`.
 ## Live collection qualification
 
 After a fresh Deep catalog refresh, run `python coverage_diagnostics.py --directory <private-workspace>` to print aggregate collection diagnostics for the latest snapshot. Optionally select a snapshot filename with `--snapshot`. No credentials or network calls are needed. The export contains allowlisted vendor endpoint templates, statuses, HTTP outcomes and aggregate counts, not device serials, names, scope identifiers, MAC addresses or profile contents. Review counts for customer confidentiality before sharing. A successful response does not prove completeness. Never upload the underlying private snapshot.
+
+### Focused live validation without a full Deep collection
+
+Use `python live_collection_probe.py --directory <private-workspace>` to sample current Ethernet interface, SNMP and network group collection contracts and keyed detail responses. The tool uses the latest snapshot's region, rechecks inventory and scope continuity, and prompts for credentials if they are not already available in the environment. Optional repeatable `--module` selects supported modules; `--sample` sets a limit of 1 to 4 devices per function and identities per view. Output contains aggregate read statuses, counts and HTTP errors only. It does not replace the saved snapshot or establish complete coverage. Review the counts before sharing.
