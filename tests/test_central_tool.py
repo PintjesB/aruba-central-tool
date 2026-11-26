@@ -558,6 +558,46 @@ class Tests(unittest.TestCase):
         self.assertEqual({v["scope"] for v in evidence["source_views"] if v["persona"] == "ACCESS_SWITCH"}, {"1", "12"})
         self.assertFalse(evidence["safe_to_apply"])
 
+    def test_deep_catalog_surveys_lower_scopes_without_assignments(self):
+        from central_tool import inspect_unadapted_profiles
+        discovery = {"unknown_adapter_modules": [], "survey_modules": ["example"],
+                     "modules": {}, "documented_catalog": {"modules": {
+                         "example": {"source": "vendor_collection", "all_function_scope": True}}}}
+        scopes = {"ACCESS_SWITCH": [{"id": "1", "kind": "global"},
+                                   {"id": "12", "kind": "device"}],
+                  "CAMPUS_AP": [{"id": "1", "kind": "global"},
+                                {"id": "13", "kind": "device"}]}
+        fake = Fake([{"profiles": []}, {"profiles": []},
+                     {"profiles": [{"name": "local-only"}]}, {"profiles": []},
+                     {"profiles": []}, {"profiles": []}, {"profiles": []}])
+        result = inspect_unadapted_profiles(fake, discovery, {}, {},
+                    scopes_by_persona=scopes, deep_catalog=True)["example"]
+        views = result["source_views"]
+        self.assertEqual({v["scope"] for v in views}, {"1", "12", "13"})
+        self.assertEqual(len(views), 3)
+        self.assertEqual(next(v for v in views if v["scope"] == "12")["committed"]["raw"],
+                         {"profiles": [{"name": "local-only"}]})
+        self.assertEqual(len(fake.calls), 7)
+        self.assertTrue(all("device-function" not in params for _, params in fake.calls))
+        coverage = result["catalog_scope_coverage"]
+        self.assertEqual(coverage["unfiltered_scopes_not_surveyed"], 0)
+        self.assertEqual(coverage["global_scopes_attempted"], 1)
+        self.assertFalse(coverage["complete"])
+        self.assertFalse(result["safe_to_apply"])
+
+    def test_deep_catalog_handles_documented_scope_without_function_selector(self):
+        from central_tool import inspect_unadapted_profiles
+        discovery = {"unknown_adapter_modules": [], "survey_modules": ["example"],
+                     "modules": {}, "documented_catalog": {"modules": {
+                         "example": {"source": "vendor_collection", "all_function_scope": False}}}}
+        fake = Fake([{"profiles": []}] * 3)
+        result = inspect_unadapted_profiles(fake, discovery, {}, {},
+                    scopes_by_persona={"ACCESS_SWITCH": [{"id": "12", "kind": "device"}]},
+                    deep_catalog=True)["example"]
+        self.assertEqual(result["source_views"][0]["persona"], "UNFILTERED_SCOPE")
+        self.assertIsNone(result["catalog_scope_coverage"]["all_function_scopes_not_surveyed"])
+        self.assertEqual(result["catalog_scope_coverage"]["unfiltered_scopes_not_surveyed"], 0)
+
     def test_configuration_audit_uses_persona_catalog(self):
         from central_tool import configuration_audit
         from unittest.mock import patch

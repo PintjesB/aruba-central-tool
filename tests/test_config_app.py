@@ -81,7 +81,7 @@ class WorkspaceTests(unittest.TestCase):
                                          urlencode({"csrf": "wrong"}))[0], 403)
                 opaque = {**same, "Origin": "null", "Sec-Fetch-Site": "same-origin"}
                 form = urlencode({"csrf": workspace.csrf, "client_id": "example-id",
-                                  "client_secret": "example-secret", "region": ""})
+                                  "client_secret": "example-secret", "region": "", "depth": "deep"})
                 with patch("config_app.credential_refresh", return_value=lambda progress=None: self.fixture()) as factory:
                     self.assertEqual(request("POST", root + "credentials",
                                              {**opaque, "Sec-Fetch-Site": "cross-site"}, form)[0], 403)
@@ -90,7 +90,7 @@ class WorkspaceTests(unittest.TestCase):
                     self.assertEqual(request("POST", root + "credentials",
                                              {**opaque, "Sec-Fetch-Site": "none"}, form)[0], 403)
                     self.assertEqual(request("POST", root + "credentials", opaque, form)[0], 303)
-                    factory.assert_called_once_with("example-id", "example-secret", "")
+                    factory.assert_called_once_with("example-id", "example-secret", "", deep_catalog=True)
                     deadline = time.monotonic() + 3
                     while workspace.state == "running" and time.monotonic() < deadline:
                         time.sleep(.01)
