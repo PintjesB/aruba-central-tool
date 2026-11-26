@@ -278,8 +278,9 @@ def check_empty_local(annotated):
     return "unverified_annotations" if uncertain else "consistent_with_effective_annotations"
 
 
-def scan(client, persona):
-    devices = inventory(client)
+def scan(client, persona, devices=None):
+    if devices is None:
+        devices = inventory(client)
     global_row = client.get(CONFIG + "/global")
     scopes = [{"id": scope_id(global_row), "kind": "global", "name": "Global"}]
     for kind, path, keys in (
@@ -292,7 +293,7 @@ def scan(client, persona):
                            "metadata": row})
     excluded = []
     for device in devices:
-        function = str(device.get("deviceFunction", "")).upper().replace(" ", "_")
+        function = device_identity(device)["persona"]
         if function != persona:
             excluded.append(device)
             continue
@@ -524,6 +525,111 @@ def review_local_profiles(scopes, baseline, library):
     return results
 
 
+# Version-specific rules are evidence, not blanket support claims.
+# Each entry is restricted to documented model families and release trains.
+MULTICAST_RULES = (
+    {"models": ("6000", "6100"), "release": (10, 16),
+     "igmp": True, "mld": True,
+     "source": "https://arubanetworking.hpe.com/techdocs/AOS-CX/10.16/PDF/cli_6000-6100.pdf"},
+)
+
+
+def device_identity(item):
+    def first(*keys):
+        return next((str(item[k]).strip() for k in keys if item.get(k)), "")
+    persona = first("deviceFunction", "device-function", "persona").upper().replace(" ", "_")
+    persona = {"AGGREGATION_SWITCH": "AGG_SWITCH", "CAMPUS_ACCESS_POINT": "CAMPUS_AP",
+               "MOBILITY_GATEWAY": "MOBILITY_GW", "BRANCH_GATEWAY": "BRANCH_GW",
+               "MICROBRANCH_ACCESS_POINT": "MICROBRANCH_AP", "HYBRID_NETWORK_ACCESS_CONTROL": "HYBRID_NAC"}.get(persona, persona)
+    model = first("model", "modelName", "deviceModel")
+    firmware = first("firmwareVersion", "softwareVersion", "firmware")
+    match = re.fullmatch(r"(?:[A-Z]+\.)?(\d+)\.(\d+)(?:\.\d+)*(?:[-+][A-Za-z0-9.]+)?", firmware, re.IGNORECASE)
+    release = tuple(map(int, match.groups())) if match else None
+    return {"persona": persona or "UNKNOWN", "model": model or "UNKNOWN",
+            "firmware": firmware or "UNKNOWN", "release": release}
+
+
+def multicast_defaults(identity):
+    for rule in MULTICAST_RULES:
+        if (identity["persona"] in PERSONAS and identity["model"].lower() in rule["models"]
+                and identity["release"] == rule["release"]):
+            return {"status": "documented_release_default", "igmp": rule["igmp"],
+                    "mld": rule["mld"], "source": rule["source"]}
+    return {"status": "unknown"}
+
+
+def inventory_capabilities(devices):
+    """Keep every inventory entry, including unknown functions and non-switches."""
+    records = []
+    for item in devices:
+        identity = device_identity(item)
+        records.append({"inventory": item, "identity": identity,
+                        "vlan_scan_supported_persona": identity["persona"] in PERSONAS,
+                        "multicast_defaults": multicast_defaults(identity)})
+    return records
+
+
+def print_inventory_summary(records):
+    print("Discovered device functions (inventory entries):")
+    for (persona, supported), count in sorted(Counter(
+            (r["identity"]["persona"], r["vlan_scan_supported_persona"]) for r in records).items()):
+        # Unknown raw persona values may be customer-defined; do not print them.
+        label = persona if persona in PERSONAS | {"CAMPUS_AP", "MICROBRANCH_AP",
+                    "MOBILITY_GW", "BRANCH_GW", "BRIDGE", "HYBRID_NAC", "UNKNOWN"} else "OTHER"
+        print(f"  {label}: {count}; VLAN scan adapter={'available' if supported else 'not qualified'}")
+    print("Documented multicast defaults:", sum(r["multicast_defaults"]["status"] != "unknown" for r in records))
+
+
+def scan_all(client):
+    """Automatically select all qualified switch personas, preserving separate scope views."""
+    devices = inventory(client)
+    records = inventory_capabilities(devices)
+    print_inventory_summary(records)
+    personas = sorted({r["identity"]["persona"] for r in records if r["vlan_scan_supported_persona"]})
+    if not personas:
+        raise ValueError("No qualified switch persona discovered")
+    snapshots = {}
+    for persona in personas:
+        print(f"Scanning persona: {persona}", flush=True)
+        snapshots[persona] = scan(client, persona, devices)
+    return {"schema": 1, "kind": "multi_persona_scan", "region": client.base,
+            "inventory": records, "snapshots": snapshots}
+
+
+DEPENDENCY_MODULES = ("vlan-interfaces", "mgmd-global", "ethernet-interfaces", "sw-port-profiles")
+
+
+def discover_dependencies(client, snapshot):
+    """Probe applicable read-only module endpoints; record empty/error separately."""
+    devices = []
+    for index, scope in enumerate((s for s in snapshot["scopes"] if s["kind"] == "device"), 1):
+        identity = device_identity(scope.get("metadata", {}))
+        params = {"view-type": "LOCAL", "scope-id": scope["id"],
+                  "device-function": snapshot["persona"], "effective": "true", "detailed": "true"}
+        modules, capabilities = {}, {}
+        for module in DEPENDENCY_MODULES:
+            try:
+                payload = client.get(ALPHA + "/" + module, **params)
+            except APIError as exc:
+                if exc.status not in (400, 403, 404, 405, 422):
+                    raise
+                modules[module] = {"http_error": exc.status}
+                capabilities[module] = "permission_denied" if exc.status == 403 else "request_rejected"
+            else:
+                modules[module] = payload
+                if payload == {}:
+                    capabilities[module] = "empty_response"
+                elif isinstance(payload, dict):
+                    capabilities[module] = "response_received"
+                else:
+                    capabilities[module] = "schema_unresolved"
+            print(f"  Device {index}: {module}: {capabilities[module]}", flush=True)
+        devices.append({"scope_id": scope["id"], "identity": identity, "modules": modules,
+                        "capabilities": capabilities})
+    return {"region": snapshot["region"], "persona": snapshot["persona"], "devices": devices,
+            "captured_at": datetime.now(timezone.utc).isoformat()}
+
+
 def dependency_items(modules, module):
     """Require a successful unambiguous list envelope; empty objects are not lists."""
     payload = modules.get(module)
@@ -571,9 +677,12 @@ def dependency_review(snapshot, dependencies, data):
         sid = scope["id"]
         modules = by_id[sid]
         inventory = scope.get("metadata", {})
-        model = str(inventory.get("model", ""))
-        firmware = str(inventory.get("firmwareVersion", ""))
-        known_default[sid] = model == "6100" and bool(re.match(r"^(?:PL\.)?10\.16(?:\.|$)", firmware))
+        identity = device_identity(inventory)
+        model, firmware = identity["model"], identity["firmware"]
+        # Older snapshots/tests may omit persona in device metadata.
+        if identity["persona"] == "UNKNOWN":
+            identity["persona"] = snapshot["persona"]
+        known_default[sid] = multicast_defaults(identity)
         indicators = {vid for vid, profile in vlan_map(scope["effective"]).items()
                       if profile.get("is-l3-vlan") is True}
         svi_ids = set()
@@ -605,6 +714,7 @@ def dependency_review(snapshot, dependencies, data):
             issues.append("mgmd-global_unresolved")
         device_reviews.append({"scope": sid, "model": model, "firmware": firmware,
                                "counts": counts, "module_fields": shapes,
+                               "identity": identity, "multicast_defaults": known_default[sid],
                                "protected_vlan_ids": sorted(protected[sid], key=int),
                                "svi_ids": sorted(svi_ids, key=int),
                                "svi_indicators": sorted(indicators, key=int),
@@ -628,7 +738,7 @@ def dependency_review(snapshot, dependencies, data):
             path = tuple(difference["path"])
             if difference["assessment"] == "verify_multicast_default":
                 value = difference.get("reference_value")
-                if (known_default.get(sid) and difference["kind"] == "missing_local"
+                if (path and known_default.get(sid, {}).get(path[0]) is True and difference["kind"] == "missing_local"
                         and ((path in (("igmp",), ("mld",)) and value == {"snooping": False})
                              or (path in (("igmp", "snooping"), ("mld", "snooping")) and value is False))):
                     blockers.append("potential_aoscx_10_16_multicast_behavior_change")
@@ -805,6 +915,19 @@ def write_private(path, data):
         file.write(payload)
 
 
+def select_snapshot(data, persona=None):
+    if data.get("kind") != "multi_persona_scan":
+        if persona and data.get("persona") != persona:
+            raise ValueError("Snapshot persona mismatch")
+        return data
+    snapshots = data["snapshots"]
+    if not persona and len(snapshots) == 1:
+        return next(iter(snapshots.values()))
+    if not persona or persona not in snapshots:
+        raise ValueError("Specify a discovered persona with --persona")
+    return snapshots[persona]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -812,27 +935,53 @@ def main():
     discovery.add_argument("--persona", choices=sorted(PERSONAS), default="ACCESS_SWITCH")
     discovery.add_argument("--output", required=True, type=Path)
     discovery.add_argument("--region-file", type=Path, help="Optional local file for cached API region")
+    all_scan = commands.add_parser("scan-all", help="Automatically scan all discovered switch personas")
+    all_scan.add_argument("--output", required=True, type=Path)
+    all_scan.add_argument("--region-file", type=Path)
+    inv = commands.add_parser("inventory", help="Discover every device and its known compatibility")
+    inv.add_argument("--output", required=True, type=Path)
+    inv.add_argument("--region-file", type=Path)
+    dep = commands.add_parser("dependencies", help="Probe dependency modules from a saved VLAN snapshot")
+    dep.add_argument("snapshot", type=Path)
+    dep.add_argument("--output", required=True, type=Path)
+    dep.add_argument("--persona", choices=sorted(PERSONAS), help="Select a persona from a scan-all snapshot")
     analysis = commands.add_parser("report")
     analysis.add_argument("snapshot", type=Path)
     analysis.add_argument("--output", required=True, type=Path)
     analysis.add_argument("--dependencies", type=Path, help="Existing read-only dependency snapshot")
+    analysis.add_argument("--persona", choices=sorted(PERSONAS), help="Select a persona from a scan-all snapshot")
     args = parser.parse_args()
     try:
         if args.output.exists():
             raise ValueError("Output already exists")
-        if args.command == "scan":
-            preferred = os.getenv("CENTRAL_BASE_URL")
-            if not preferred and args.region_file and args.region_file.exists():
-                preferred = args.region_file.read_text(encoding="utf-8-sig").strip()
+        if args.command in ("scan", "scan-all", "inventory", "dependencies"):
+            source = json.loads(args.snapshot.read_text(encoding="utf-8")) if args.command == "dependencies" else None
+            if source is not None and source.get("kind") == "multi_persona_scan":
+                source = select_snapshot(source, args.persona)
+            region_file = getattr(args, "region_file", None)
+            preferred = source["region"] if source else os.getenv("CENTRAL_BASE_URL")
+            if not preferred and region_file and region_file.exists():
+                preferred = region_file.read_text(encoding="utf-8-sig").strip()
             client = Central(preferred or EU_REGIONS[0], os.getenv("CENTRAL_ACCESS_TOKEN"),
                              os.getenv("CENTRAL_CLIENT_ID"), os.getenv("CENTRAL_CLIENT_SECRET"))
             region = detect_region(client, preferred)
-            if args.region_file:
-                args.region_file.write_text(region + "\n", encoding="utf-8")
+            if source and region != source["region"]:
+                raise ValueError("Dependency snapshot region mismatch")
+            if region_file:
+                region_file.write_text(region + "\n", encoding="utf-8")
             print(f"API region: {region}", flush=True)
-            data = scan(client, args.persona)
+            if args.command == "scan":
+                data = scan(client, args.persona)
+            elif args.command == "scan-all":
+                data = scan_all(client)
+            elif args.command == "inventory":
+                records = inventory_capabilities(inventory(client))
+                data = {"region": region, "devices": records}
+                print_inventory_summary(records)
+            else:
+                data = discover_dependencies(client, source)
         else:
-            snapshot = json.loads(args.snapshot.read_text(encoding="utf-8"))
+            snapshot = select_snapshot(json.loads(args.snapshot.read_text(encoding="utf-8")), args.persona)
             data = report(snapshot)
             if args.dependencies:
                 dependencies = json.loads(args.dependencies.read_text(encoding="utf-8"))

@@ -28,6 +28,12 @@ Run the report command again with a new output filename after upgrading. No API 
 
 The second-stage assessment distinguishes documented default candidates, explicit differences, multicast defaults requiring model/firmware validation, unresolved omissions, and the GET-only is-l3-vlan indicator. It does not rewrite profiles or treat omitted fields as proven equivalent. Verify actual SVI state and device behavior before migration. Library-only VLANs are reviewed at their existing scope, not automatically promoted globally. The terminal can display aggregate boolean values for allowlisted VLAN settings, but never names or customer identifiers.
 
+## Device compatibility and dependency discovery
+
+Use `python central_tool.py inventory --region-file region.txt --output inventory.json` to discover all inventory entries (including APs, gateways and unknown personas). Use `python central_tool.py scan-all --region-file region.txt --output all.json` to automatically scan every discovered qualified switch persona in one file. Use `--persona ACCESS_SWITCH` with `report` or `dependencies` to select a view from that file when multiple personas are present. Switch VLAN scanning currently supports ACCESS_SWITCH, AGG_SWITCH and CORE_SWITCH; other configuration adapters are not qualified. Known firmware defaults are resolved by a documented model/release ruleset; unlisted combinations remain unknown rather than inheriting another model's defaults.
+
+Use `python central_tool.py dependencies snapshot.json --output dependencies.json` with credentials to probe the dependency modules of a saved scan. Empty responses, permission failures and rejected requests are distinct; none proves a feature is unsupported. Then run `python central_tool.py report snapshot.json --dependencies dependencies.json --output report.json` offline. Raw inventory and snapshots stay private.
+
 ## Safety boundary
 
 No configuration mutation API calls exist yet. Only OAuth token issuance uses POST. Candidate findings are not executable plans. The API is v1alpha1 and real tenant response shapes, group access, annotation semantics, and Classic/New configuration authority must be validated before enabling writes. Scope IDs are strings, not floating-point numbers.
