@@ -265,7 +265,7 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("Effective at source", html)
         self.assertIn("Global / reference", html)
         self.assertIn("Effective name", html)
-        self.assertIn("false", html)
+        self.assertIn("Disabled", html)
         self.assertIn("Not returned", html)
         self.assertIn("not a live switch CLI", html)
 
@@ -274,8 +274,8 @@ class ConsolidationTests(unittest.TestCase):
         html = vlan_explanation({"vlan": 10, "name": "Same"},
                                 {"vlan": 10, "name": "Same"},
                                 {"vlan": 10, "name": "Same", "voice-enable": True})
-        self.assertIn("voice-enable", html)
-        self.assertIn("true", html)
+        self.assertIn("Voice VLAN", html)
+        self.assertIn("Enabled", html)
         self.assertIn("Same", html)
         self.assertIn("Not returned", html)
 
