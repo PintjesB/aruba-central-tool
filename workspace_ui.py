@@ -361,14 +361,45 @@ form,.toolbar,.table-toolbar,.snapshot-picker { display: flex; flex-wrap: wrap; 
 .metric-card span { color: var(--muted); font-weight: 600; font-size: 12px; }
 .metric-card strong { font-size: 32px; font-variant-numeric: tabular-nums; line-height: 1.15; letter-spacing: -1.3px; font-weight: 680; }
 .metric-card small { font-size: 11px; }
-.overview-focus { display: grid; grid-template-columns: 1.2fr minmax(0,1fr); align-items: center; gap: 32px; padding: 28px !important; }
-.overview-focus h2 { font-size: 25px; margin: 6px 0 10px; letter-spacing: -.7px; }
-.overview-focus p,.overview-links p { color: var(--muted); }
-.overview-breakdown { border-left: 1px solid var(--line); padding-left: 24px; }
-.overview-breakdown > div { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--line); }
-.overview-breakdown > div:last-child { border: 0; } .overview-breakdown strong { font-size: 22px; font-variant-numeric: tabular-nums; }
+.overview-layout { display: grid; grid-template-columns: minmax(0,2fr) minmax(245px,1fr); gap: 16px; align-items: stretch; }
+.overview-layout > section { min-width: 0; }
+.app-shell .overview-focus { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); align-items: center; gap: 20px; padding: 26px; background: #16382f; color: #f0faf5; border: 1px solid #234a3e; }
+.focus-kicker { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 11px; letter-spacing: .015em; }
+.focus-kicker .ui-icon { width: 16px; height: 16px; }
+.overview-focus .focus-kicker { color: #a5d9c7; }
+.focus-number { font-size: 70px; line-height: 1; font-weight: 690; letter-spacing: -4px; margin: 18px 0 10px; font-variant-numeric: tabular-nums; }
+.overview-focus h2 { font-size: 23px; letter-spacing: -.7px; line-height: 1.22; margin: 0 0 8px; color: #f3faf7; }
+.overview-focus p { color: #bbd7cd; font-size: 13px; max-width: 335px; margin-bottom: 18px; }
+.overview-focus .button.primary { background: #a9ebd2; color: #143c30; border-color: #a9ebd2; white-space: normal; }
+.overview-focus .button.primary:hover { background: #caf5e5; }
+.overview-focus .button .ui-icon { width: 14px; height: 14px; }
+.overview-breakdown { border-left: 1px solid #416057; padding-left: 19px; min-width: 0; }
+.overview-breakdown h3 { font-size: 12px; color: #c0dcd1; font-weight: 600; margin-bottom: 10px; }
+.opportunity-row { display: grid; grid-template-columns: minmax(0,1fr) auto 13px; gap: 5px 9px; align-items: center; padding: 11px 0; border-bottom: 1px solid #416057; color: #f3faf7; }
+.opportunity-row:last-child { border-bottom: 0; }
+.opportunity-row:hover { text-decoration: none; color: #a9ebd2; }
+.opportunity-row strong { font-size: 12px; display: block; }
+.opportunity-row small { font-size: 10px; color: #a7c6ba; display: block; }
+.opportunity-row b { font-size: 20px; font-weight: 650; grid-column: 2; grid-row: 1; font-variant-numeric: tabular-nums; }
+.opportunity-row .ui-icon { width: 13px; height: 13px; grid-column: 3; grid-row: 1; }
+.opportunity-meter { grid-column: 1/-1; height: 4px; background: #416057; border-radius: 4px; overflow: hidden; }
+.opportunity-meter span { display: block; height: 100%; border-radius: 4px; background: #82e1bc; }
+.app-shell .coverage-focus { display: flex; flex-direction: column; align-items: flex-start; padding: 24px; }
+.coverage-focus .focus-kicker { color: var(--muted); }
+.coverage-number { font-size: 42px; line-height: 1.15; font-weight: 690; letter-spacing: -1.5px; margin: 24px 0 5px; font-variant-numeric: tabular-nums; }
+.coverage-number small { font-size: 18px; letter-spacing: -.4px; font-weight: 500; }
+.coverage-focus h3 { font-size: 13px; }
+.coverage-meter { width: 100%; height: 9px; background: var(--bg); border-radius: 5px; margin: 12px 0; overflow: hidden; }
+.coverage-meter span { height: 100%; display: block; background: var(--primary); border-radius: 5px; }
+.coverage-focus p { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+.coverage-focus > a { margin-top: auto; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
+.coverage-focus > a .ui-icon,.overview-links a .ui-icon { width: 14px; height: 14px; }
 .overview-links { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.overview-links p { color: var(--muted); font-size: 13px; }
+.overview-links a { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 12px; }
 .overview-links > div + div { border-left: 1px solid var(--line); padding-left: 24px; }
+@media(max-width: 1260px) { .overview-layout { grid-template-columns: 1fr; } .coverage-focus { min-height: 180px; } }
+@media(max-width: 650px) { .app-shell .overview-focus { grid-template-columns: 1fr; padding: 20px; } .focus-number { font-size: 58px; } }
 .connection-details > summary { font-weight: 650; font-size: 15px; color: var(--text); margin: 0; }
 .connection-details[open] > summary { margin-bottom: 14px; }
 .result-summary { display: flex; gap: 10px 18px; flex-wrap: wrap; align-items: center; margin: 0 0 16px; color: var(--muted); font-size: 12px; }
@@ -485,8 +516,9 @@ html:has(.inspector[open]),html:has(.command-palette[open]),html.inspector-open 
   .app-shell .topbar { padding: 9px 14px; min-height: 58px; gap: 8px; }
   .topbar-left,.topbar-actions { gap: 6px; } .topbar-left strong { display: none; }
   #snapshot-slot label { font-size: 0; gap: 0; } .snapshot-picker select { max-width: 165px; }
-  .overview-focus,.overview-links { grid-template-columns: 1fr; gap: 16px; }
+  .overview-layout,.app-shell .overview-focus,.overview-links { grid-template-columns: 1fr; gap: 16px; }
   .overview-breakdown,.overview-links > div + div { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 12px; }
+  .overview-breakdown { border-top-color: #416057; }
   .app-shell main { padding: 20px 15px; } .app-shell section { padding: 15px; }
   .filter-bar label { flex-basis: calc(50% - 10px); } .filter-section { padding: 14px !important; }
   .connection-form { grid-template-columns: 1fr; }
