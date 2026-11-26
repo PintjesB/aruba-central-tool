@@ -309,10 +309,10 @@ class Tests(unittest.TestCase):
             self.assertFalse(result["safe_to_apply"])
             self.assertEqual(probe.call_count, 2)
             self.assertEqual(review.call_count, 2)
-            audit(Client(), source)
             self.assertEqual(scan.call_count, 1)
+            scan.return_value = {**source, "region": "other"}
             with self.assertRaises(ValueError):
-                audit(Client(), {**source, "region": "other"})
+                audit(Client())
 
     def test_dependencies_probe_distinguishes_empty_from_permission(self):
         from central_tool import discover_dependencies
