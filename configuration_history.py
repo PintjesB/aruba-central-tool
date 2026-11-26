@@ -183,6 +183,7 @@ def reference_compliance(bundle, persona, module, reference, target_scope, *, ba
             differences = any(r["status"] in ("added", "removed", "changed") for r in observations)
             gaps = any(r["status"] not in ("added", "removed", "changed") for r in observations)
             # A difference and an evidence gap may coexist in one profile.
+            gaps = gaps or expected.get("count_confirmed") is not True or actual.get("count_confirmed") is not True
             gaps = gaps or any(d["kind"] in ("missing_local", "missing_reference", "null_vs_value")
                                for row in observations for d in row.get("fields", []))
             if differences:
