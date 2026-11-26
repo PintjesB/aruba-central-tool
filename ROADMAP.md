@@ -113,7 +113,11 @@ No live write may be authorized by profile similarity, inferred identity, or a s
 - [x] Configuration drift worklist compares saved and effective profile bodies, source annotations, Library definitions, observed assignments and scope metadata across explicitly confirmed same-tenant snapshots. Require region/Global agreement and common device serial evidence; keep missing reads and unverified absence distinct.
 - [x] Standards compliance worklist compares explicitly selected reference-device effective configuration against known recipients of a selected target scope, with count-aware differences and unknown membership.
 - [x] Persist named immutable standard versions with baseline checksums, exact module sets and target scope identities. Approve exact observed profile deviations with a reason and expiry; retain revocation history. Export private drift and standards evidence.
-- [ ] Support individually approved field subsets and validate live customer coverage; current approvals apply to the exact complete profile deviation, not a wildcard or field subset.
+- [x] Select individual captured baseline fields; approve exact field deviations independently, with expiry and revocation.
+- [x] Baseline-driven configuration templates and historical compliance trends with contemporaneous approval evaluation.
+- [x] Before/after remediation review for prior override and duplicate Library candidates, with strictly newer captures and private rollback evidence (not executable rollback).
+- [x] Profile source tracing, bulk observed Library assignment and overlap analysis, saved/effective port conversion evidence, and grouped same-name effective policy variants.
+- [ ] Extend reference schemas, semantic policy conflict analysis, and inheritance qualification; validate against live customer coverage.
 - [ ] Multi-customer workspaces with explicit tenant separation, credential entry in memory only, no persistent API credentials and no cross-tenant comparison by default.
 
 ## Vendor references
