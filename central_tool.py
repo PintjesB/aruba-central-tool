@@ -1412,10 +1412,10 @@ def qualify_observed_identities(evidence):
     return results
 
 
-AUDIT_WORKERS = 4
+AUDIT_WORKERS = 12
 
 
-def ordered_parallel(items, function, workers=1, completed=None):
+def ordered_parallel(items, function, workers=1, completed=None, item_completed=None):
     """Bound concurrent reads; preserve input order and propagate failures."""
     items = list(items)
     if workers == 1 or len(items) <= 1:
@@ -1424,6 +1424,8 @@ def ordered_parallel(items, function, workers=1, completed=None):
             result.append(function(item))
             if completed:
                 completed(len(result), len(items))
+            if item_completed:
+                item_completed(len(result), len(items), item)
         return result
     result = [None] * len(items)
     with ThreadPoolExecutor(max_workers=min(AUDIT_WORKERS, workers, len(items))) as pool:
@@ -1433,6 +1435,8 @@ def ordered_parallel(items, function, workers=1, completed=None):
                 result[pending[future]] = future.result()
                 if completed:
                     completed(count, len(items))
+                if item_completed:
+                    item_completed(count, len(items), items[pending[future]])
         except BaseException:
             for future in pending:
                 future.cancel()
@@ -1618,24 +1622,32 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     for persona, modules, scopes in plans:
         module_results = {}
         print(f"Configuration audit: {persona}; scopes={len(scopes)}; modules={len(modules)}", flush=True)
+        tasks = [(module, identity, scope)
+                 for module, (identity, _, device_only) in modules.items()
+                 for scope in scopes if not device_only or scope["kind"] == "device"]
+        audit_progress(progress, "Configuration scopes", completed_scopes, total_scopes, persona)
+        def read_scope(task):
+            module, identity, scope = task
+            params = {"view-type": "LOCAL", "scope-id": scope["id"], "device-function": persona}
+            local = read_module_view(client, module, identity, {**params, "object-type": "LOCAL",
+                                                                "effective": "false", "detailed": "false"})
+            local = recover_local_view(client, module, identity, params, local)
+            effective = read_module_view(client, module, identity, {**params, "effective": "true", "detailed": "true"})
+            return module, scope, local, effective
+        grouped = defaultdict(list)
+        for module, scope, local, effective in ordered_parallel(
+                tasks, read_scope, workers,
+                item_completed=lambda done, total, task: audit_progress(
+                    progress, "Configuration scopes", completed_scopes + done,
+                    total_scopes, f"{persona} / {task[0]}")):
+            grouped[module].append((scope, local, effective))
+        completed_scopes += len(tasks)
         for module, (identity, _, device_only) in modules.items():
             scope_results = []
             baseline = None
             totals = Counter()
-            applicable = [s for s in scopes if not device_only or s["kind"] == "device"]
-            detail = f"{persona} / {module}"
-            audit_progress(progress, "Configuration scopes", completed_scopes, total_scopes, detail)
-            def read_scope(scope):
-                params = {"view-type": "LOCAL", "scope-id": scope["id"], "device-function": persona}
-                local = read_module_view(client, module, identity, {**params, "object-type": "LOCAL",
-                                                                    "effective": "false", "detailed": "false"})
-                local = recover_local_view(client, module, identity, params, local)
-                effective = read_module_view(client, module, identity, {**params, "effective": "true", "detailed": "true"})
-                return scope, local, effective
-            captured = ordered_parallel(applicable, read_scope, workers,
-                        lambda done, total: audit_progress(progress, "Configuration scopes",
-                                                          completed_scopes + done, total_scopes, detail))
-            completed_scopes += len(captured)
+            captured = grouped[module]
+            applicable = captured
             for scope, _, effective in captured:
                 if scope["kind"] == "global" and effective["status"] == "list_parsed":
                     baseline = effective["profiles"]
