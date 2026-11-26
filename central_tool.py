@@ -1861,7 +1861,10 @@ def capture_configuration_operational_vlans(client, results, workers=AUDIT_WORKE
     def collect(task):
         persona, scope = task
         try:
-            evidence = probe_operational_vlans(client, scope.get("metadata") or {})
+            metadata = scope.get("metadata") or {}
+            evidence = probe_operational_vlans(client, metadata)
+            if evidence.get("status") == "response_received":
+                evidence["voice_filter"] = collect_monitoring_voice_filter(client, metadata, evidence)
         except (RuntimeError, OSError, ValueError):
             evidence = {"status": "monitoring_read_failed"}
         return persona, scope["id"], {**evidence, "captured_at": datetime.now(timezone.utc).isoformat()}
@@ -2242,10 +2245,14 @@ def vlan_comparison_evidence(bundle, persona, sid, row):
         fields = monitor["fields"]
         if isinstance(fields.get("name"), str):
             deployed["name"] = {"value": fields["name"], "source": "Switch monitoring"}
-        voice = fields.get("voice")
-        if type(voice) is bool or (isinstance(voice, str) and voice.lower() in ("enabled", "disabled")):
-            deployed["voice-enable"] = {"value": voice if type(voice) is bool else voice.lower() == "enabled",
-                                         "source": "Switch monitoring"}
+        voice = voice_state(fields.get("voice"))
+        if voice is not None:
+            deployed["voice-enable"] = {"value": voice, "source": "Switch monitoring"}
+        else:
+            filter_view = bundle.get("operational_vlans", {}).get(persona, {}).get(sid, {}).get("voice_filter", {})
+            filtered = filter_view.get("values", {}).get(row["identity"])
+            if filter_view.get("status") == "observed" and type(filtered) is bool:
+                deployed["voice-enable"] = {"value": filtered, "source": "Switch monitoring voice filter"}
     for key in ("name", "enable", *VLAN_FEATURE_COMMANDS):
         if key in live:
             if key in deployed and canonical(deployed[key]["value"]) != canonical(live[key]):
@@ -2317,6 +2324,62 @@ def vlan_evidence_summary(bundle):
             "recovered_values": dict(sources), "individual_vlan_reads": dict(details),
             "switch_cli": dict(cli), "monitoring": dict(monitoring),
             "feature_cli": {field: dict(counts) for field, counts in features.items()}}
+
+
+def monitoring_vlan_records(payload):
+    """Recognize one complete, uniquely keyed monitoring list."""
+    if not isinstance(payload, dict):
+        return None
+    lists = [v for k, v in payload.items() if k != "metadata" and isinstance(v, list)]
+    if len(lists) != 1 or len(lists[0]) >= 1000:
+        return None
+    records = {}
+    for item in lists[0]:
+        ids = parse_reference_ids(item.get("id")) if isinstance(item, dict) else None
+        if not ids or next(iter(ids)) in records:
+            return None
+        records[next(iter(ids))] = item
+    return records
+
+
+def voice_state(value):
+    if type(value) is bool:
+        return value
+    if isinstance(value, str) and value.lower() in ("enabled", "disabled"):
+        return value.lower() == "enabled"
+    return None
+
+
+def collect_monitoring_voice_filter(client, metadata, evidence):
+    """Verify complementary documented filters against the unfiltered VLAN set."""
+    records = monitoring_vlan_records(evidence.get("payload"))
+    if not records or all(voice_state(r.get("voice")) is not None for r in records.values()):
+        return {"status": "not_needed_or_unavailable", "values": {}}
+    serial = metadata.get(evidence.get("identity_field"))
+    if not isinstance(serial, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,16}", serial):
+        return {"status": "identity_unresolved", "values": {}}
+    path = "/network-monitoring/v1/switches/" + quote(serial, safe="") + "/vlans"
+    observations = {}
+    counts = {}
+    for label, enabled in (("Enabled", True), ("Disabled", False)):
+        try:
+            raw = client.get(path, limit=1000, offset=0, filter=f"voice eq '{label}'")
+            rows = monitoring_vlan_records(raw)
+        except (RuntimeError, OSError, ValueError):
+            return {"status": "filter_read_failed", "values": {}, "counts": counts}
+        if rows is None:
+            return {"status": "filter_schema_unresolved", "values": {}, "counts": counts}
+        counts[label] = len(rows)
+        for vid, row in rows.items():
+            explicit = voice_state(row.get("voice"))
+            original = voice_state(records.get(vid, {}).get("voice"))
+            if (vid in observations or vid not in records or
+                    any(value is not None and value != enabled for value in (explicit, original))):
+                return {"status": "filter_conflict", "values": {}, "counts": counts}
+            observations[vid] = enabled
+    if set(observations) != set(records):
+        return {"status": "filter_incomplete", "values": {}, "counts": counts}
+    return {"status": "observed", "values": observations, "counts": counts}
 
 
 def configuration_operational_vlan(bundle, persona, sid, vid):
