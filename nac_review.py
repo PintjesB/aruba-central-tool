@@ -95,10 +95,9 @@ def read_mac_registrations(client, progress=None, limit=200, max_pages=10000):
 
 
 def nac_review(bundle):
-    from central_tool import module_view
+    from nac_authorization import nac_collection
     source = bundle.get("nac_registrations") or {}
-    raw_tags = bundle.get("unadapted_profiles", {}).get("static-tag", {}).get("library", {})
-    tags = module_view(raw_tags.get("raw"), "tag-id") if raw_tags.get("status") == "response_received" else {}
+    tags = nac_collection(bundle, "static-tag")
     definitions = tags.get("profiles", {}) if tags.get("status") == "list_parsed" else {}
     names = defaultdict(set)
     for identity, profile in definitions.items():
@@ -131,5 +130,5 @@ def nac_review(bundle):
                      "tags_observed": isinstance(observed, list), "references": references, "record": row})
     return {"capture_status": source.get("status", "not_collected"), "count_confirmed": source.get("count_confirmed") is True,
             "rows": rows, "duplicate_mac_groups": [{"mac": k, "ids": v} for k, v in macs.items() if len(v) > 1],
-            "tag_definition_status": tags.get("status", raw_tags.get("status", "not_collected")),
+            "tag_definition_status": tags.get("status", "not_collected"),
             "tag_definitions": definitions, "tag_usage": dict(usage), "safe_to_apply": False}

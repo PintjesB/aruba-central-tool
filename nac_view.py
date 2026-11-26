@@ -41,6 +41,32 @@ def nac_view(workspace, query):
            inspect("Static tag evidence", property_table(profile), "Inspect")) for identity, profile in report["tag_definitions"].items()], search=True) + '</section>'
     body += '<section><h2>Duplicate registration identities</h2>' + table(("Normalized MAC", "Registration IDs"), [
         tr(e(row["mac"]), list_items(row["ids"])) for row in report["duplicate_mac_groups"]]) + '</section>'
+    from nac_authorization import policy_review
+    policies = policy_review(bundle)
+    def refs(value):
+        return table(("Identity store reference", "Evidence"), [
+            tr(e(row["identity"]), badge(pretty(row["status"]))) for row in value["references"]]) if value["status"] == "observed" else '<p>Identity store list not qualified.</p>'
+    def attrs(values):
+        return table(("Attribute type", "Name", "Value", "Source"), [
+            tr(e(v["kind"]), e(v["name"]), e(v["value"]), e(v["source"])) for v in values])
+    body += '<section><h2>Authentication profiles</h2><p>Capture: ' + e(pretty(policies["auth_capture_status"])) + ' · Identity stores: ' + e(pretty(policies["store_capture_status"])) + '</p>'
+    body += table(("Name", "Method", "Networks", ""), [
+        tr(e(p["name"]), e(p["type"]), property_table(p["networks"]),
+           inspect("Authentication evidence", refs(p["identity_stores"]), "Review stores"))
+        for p in policies["authentication"]], search=True) + '</section>'
+    body += '<section><h2>Authorization policies</h2><p>Capture: ' + e(pretty(policies["policy_capture_status"])) + ' · Observed policy order: ' + e(str(policies["policy_order_verified"])) + '. Policy and rule applicability are not evaluated against live clients.</p>'
+    policy_rows = []
+    for p in policies["policies"]:
+        detail = '<h3>Policy preconditions</h3>' + property_table(p["conditions"]) + '<h3>Identity stores</h3>' + refs(p["identity_stores"])
+        detail += '<h3>Default enforcement attributes</h3>' + attrs(p["default_attributes"]) + list_items(p["default_gaps"])
+        detail += '<h3>Rule evaluation order</h3><p>Order observed: ' + e(str(p["rule_order_verified"])) + '</p>'
+        for rule in p["rules"]:
+            detail += '<h4>Rule position ' + e(rule["position"]) + '</h4><p>Enabled: ' + e(str(rule["enabled"])) + ' · ' + e(pretty(rule["status"])) + '</p>'
+            detail += property_table(rule["conditions"]) + '<h4>Explicit rule attributes</h4>' + attrs(rule["attributes"])
+            detail += '<h4>Conditional default + rule attributes</h4>' + attrs(rule["combined_candidate_attributes"]) + list_items(rule["gaps"])
+        policy_rows.append(tr(e(p["position"]), e(p["name"]), e(p["type"]), e(str(p["enabled"])),
+                              str(len(p["rules"])), inspect("Authorization policy evidence", detail, "Review rules")))
+    body += table(("Position", "Policy", "Type", "Enabled", "Observed rules", ""), policy_rows, search=True) + '</section>'
     body += '<section><h2>Authorization limits</h2><p>Registration and static tag association do not prove the effective role, VLAN, authentication result or authorization rule. Named MPSK secret collection is intentionally excluded.</p>'
-    body += private_export("nac-registration-review", {"snapshot": name, "report": report}) + '</section>'
+    body += private_export("nac-registration-review", {"snapshot": name, "report": report, "authorization": policies}) + '</section>'
     return page("NAC identities", body, workspace.nav(name))
