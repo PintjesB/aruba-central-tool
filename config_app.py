@@ -458,6 +458,14 @@ if(panel.dataset.state==='running')poll();
         from workspace_views import comparison_view
         return comparison_view(self, query)
 
+    def drift(self, query):
+        from history_view import drift_view
+        return drift_view(self, query)
+
+    def standards(self, query):
+        from history_view import standards_view
+        return standards_view(self, query)
+
 
 def handler_for(workspace):
     root = "/" + workspace.token + "/"
@@ -517,6 +525,10 @@ def handler_for(workspace):
                     body = workspace.scopes(query)
                 elif parsed.path == root + "compare":
                     body = workspace.comparison(query)
+                elif parsed.path == root + "drift":
+                    body = workspace.drift(query)
+                elif parsed.path == root + "standards":
+                    body = workspace.standards(query)
                 else:
                     self.reply("Not found", 404)
                     return
