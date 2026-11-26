@@ -2,7 +2,7 @@
 import hashlib
 import json
 import os
-import tempfile
+import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -40,25 +40,47 @@ class ScopeCheckpoint:
         self.now = now or (lambda: datetime.now(timezone.utc))
         self.created = self.now().isoformat()
         self.manifest = manifest
-        self.pairs = {}
+        self.pairs = 0
         self.reused = 0
         if self.path.is_symlink():
             raise ValueError("Checkpoint must not be a symlink")
         if self.path.exists():
             if not resume or not self.path.is_file():
                 raise ValueError("Checkpoint already exists; explicitly resume or choose a new path")
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            if data.get("schema") != 1 or data.get("manifest") != manifest or data.get("complete") is not False:
-                raise ValueError("Checkpoint does not match the current discovered inventory or is complete")
-            created = datetime.fromisoformat(data["created_at"])
-            if created.tzinfo is None or not timedelta(0) <= self.now() - created <= timedelta(hours=24):
-                raise ValueError("Checkpoint expired; start a fresh audit")
-            self.created = data["created_at"]
-            self.pairs = data["pairs"]
         else:
             if resume:
                 raise ValueError("No checkpoint found to resume")
-            self._publish(exclusive=True)
+            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.close(fd)
+        with self._connect() as db:
+            if not resume:
+                db.execute("CREATE TABLE manifest (payload TEXT NOT NULL)")
+                db.execute("CREATE TABLE pairs (key TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+                db.execute("INSERT INTO manifest VALUES (?)", (json.dumps({"schema": 1, "manifest": manifest,
+                           "created_at": self.created, "complete": False}),))
+            else:
+                data = json.loads(db.execute("SELECT payload FROM manifest").fetchone()[0])
+                if data.get("schema") != 1 or data.get("manifest") != manifest or data.get("complete") is not False:
+                    raise ValueError("Checkpoint does not match current discovered inventory or is complete")
+                created = datetime.fromisoformat(data["created_at"])
+                if created.tzinfo is None or not timedelta(0) <= self.now() - created <= timedelta(hours=24):
+                    raise ValueError("Checkpoint expired; start a fresh audit")
+                self.created = data["created_at"]
+                self.pairs = db.execute("SELECT COUNT(*) FROM pairs").fetchone()[0]
+
+    def _connect(self):
+        from contextlib import contextmanager
+        @contextmanager
+        def connection():
+            if self.path.is_symlink():
+                raise ValueError("Checkpoint changed to a symlink")
+            db = sqlite3.connect(self.path)
+            try:
+                with db:
+                    yield db
+            finally:
+                db.close()
+        return connection()
 
     @staticmethod
     def qualified(local, effective):
@@ -67,8 +89,9 @@ class ScopeCheckpoint:
 
     def get(self, persona, module, scope):
         key = fingerprint([persona, module, str(scope)])
-        with self.lock:
-            row = self.pairs.get(key)
+        with self.lock, self._connect() as db:
+            record = db.execute("SELECT payload FROM pairs WHERE key = ?", (key,)).fetchone()
+            row = json.loads(record[0]) if record else None
             if row and self.qualified(row["local"], row["effective"]):
                 self.reused += 1
                 return row
@@ -78,41 +101,27 @@ class ScopeCheckpoint:
         if not self.qualified(local, effective):
             return
         key = fingerprint([persona, module, str(scope)])
-        with self.lock:
-            self.pairs[key] = {"local": local, "effective": effective, "captured_at": self.now().isoformat()}
-            self._publish()
-
-    def _publish(self, *, exclusive=False, complete=False):
-        payload = {"schema": 1, "manifest": self.manifest, "created_at": self.created,
-                   "pairs": self.pairs, "complete": complete}
-        if exclusive:
-            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    json.dump(payload, stream, allow_nan=False)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-            except BaseException:
-                self.path.unlink(missing_ok=True)
-                raise
-        else:
-            fd, temporary = tempfile.mkstemp(prefix=".collection-", suffix=".partial", dir=self.path.parent)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    json.dump(payload, stream, allow_nan=False)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                if self.path.is_symlink():
-                    raise ValueError("Checkpoint changed to a symlink")
-                os.replace(temporary, self.path)
-            finally:
-                Path(temporary).unlink(missing_ok=True)
+        row = {"local": local, "effective": effective, "captured_at": self.now().isoformat()}
+        with self.lock, self._connect() as db:
+            cursor = db.execute("INSERT OR IGNORE INTO pairs VALUES (?, ?)",
+                                (key, json.dumps(row, allow_nan=False)))
+            self.pairs += cursor.rowcount
 
     def evidence(self):
-        return {"enabled": True, "started_at": self.created, "qualified_pairs_saved": len(self.pairs),
+        return {"enabled": True, "started_at": self.created, "qualified_pairs_saved": self.pairs,
                 "reused_pairs": self.reused, "mixed_capture_times": self.reused > 0,
                 "scope_pairs_only": True, "max_age_hours": 24}
 
-    def complete(self):
-        with self.lock:
-            self._publish(complete=True)
+def mark_complete(path):
+    """Seal the checkpoint only after the completed snapshot is published."""
+    path = Path(path)
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Checkpoint unavailable")
+    db = sqlite3.connect(path)
+    try:
+        with db:
+            data = json.loads(db.execute("SELECT payload FROM manifest").fetchone()[0])
+            data["complete"] = True
+            db.execute("UPDATE manifest SET payload = ?", (json.dumps(data),))
+    finally:
+        db.close()
