@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env*
+token*.yaml
+token*.json
+snapshot*.json
+report*.json
+data/
+private/
