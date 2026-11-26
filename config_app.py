@@ -319,13 +319,20 @@ if(panel.dataset.state==='running')poll();
             from consolidation import profile_recommendations
             from collections import Counter
             from central_tool import refresh_configuration_review
-            findings = profile_recommendations(refresh_configuration_review(bundle))
-            counts = Counter(f["action"] for f in findings)
+            complete_structure = all(
+                {"scope_kind", "local_view", "effective_view"} <= scope.keys()
+                for entry in bundle["results"].values() for data in entry["modules"].values()
+                for scope in data["scope_results"])
+            findings = profile_recommendations(refresh_configuration_review(bundle)) if complete_structure else None
+            counts = Counter(f["action"] for f in findings or [])
             opportunities = counts["remove_override"] + counts["promote_local"] + counts["reuse_library"]
             advisor_href = root + "advisor?" + urlencode({"snapshot": name})
             overrides_href = root + "overrides?" + urlencode({"snapshot": name})
             coverage_href = root + "coverage?" + urlencode({"snapshot": name})
-            summary += (f'<section class="overview-focus"><div><small>Recommended starting point</small>'
+            if findings is None:
+                summary += '<section><h2>Consolidation analysis unavailable</h2><p>This snapshot lacks the saved configuration evidence needed for review. Collect a new snapshot to calculate recommendations.</p></section>'
+            else:
+                summary += (f'<section class="overview-focus"><div><small>Recommended starting point</small>'
                         f'<h2>{opportunities} consolidation opportunities</h2>'
                         '<p>Review matching profiles and repeated configuration before planning changes.</p>'
                         f'<a class="button primary" href="{e(advisor_href)}">Review opportunities</a></div>'
@@ -338,12 +345,12 @@ if(panel.dataset.state==='running')poll();
                         f'<div><h3>Data coverage</h3><p>{len(coverage) - qualified} module reads are not fully qualified.</p>'
                         f'<a href="{e(coverage_href)}">Review coverage →</a></div></section>')
         else:
-            summary = '<section><h2>Collect your first snapshot</h2><p>Connect to Central to start a read-only configuration audit.</p></section>'
+            summary = '<section><h2>Saved snapshots</h2><p>No snapshots yet. Connect to Central to start a read-only configuration audit.</p></section>'
         picker = snapshot_picker(root, "", files, name) if files else ""
-        capture_note = (f'<p class="muted">Captured: {e(bundle.get("captured_at", "unknown"))} · {len(files)} saved snapshots</p>' if bundle else "")
+        capture_note = (f'<p class="muted">Captured: {e(bundle.get("captured_at", "unknown"))} · Saved snapshots: {len(files)}</p>' if bundle else "")
         # The connection form is secondary once an audit is available. Keep
         # active/failed progress visible and never store credentials.
-        connection = (f'<section><details class="connection-details"{" open" if not bundle or state in ("running", "failed") else ""}>'
+        connection = (f'<section><details class="connection-details"{" open" if not bundle or state in ("running", "failed", "complete") else ""}>'
                       f'<summary>Collect a new snapshot</summary>{progress_html}{refresh}'
                       '<p class="note">Use a separate workspace directory for each customer. Tenant identity is not independently verified.</p></details></section>')
         return page("Snapshots", intro("Overview", "Review captured configuration and plan improvements.", picker)
