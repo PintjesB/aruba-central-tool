@@ -523,6 +523,41 @@ class Tests(unittest.TestCase):
         self.assertTrue(review_module_scope(local, effective, {})["qualified"])
         self.assertFalse(review_module_scope(local, module_view({}, "name"), {})["qualified"])
 
+    def test_documented_catalog_contains_verified_configuration_get_paths(self):
+        from central_tool import documented_profile_catalog
+        catalog = documented_profile_catalog()
+        self.assertEqual(catalog["folders_read"], 25)
+        self.assertEqual(catalog["get_requests"], 427)
+        self.assertEqual(catalog["unique_get_paths"], 399)
+        for module in ("aaa-profile", "dhcp-snooping", "server-groups", "stp",
+                       "vrfs", "multicast-global", "radios", "first-hop-security", "dos"):
+            self.assertIn(module, catalog["modules"])
+        self.assertTrue(catalog["modules"]["aaa-profile"]["all_function_scope"])
+        self.assertFalse(catalog["modules"]["first-hop-security"]["all_function_scope"])
+        self.assertNotIn("config-assignments", catalog["modules"])
+        self.assertFalse(catalog["exhaustive"])
+
+    def test_documented_global_survey_is_independent_of_assignments(self):
+        from central_tool import inspect_unadapted_profiles
+        discovery = {"unknown_adapter_modules": [], "survey_modules": ["aaa-profile"],
+                     "modules": {}, "documented_catalog": {"modules": {
+                         "aaa-profile": {"all_function_scope": True}}}}
+        payload = {"profiles": [{"name": "example", "@": {
+            "aruba-annotation:device_function": "ACCESS_SWITCH"}}]}
+        fake = Fake([payload, payload, {"profiles": []}, {"profiles": []},
+                     {"profiles": []}, {"profiles": []}, {"profiles": []}])
+        result = inspect_unadapted_profiles(fake, discovery, {}, {},
+                    scopes_by_persona={"ACCESS_SWITCH": [{"id": "1", "kind": "global"},
+                                                         {"id": "12", "kind": "device"}]})
+        evidence = result["aaa-profile"]
+        global_view = next(v for v in evidence["source_views"] if v["persona"] == "ALL_DEVICE_FUNCTIONS")
+        self.assertEqual(global_view["scope"], "1")
+        self.assertNotIn("device-function", fake.calls[0][1])
+        self.assertEqual(evidence["catalog_scope_coverage"]["global_observed_functions"], ["ACCESS_SWITCH"])
+        self.assertEqual(evidence["catalog_scope_coverage"]["all_function_scopes_not_surveyed"], 1)
+        self.assertEqual({v["scope"] for v in evidence["source_views"] if v["persona"] == "ACCESS_SWITCH"}, {"1", "12"})
+        self.assertFalse(evidence["safe_to_apply"])
+
     def test_configuration_audit_uses_persona_catalog(self):
         from central_tool import configuration_audit
         from unittest.mock import patch

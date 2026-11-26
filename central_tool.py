@@ -75,13 +75,18 @@ class Central:
         self._token_lock = threading.Lock()
         self._rate_lock = threading.Lock()
         self._retry_at = 0.0
+        self._next_request_at = 0.0
 
     def _wait_rate_limit(self):
+        # HPE documents 10 requests/s per account across all credentials.
+        # Pace this client at 8/s, leaving limited headroom for other consumers.
         while True:
             with self._rate_lock:
-                delay = self._retry_at - time.monotonic()
-            if delay <= 0:
-                return
+                now = time.monotonic()
+                delay = max(self._retry_at, self._next_request_at) - now
+                if delay <= 0:
+                    self._next_request_at = now + 0.125
+                    return
             time.sleep(delay)
 
     def _request(self, request, label):
@@ -102,7 +107,6 @@ class Central:
                     if exc.code == 429:
                         with self._rate_lock:
                             self._retry_at = max(self._retry_at, time.monotonic() + seconds)
-                        self._wait_rate_limit()
                     else:
                         time.sleep(seconds)
                     continue
@@ -1683,6 +1687,44 @@ def audit_progress(callback, phase, done, total, detail):
 DOCUMENTED_RAW_COLLECTIONS = {"arc", "policy-groups", "usb"}
 
 
+def documented_profile_catalog():
+    """Use the pinned HPE collection, not a tenant's assignment inventory.
+
+    Only exact, non-parameterized configuration GET paths are executable.
+    Other request definitions remain inventory for dedicated future adapters.
+    No vendor script, authorization setting or example payload is executed.
+    """
+    catalog = json.loads(Path(__file__).with_name("central_api_catalog.json").read_text(encoding="utf-8"))
+    if not isinstance(catalog.get("get_requests"), list):
+        raise ValueError("Invalid bundled Central API catalog")
+    modules = {}
+    for request in catalog["get_requests"]:
+        path = request.get("path", "")
+        match = re.fullmatch(r"/network-config/v1alpha1/([a-z][a-z0-9-]*)", path)
+        if (request.get("method") != "GET" or not match
+                or not {"view-type", "scope-id", "effective", "detailed"} <= set(request.get("query", []))):
+            continue
+        module = match[1]
+        # Config assignments have an explicit inventory collector.
+        if module == "config-assignments":
+            continue
+        entry = modules.setdefault(module, {"source": "vendor_collection", "group": request["group"],
+                                            "all_function_scope": False})
+        entry["all_function_scope"] |= "device-function" in request.get("query", [])
+    for entry in catalog.get("release_note_collections", []):
+        match = re.fullmatch(r"/network-config/v1alpha1/([a-z][a-z0-9-]*)", entry["path"])
+        if match:
+            modules.setdefault(match[1], {"source": "release_notes", "group": "Additional documented profiles",
+                                          "all_function_scope": False})
+    return {"source": catalog["source_url"], "source_updated_at": catalog["source_updated_at"],
+            "get_requests": len(catalog["get_requests"]),
+            "unique_get_paths": len({r["path"] for r in catalog["get_requests"]}),
+            "folders_read": sum(v["status"] == "read" for v in catalog["folder_outcomes"].values()),
+            "folders_total": len(catalog["folder_outcomes"]),
+            "modules": modules, "exhaustive": False}
+
+
+
 def read_raw_profile_collection(client, module, params):
     """Preserve all pages of an explicitly truncated collection without assuming identity."""
     try:
@@ -1802,11 +1844,19 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                 if sid.isdigit():
                     targets.setdefault((module, persona, sid), set())
 
+    documented = discovery.get("documented_catalog", {}).get("modules", {})
+    global_ids = sorted({str(s["id"]) for scopes in (scopes_by_persona or {}).values()
+                         for s in scopes if s.get("kind") == "global" and str(s["id"]).isdigit()})
+    all_scope_ids = sorted({str(s["id"]) for scopes in (scopes_by_persona or {}).values()
+                            for s in scopes if str(s["id"]).isdigit()})
+
     def capture(module, params):
         try:
             return read_raw_profile_collection(client, module, params)
-        except APIError:
-            raise
+        except APIError as exc:
+            if exc.status in (401, 429):
+                raise
+            return {"status": "read_failed", "http_error": exc.status, "collection_count_verified": False}
         except (RuntimeError, OSError, ValueError):
             return {"status": "read_failed", "collection_count_verified": False}
 
@@ -1821,9 +1871,57 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
             evidence.append({"persona": persona, "scope": sid,
                              "observed_instances": sorted(instances), "committed": committed,
                              "effective": effective})
-        result = {"status": "unqualified_adapter", "source_views": evidence,
-                  "scope_read_outcomes": dict(Counter(v[k]["status"] for v in evidence for k in ("committed", "effective"))),
+        # Documented collections absent from discovery still receive a Global
+        # read for all functions. Keep the mixed-function results separate from
+        # identified profile evidence and never use them to qualify a change.
+        catalog_views = []
+        contract = documented.get(module, {})
+        if contract.get("all_function_scope"):
+            for sid in global_ids:
+                base = {"view-type": "LOCAL", "scope-id": sid, "detailed": "true"}
+                catalog_views.append({"persona": "ALL_DEVICE_FUNCTIONS", "scope": sid,
+                                      "observed_instances": [],
+                                      "committed": capture(module, {**base, "effective": "false"}),
+                                      "effective": capture(module, {**base, "effective": "true"})})
+        # Discover functions from explicit Global annotations. Positive data
+        # warrants targeted scope reads even if the assignment inventory missed
+        # the module. An empty Global response is never proof of no local data.
+        observed_functions = set()
+        for view in catalog_views:
+            for kind in ("committed", "effective"):
+                payload = view[kind].get("raw")
+                if not isinstance(payload, dict):
+                    continue
+                for key, items in payload.items():
+                    if key == "metadata" or not isinstance(items, list):
+                        continue
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        ann = item.get("@")
+                        if isinstance(ann, dict):
+                            function = ann.get("aruba-annotation:device_function")
+                            if isinstance(function, str) and function in NETWORK_PERSONAS:
+                                observed_functions.add(function)
+        visited = {(v["persona"], v["scope"]) for v in evidence}
+        for function in sorted(observed_functions):
+            for scope in (scopes_by_persona or {}).get(function, []):
+                sid = str(scope["id"])
+                if not sid.isdigit() or (function, sid) in visited:
+                    continue
+                base = {"view-type": "LOCAL", "scope-id": sid, "device-function": function, "detailed": "true"}
+                evidence.append({"persona": function, "scope": sid, "observed_instances": [],
+                                 "committed": capture(module, {**base, "effective": "false"}),
+                                 "effective": capture(module, {**base, "effective": "true"})})
+                visited.add((function, sid))
+        result = {"status": "unqualified_adapter", "source_views": evidence + catalog_views,
+                  "scope_read_outcomes": dict(Counter(v[k]["status"] for v in evidence + catalog_views for k in ("committed", "effective"))),
                   "library": capture(module, {"view-type": "LIBRARY", "detailed": "true"}),
+                  "catalog_scope_coverage": {"global_scopes_attempted": len(catalog_views),
+                       "global_observed_functions": sorted(observed_functions),
+                       "discovered_scopes": len(all_scope_ids),
+                       "all_function_scopes_not_surveyed": len(set(all_scope_ids) - {v["scope"] for v in catalog_views}),
+                       "complete": False},
                   "safe_to_apply": False}
         result["identity_evidence"] = qualify_observed_identities(result)
         print(f"  Unadapted profile type {module}: source views={len(evidence)}; "
@@ -2628,7 +2726,12 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
         "additional_assignments": assignments["additional_assignments"],
         "scope_reads": assignments["scope_read_outcomes"]}), flush=True)
     profile_types = discover_profile_types(assignments, scope_maps)
-    profile_types["survey_modules"] = sorted(DOCUMENTED_RAW_COLLECTIONS - set(CONFIG_MODULES))
+    catalog = documented_profile_catalog()
+    profile_types["documented_catalog"] = catalog
+    profile_types["survey_modules"] = sorted((DOCUMENTED_RAW_COLLECTIONS | set(catalog["modules"])) - set(CONFIG_MODULES))
+    print(f"Documented catalog: {catalog['get_requests']} GET definitions; "
+          f"{len(catalog['modules'])} profile collections; "
+          f"{len(profile_types['survey_modules'])} additional Library surveys", flush=True)
     print(f"Observed profile types: {len(profile_types['modules'])}; "
           f"without adapter: {len(profile_types['unknown_adapter_modules'])}", flush=True)
     results = {}

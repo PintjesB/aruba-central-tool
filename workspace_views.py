@@ -820,6 +820,20 @@ def coverage_view(workspace, query):
         tr("Additional assignment identities", "Recovered by scoped queries", str(assignments.get("additional_assignments", "Unavailable"))),
         tr("Unqualified device functions", e(", ".join(bundle.get("unqualified_personas", [])) or "None recorded"), str(len(bundle.get("unqualified_personas", []))))])
     body += '<p class="note">Assignment and profile catalog completeness are not verified.</p></section>'
+    catalog = discovery.get("documented_catalog") or {}
+    if catalog:
+        surveyed = set(library.get("modules", {})) | set(additional)
+        documented = set(catalog["modules"])
+        pending = documented - surveyed - {"ethernet-interfaces"}
+        body += '<section><h2>Vendor API catalog</h2>' + metrics([
+            ("Published GET definitions", catalog["get_requests"], f'{catalog["unique_get_paths"]} unique paths'),
+            ("Profile collections in catalog", len(documented), f'{len(documented & surveyed)} represented in this capture'),
+            ("Catalog categories inspected", f'{catalog["folders_read"]}/{catalog["folders_total"]}', "HPE published collection"),
+        ])
+        body += '<p class="note">Catalog inclusion does not prove live availability. The independent Global survey does not establish lower-scope completeness. Non-profile operations, keyed reads and service-specific inventories require their own adapters.</p>'
+        if pending:
+            body += '<p>Profile collections not captured: ' + e(", ".join(sorted(pending))) + '</p>'
+        body += f'<p><a href="{e(catalog["source"])}" target="_blank" rel="noopener noreferrer">HPE published API catalog</a> · Revision {e(catalog["source_updated_at"])}</p></section>'
     rows = [tr(e(persona_label(r["persona"])), e(module_label(r["module"])), f'{r["qualified"]}/{r["total"]}', status(r["status"]),
                f'<a href="{url(root, "report", snapshot=name, persona=r["persona"], module=r["module"], view="diagnostics")}">View evidence</a>')
             for r in sorted(records, key=lambda r: ({"unqualified": 0, "partial": 1, "qualified": 2}[r["status"]], r["persona"], r["module"]))]
@@ -846,11 +860,14 @@ def coverage_view(workspace, query):
             reads = [s[k] for s in v.get("source_views", []) for k in ("committed", "effective")]
             captured = sum(r.get("status") == "response_received" for r in reads)
             counted = sum(r.get("collection_count_verified") is True for r in reads)
+            catalog_scope = v.get("catalog_scope_coverage", {})
+            gap = catalog_scope.get("all_function_scopes_not_surveyed")
             scoped.append(tr(e(module_label(m)), str(len(v.get("source_views", []))),
                              f"{captured}/{len(reads)}", str(counted),
+                             str(gap) if gap is not None else "Unavailable",
                              f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Inspect settings</a>'))
-        body += '<section><h2>Additional scoped configuration</h2><p class="filter-hint">These reads preserve the returned data without assuming profile identity or scope applicability.</p>' + table(
-            ("Profile type", "Scopes attempted", "Responses captured", "Count-confirmed reads", ""), scoped, search=True) + '</section>'
+        body += '<section><h2>Additional scoped configuration</h2><p class="filter-hint">These reads preserve returned data without assuming profile identity or scope applicability. Remaining all-function surveys are not necessarily missing configuration; targeted reads may already exist.</p>' + table(
+            ("Profile type", "Scope views attempted", "Responses captured", "Count-confirmed reads", "All-function scopes not surveyed", ""), scoped, search=True) + '</section>'
 
     return page("Module coverage", body, workspace.nav(name))
 
