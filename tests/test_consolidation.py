@@ -281,7 +281,7 @@ class ConsolidationTests(unittest.TestCase):
             self.assertIn("Compare with Global", html)
             self.assertIn("Matches Global", html)
             self.assertIn("Expected fallback after removing device-local copy", html)
-            self.assertIn("Remove the redundant local copy", html)
+            self.assertIn("Verify before removal", html)
             self.assertIn("Open matching consolidation preview", html)
             self.assertIn("identity=10", html)
             self.assertNotIn("VLAN 40", html)
