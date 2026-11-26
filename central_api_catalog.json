@@ -5916,6 +5916,1196 @@
         "limit",
         "offset"
       ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured FLow Tracking profiles",
+      "id": "f78373fa-56ba-4805-a399-d6d84b148f81",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/flow-tracking",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing Flow Tracking profile configurations",
+      "id": "fb7fd082-51dd-4e10-a8fd-8e60b2165137",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/flow-tracking/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured device-fingerprinting profile configurations.",
+      "id": "25ec6b0c-c1b1-4b97-af86-77f9326ff3f6",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/devicefingerprinting/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing device-fingerprinting configuration.",
+      "id": "606af4d5-a656-4096-bab0-500a063bd91f",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/devicefingerprinting",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing Traffic-insight Configurations",
+      "id": "14887073-56e8-4bb2-9c97-41158176c40e",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/traffic-insight/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured Traffic-insight Instance",
+      "id": "4cc27c7c-e966-47bd-83cd-a5079babe277",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/traffic-insight",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing client-iptracker configurations on the interface.",
+      "id": "9fb16bc4-1c2f-4fbe-9202-b4e8d1f825d3",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/client-iptracker-interface",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured profile for client-iptracker on the interface.",
+      "id": "dadd0986-0961-4f89-a736-443fc1cf1b3f",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/client-iptracker-interface/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing device-fingerprinting configuration on the interface",
+      "id": "b6c5fc9d-092f-4b0c-a499-0638ee7f5ed9",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/devicefingerprinting-interface",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured device-fingerprinting interface profile name",
+      "id": "e9a0cb64-1af9-4e6b-9ce1-b3656ae8d4b0",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/devicefingerprinting-interface/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing device-fingerprinting configuration on the interface",
+      "id": "07be4f80-f885-464b-9342-7d0671e68dda",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/devicefingerprinting-interface",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured device-fingerprinting interface profile name",
+      "id": "3c29ec7f-7dc1-4894-82bc-38bd2d2ab19f",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/devicefingerprinting-interface/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing Flow Tracking profile configurations",
+      "id": "69494d9e-52b9-4a06-9e63-d40cae308748",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/flow-tracking/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured FLow Tracking profiles",
+      "id": "ee50caaf-632f-4741-a40c-5b224dc0e5d0",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/flow-tracking",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing  client-insight configurations",
+      "id": "8c2b0f5c-7f28-43e1-b01c-6894b3a62b83",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/client-insight",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured profile for client-insight",
+      "id": "ab0f20b5-886a-4126-a019-347d3d304b14",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/client-insight/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing Traffic-insight Configurations",
+      "id": "47e5bbac-9f64-4fb2-8ddf-a17c0661749a",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/traffic-insight/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured Traffic-insight Instance",
+      "id": "66a9fe59-8a2d-4c10-9c83-0941a3ae4a34",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/traffic-insight",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing client-iptracker configurations",
+      "id": "9c92e296-914d-4338-adf0-5cbc83eb0f7f",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/client-iptracker",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured profile for client-iptracker",
+      "id": "9e84591b-7479-4720-97d9-083b0799354e",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/client-iptracker/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured device-fingerprinting switch profile.",
+      "id": "1eae8941-e127-434e-8450-4b20f28bb2e8",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/devicefingerprinting-profile/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing device-fingerprinting switch profile configuration",
+      "id": "5857ea24-e107-43ae-b8e6-d3055c561cf3",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/devicefingerprinting-profile",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing  client-insight configurations",
+      "id": "2a5927b0-1e73-4331-8501-47fa4fd16035",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/client-insight",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured profile for client-insight",
+      "id": "dca2cd7f-4572-42c7-b95f-790b57184a40",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/client-insight/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing device-fingerprinting configuration.",
+      "id": "b31e52fe-3252-4bbf-9877-ea286f09eef4",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/devicefingerprinting",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured device-fingerprinting profile configurations.",
+      "id": "d7c92c06-ab85-400e-93e5-be76b955e092",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/devicefingerprinting/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured profile for client-iptracker",
+      "id": "72eceb05-9a32-4aee-9dea-3d79158e912c",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/client-iptracker/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing client-iptracker configurations",
+      "id": "c14eb0d4-1587-41f7-bc9f-8e6a18eac6f0",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/client-iptracker",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing client-iptracker configurations on the interface.",
+      "id": "30382550-0d4a-45ab-a950-205b27c2c37c",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/client-iptracker-interface",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured profile for client-iptracker on the interface.",
+      "id": "bfd14bb3-a131-4062-84a4-9fbbf7d124f5",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/client-iptracker-interface/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read configured device-fingerprinting switch profile.",
+      "id": "0940cbcd-c91e-4873-9c21-e3f59fa02354",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/devicefingerprinting-profile/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Telemetry",
+      "name": "Read existing device-fingerprinting switch profile configuration",
+      "id": "bb9856b9-1d57-4a77-933b-0ad8d9d65bb3",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/devicefingerprinting-profile",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Tunnels",
+      "name": "Read existing GRE tunnel-group configurations",
+      "id": "2c0f5d24-5821-4170-b4f7-bd2a8195bf40",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/tunnel-groups/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Tunnels",
+      "name": "Read configured GRE Tunnel-groups",
+      "id": "a8910f50-40dc-4bb6-b493-82446af4909c",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/tunnel-groups",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Tunnels",
+      "name": "Read configured Tunnel Interface",
+      "id": "17d6fd9a-eda9-488d-9af2-4f261d11c743",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/tunnel",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Tunnels",
+      "name": "Read existing Tunnel interface configurations",
+      "id": "b8957cb4-e8dc-47a9-9096-0cdae23a3820",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/tunnel/:id",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read existing STP Configuration.",
+      "id": "8ee3b0b9-e555-42c7-925c-bf510398034b",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/stp",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read existing STP Configuration for given name.",
+      "id": "94993ace-a9dd-423c-8a89-eff5eb7020e0",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/stp/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read existing MVRP Configuration.",
+      "id": "49bffe58-99db-4b5a-a259-a74b42caef04",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/mvrp",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read existing MVRP Configuration for given name.",
+      "id": "72fdd026-cac5-4027-8d95-59e5c01005fb",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/mvrp/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read existing Smartlink configuration.",
+      "id": "6baffc06-b4cb-4c43-ab2f-66cae437008c",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/smartlink",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read existing smartlink configuration for given name.",
+      "id": "6f742971-3326-4388-bc0a-425a35f50821",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/smartlink/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read L2-VLAN IDs",
+      "id": "bab4570a-7fa7-47c1-88c6-1a158fad2c58",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/layer2-vlan",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read L2-VLAN",
+      "id": "d377c876-ad38-4ddc-99c6-578a84109628",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/layer2-vlan/:vlan",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read existing static neighbor profile(s)",
+      "id": "72fe1134-9935-4d30-8877-e915482db841",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/static-neighbor/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read static-neighbor",
+      "id": "aaa1dfa5-4ffe-4396-b538-0f519e27e002",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/static-neighbor",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read an existing VRRP-interface profile",
+      "id": "676cb695-b706-4607-ad25-d9c8de11f3a4",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/vrrp/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read VRRP-interface configuration",
+      "id": "fac237b1-1f7d-4887-b97e-015fad0d0650",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/vrrp",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read Named-VLAN/VLAN-Group profile",
+      "id": "15b5d909-a78f-49a5-b40b-0c9cdb190141",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/named-vlan/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read Named-VLAN/VLAN-Group profiles",
+      "id": "6b03ef8f-0f78-4796-9d5d-d09a4e4636ca",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/named-vlan",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read existing Spanning Tree profile",
+      "id": "97279780-f5b5-4ce1-8461-0d0cfe05b93a",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/stp-gw/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read existing Spanning Tree profiles for Gateways",
+      "id": "d95b67d9-9f02-4137-a871-782ba430333a",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/stp-gw",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read VRRP configuration",
+      "id": "837bd37a-596e-435b-85f0-2e080bbf7f4b",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/vrrp-global",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read an existing VRRP profile",
+      "id": "e95d0cde-3019-434e-88cc-89b4bdd0810b",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/vrrp-global/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read existing loop-protect Configuration for given name.",
+      "id": "042d7f69-d13d-48fa-b993-6eba15f196b5",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/loop-protect/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "VLANs & Networks",
+      "name": "Read existing loop-protect Configuration.",
+      "id": "3d8ac1cd-6d49-40a9-b74b-7ceb578f43c6",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/loop-protect",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read profile by name",
+      "id": "07702a0a-dde2-4d8e-8d11-f9ea2902d0d0",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/alg/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read alg",
+      "id": "cac1f808-7d8d-446b-b0ed-bf7f3d3c80ed",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/alg",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read configured radios.",
+      "id": "2608ec95-57a3-47af-958a-3eea1f676c42",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/radios",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read existing radio profile configurations.",
+      "id": "967f61f3-cfca-4938-bc16-f2c93bd67478",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/radios/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read configuration of MPSK Local",
+      "id": "ab5fd8fa-207a-4c45-95d7-e4bf182b0f40",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/mpsk-local",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read existing MPSK LOCAL profile configuration",
+      "id": "c0c0633c-cb46-4fd2-a381-755138fb4466",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/mpsk-local/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read existing Mesh network profile",
+      "id": "31e7ddb3-4fcd-4329-abdf-6b8700afd0fd",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/mesh/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read configuration of Mesh network topology",
+      "id": "5b4711cf-4f85-47fe-a538-a2db715f75cb",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/mesh",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read existing WLAN SSID profile configuration",
+      "id": "714ea258-1ea6-4da0-b666-2303650ae9d9",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/wlan-ssids/:ssid",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read configuration of WLAN SSID profile",
+      "id": "cfe034d1-36f7-4824-9f29-b8e989b088a2",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/wlan-ssids",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read existing IDS configurations",
+      "id": "04957899-37b8-4813-9d07-42bb733b1319",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/ids/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read configured policies about IDS",
+      "id": "c1fc2103-4b2f-4bf4-867c-27a63fdc66c3",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/ids",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read existing Passpoint profile.",
+      "id": "db517dc1-bf76-431b-a02d-afd8702f5534",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/passpoint/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Wireless",
+      "name": "Read existing Passpoint related settings.",
+      "id": "e7889b6d-c06f-4284-a6e2-43c0936546cb",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/passpoint",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
     }
   ],
   "folder_outcomes": {
@@ -6002,6 +7192,22 @@
     "System": {
       "status": "read",
       "get_count": 80
+    },
+    "Telemetry": {
+      "status": "read",
+      "get_count": 32
+    },
+    "Tunnels": {
+      "status": "read",
+      "get_count": 4
+    },
+    "VLANs & Networks": {
+      "status": "read",
+      "get_count": 20
+    },
+    "Wireless": {
+      "status": "read",
+      "get_count": 14
     }
   }
 }
