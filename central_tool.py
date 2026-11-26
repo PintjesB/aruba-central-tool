@@ -2290,6 +2290,55 @@ def vlan_comparison_evidence(bundle, persona, sid, row):
             "differences": differences, "safe_to_apply": False}
 
 
+# The VLAN identity is not a configuration match. Count the actual settings,
+# including known fields omitted on both sides. Keep GET-only L3 evidence
+# separate from the configurable settings.
+VLAN_REVIEW_FIELDS = ("name", "enable", "voice-enable", "igmp", "mld",
+                      "dhcpv4-snooping", "dhcpv6-snooping")
+
+
+def comparison_fields(effective, reference, *, vlan=False, conflicts=()):
+    """Return one consistent, non-executable field assessment for review.
+
+    Compare structured leaves, not serialized objects. Missing/null values
+    are unknown, not equal or different. Arrays retain exact ordering.
+    """
+    def walk(left, right, path):
+        if isinstance(left, dict) or isinstance(right, dict):
+            if (left is MISSING or isinstance(left, dict)) and (right is MISSING or isinstance(right, dict)):
+                keys = (left.keys() if isinstance(left, dict) else set()) | (right.keys() if isinstance(right, dict) else set())
+                if keys:
+                    for key in sorted(keys):
+                        yield from walk(left.get(key, MISSING) if isinstance(left, dict) else MISSING,
+                                        right.get(key, MISSING) if isinstance(right, dict) else MISSING,
+                                        path + (key,))
+                    return
+        field = ".".join(map(str, path))
+        conflicted = any(c == field or c.endswith("." + field) or ("." + field + ".") in c
+                         for c in conflicts)
+        if conflicted:
+            state = "conflict"
+        elif left is MISSING or right is MISSING or left is None or right is None:
+            state = "unavailable"
+        else:
+            state = "matching" if canonical(left) == canonical(right) else "different"
+        yield {"path": list(path), "state": state}
+
+    left = effective if isinstance(effective, dict) else {}
+    right = reference if isinstance(reference, dict) else {}
+    keys = left.keys() | right.keys()
+    if vlan:
+        keys |= set(VLAN_REVIEW_FIELDS)
+    rows = [row for key in sorted(keys) for row in walk(left.get(key, MISSING), right.get(key, MISSING), (key,))]
+    relevant = [r for r in rows if not vlan or r["path"][0] not in ("vlan", "is-l3-vlan")]
+    counts = dict.fromkeys(("matching", "different", "unavailable", "conflict"), 0)
+    for row in relevant:
+        counts[row["state"]] += 1
+    return {"rows": rows, "counts": counts, "unavailable": [r["path"] for r in relevant if r["state"] == "unavailable"],
+            "different": [r["path"] for r in relevant if r["state"] == "different"],
+            "safe_to_apply": False}
+
+
 def vlan_evidence_summary(bundle):
     """Anonymous diagnostics: field names and counts only; no tenant values."""
     states, fields, sources, cli, details, monitoring = (Counter() for _ in range(6))
