@@ -17,7 +17,14 @@ ALPHA = CONFIG + "alpha1"
 VLAN = ALPHA + "/layer2-vlan"
 INVENTORY = "/network-monitoring/v1/device-inventory"
 TOKEN_URL = "https://sso.common.cloud.hpe.com/as/token.oauth2"
+EU_REGIONS = tuple(f"https://de{i}.api.central.arubanetworks.com" for i in (1, 2, 3))
 PERSONAS = {"ACCESS_SWITCH", "AGG_SWITCH", "CORE_SWITCH"}
+
+
+class APIError(RuntimeError):
+    def __init__(self, label, status):
+        super().__init__(f"{label}: HTTP {status}")
+        self.status = status
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -76,7 +83,7 @@ class Central:
                         raise RuntimeError(f"{label}: rate-limit delay exceeds retry budget") from None
                     time.sleep(int(delay) if delay.isdigit() else 2 ** attempt)
                     continue
-                raise RuntimeError(f"{label}: HTTP {exc.code}") from None
+                raise APIError(label, exc.code) from None
 
     def _token(self):
         if time.monotonic() >= self.expires:
@@ -94,6 +101,32 @@ class Central:
         request = Request(url, headers={"Accept": "application/json",
                                         "Authorization": "Bearer " + self._token()}, method="GET")
         return self._request(request, path)
+
+
+def detect_region(client, preferred=None):
+    """Probe only official EU endpoints; never fall back after permission or transport failures."""
+    def probe(base):
+        client.base = base
+        try:
+            rows(client.get(INVENTORY, limit=1), ("items",))
+            return True
+        except APIError as exc:
+            if exc.status != 401:
+                raise
+            return False
+
+    if preferred:
+        preferred = preferred.rstrip("/")
+        if probe(preferred):
+            return preferred
+        if preferred not in EU_REGIONS:
+            raise RuntimeError("Configured non-EU region rejected credentials; select the correct region explicitly.")
+    matches = [region for region in EU_REGIONS if region != preferred and probe(region)]
+    if len(matches) != 1:
+        raise RuntimeError("Region detection found no authorized EU region." if not matches
+                           else "Multiple EU regions accepted credentials; explicitly configure the intended region.")
+    client.base = matches[0]
+    return client.base
 
 
 def offset_rows(client, path, keys, **params):
@@ -253,6 +286,7 @@ def main():
     discovery = commands.add_parser("scan")
     discovery.add_argument("--persona", choices=sorted(PERSONAS), default="ACCESS_SWITCH")
     discovery.add_argument("--output", required=True, type=Path)
+    discovery.add_argument("--region-file", type=Path, help="Optional local file for cached API region")
     analysis = commands.add_parser("report")
     analysis.add_argument("snapshot", type=Path)
     analysis.add_argument("--output", required=True, type=Path)
@@ -261,8 +295,15 @@ def main():
         if args.output.exists():
             raise ValueError("Output already exists")
         if args.command == "scan":
-            client = Central(os.environ["CENTRAL_BASE_URL"], os.getenv("CENTRAL_ACCESS_TOKEN"),
+            preferred = os.getenv("CENTRAL_BASE_URL")
+            if not preferred and args.region_file and args.region_file.exists():
+                preferred = args.region_file.read_text(encoding="utf-8-sig").strip()
+            client = Central(preferred or EU_REGIONS[0], os.getenv("CENTRAL_ACCESS_TOKEN"),
                              os.getenv("CENTRAL_CLIENT_ID"), os.getenv("CENTRAL_CLIENT_SECRET"))
+            region = detect_region(client, preferred)
+            if args.region_file:
+                args.region_file.write_text(region + "\n", encoding="utf-8")
+            print(f"API region: {region}", flush=True)
             data = scan(client, args.persona)
         else:
             data = report(json.loads(args.snapshot.read_text(encoding="utf-8")))
