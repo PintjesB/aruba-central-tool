@@ -101,6 +101,9 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
             elif isinstance(value, list) and isinstance(key, int) and 0 <= key < len(value):
                 value = value[key]
             else:
+                if (source_key == "comparison" and path[0] in ("igmp", "mld")
+                        and (evidence or {}).get("feature_status", {}).get(path[0]) == "no_multicast_interfaces"):
+                    return '<span class="muted">Not verified</span><small>No routed multicast interfaces; Layer 2 snooping not reported</small>'
                 return '<span class="muted">Not returned</span>' if body is not None else '<span class="muted">Not captured</span>'
         source = (evidence or {}).get('sources', {}).get(source_key + '.' + '.'.join(map(str, path)))
         if source is None and source_key == 'comparison':
