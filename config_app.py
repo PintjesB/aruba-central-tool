@@ -561,7 +561,8 @@ def handler_for(workspace):
                 self.connection.settimeout(10)
                 values = parse_qs(self.rfile.read(length).decode("utf-8"),
                                   keep_blank_values=True, strict_parsing=True,
-                                  max_num_fields=12 if self.path in (root + "save-standard", root + "approve-exception", root + "revoke-exception") else 5)
+                                  max_num_fields=512 if self.path == root + "save-standard" else 12 if self.path in (root + "save-standard", root + "approve-exception", root + "revoke-exception") else 5)
+                fields = values.pop("field_selection", []) if self.path == root + "save-standard" else []
                 if any(len(v) != 1 for v in values.values()):
                     raise ValueError("Invalid form")
                 token = values.pop("csrf", [""])[0]
@@ -575,7 +576,8 @@ def handler_for(workspace):
                     if self.path == root + "save-standard":
                         if set(form) != {"name", "snapshot", "baseline_name", "persona", "reference", "module", "target"}:
                             raise ValueError("Invalid standard form")
-                        record = create_standard(workspace.directory, **form, confirmed=confirmed)
+                        record = create_standard(workspace.directory, **form, confirmed=confirmed,
+                                                 field_selection=json.dumps(fields) if fields else None)
                         standard_id = record["id"]
                     elif self.path == root + "revoke-exception":
                         if set(form) != {"standard_id", "snapshot", "exception_id", "reason"}:
