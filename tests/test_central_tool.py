@@ -849,6 +849,19 @@ class Tests(unittest.TestCase):
         self.assertEqual(set(details["ACCESS_SWITCH"]["12"]["1"]), {"local", "effective"})
         self.assertNotIn("10", details["ACCESS_SWITCH"]["12"])
 
+    def test_multicast_interface_commands_use_explicit_snooping_flag(self):
+        from central_tool import parse_multicast_interface_output
+        for field in ("igmp", "mld"):
+            label = field.upper()
+            text = (f"VRF Name : default\nInterface : vlan10\n{label} Operating Version : 2\n"
+                    f"{label} Snoop Enabled on VLAN : True\nInterface : vlan20\n"
+                    f"{label} Snoop Enabled on VLAN : False\nInterface : vlan30\n"
+                    f"{label} Operating Version : 2\nInterface : 1/1/1\n"
+                    f"{label} Snoop Enabled on VLAN : True")
+            result = parse_multicast_interface_output(text, field, {"10", "20", "30"})
+            self.assertEqual(result, {"10": {"snooping": True}, "20": {"snooping": False}})
+            self.assertEqual(parse_multicast_interface_output("No entries found", field, {"10"}), {})
+
     def test_live_dhcp_output_and_central_rejection(self):
         from central_tool import parse_vlan_feature, supported_show_commands
         ids = {"1", "1000"}
