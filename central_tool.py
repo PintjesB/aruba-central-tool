@@ -2101,6 +2101,103 @@ def capture_vlan_instance_details(client, results, workers=AUDIT_WORKERS, progre
     return evidence
 
 
+def health_serial(row):
+    """Recognize only explicit, non-conflicting device identifiers."""
+    if not isinstance(row, dict):
+        return None
+    values = {row[k] for k in ("serial", "serialNumber")
+              if isinstance(row.get(k), str) and row[k]}
+    if len(values) != 1:
+        return None
+    serial = next(iter(values))
+    return serial if re.fullmatch(r"[A-Za-z0-9_-]{1,128}", serial) else None
+
+
+def capture_configuration_health(client, inventory_records, workers=AUDIT_WORKERS, progress=None):
+    """Collect deployment health independently of profile interpretation."""
+    def read(path, **params):
+        try:
+            return {"status": "response_received", "raw": client.get(ALPHA + path, **params)}
+        except APIError as exc:
+            if exc.status in (401, 429):
+                raise
+            return {"status": "request_rejected", "http_error": exc.status}
+        except (RuntimeError, OSError, ValueError):
+            return {"status": "read_failed"}
+
+    pages, observed, seen = [], [], set()
+    envelope, total = None, None
+    summary_status = "page_limit_reached"
+    count_confirmed = False
+    for _ in range(10000):
+        result = read("/config-health/devices", limit=100, offset=len(observed), sort="serial asc")
+        pages.append(result)
+        if result["status"] != "response_received":
+            summary_status = result["status"]
+            break
+        payload = result["raw"]
+        if not isinstance(payload, dict):
+            summary_status = "schema_unqualified"
+            break
+        lists = [(key, value) for key, value in payload.items() if isinstance(value, list)]
+        if len(lists) != 1:
+            summary_status = "schema_unqualified"
+            break
+        key, batch = lists[0]
+        if ((envelope is not None and key != envelope) or len(batch) > 100
+                or any(not isinstance(row, dict) for row in batch)):
+            summary_status = "schema_unqualified"
+            break
+        envelope = key
+        metadata = payload.get("metadata", {})
+        if not isinstance(metadata, dict):
+            summary_status = "schema_unqualified"
+            break
+        totals = [v for source in (payload, metadata) for k, v in source.items() if k == "total"]
+        if (any(type(v) is not int or v < 0 for v in totals) or len(set(totals)) > 1
+                or (total is not None and totals and total != totals[0])):
+            summary_status = "count_mismatch"
+            break
+        if totals:
+            total = totals[0]
+        identities = [health_serial(row) for row in batch]
+        if None in identities or len(set(identities)) != len(identities) or seen.intersection(identities):
+            summary_status = "identity_unqualified"
+            break
+        if total is not None and len(observed) + len(batch) > total:
+            summary_status = "count_mismatch"
+            break
+        observed.extend(batch)
+        seen.update(identities)
+        if total is not None and len(observed) == total:
+            count_confirmed = True
+            summary_status = "count_confirmed"
+            break
+        if not batch:
+            summary_status = "count_mismatch" if total is not None else "pagination_exhausted"
+            break
+        # Without a declared total, keep requesting until an empty page. A
+        # short nonempty page is not necessarily the final page.
+    inventory_serials = {health_serial(record.get("inventory")) for record in inventory_records}
+    missing_identity = sum(health_serial(record.get("inventory")) is None for record in inventory_records)
+    inventory_serials.discard(None)
+    serials = sorted(inventory_serials | seen)
+
+    def issues(serial):
+        return serial, read("/config-health/active-issue", serial=serial)
+    audit_progress(progress, "Configuration health", 0, len(serials), "Reading active issues")
+    issue_results = dict(ordered_parallel(serials, issues, workers,
+        completed=lambda done, total: audit_progress(progress, "Configuration health", done, total,
+                                                      "Reading active issues")))
+    print(f"Configuration health: summary={summary_status}; observed={len(observed)}; "
+          f"issue reads={sum(v['status'] == 'response_received' for v in issue_results.values())}/{len(serials)}; "
+          f"inventory entries without serial={missing_identity}", flush=True)
+    return {"summary_status": summary_status, "count_confirmed": count_confirmed,
+            "summary_pages": pages, "devices": observed, "active_issues": issue_results,
+            "inventory_serials_missing_from_summary": sorted(inventory_serials - seen),
+            "inventory_entries_without_serial": missing_identity, "safe_to_apply": False}
+
+
 def capture_configuration_operational_vlans(client, results, workers=AUDIT_WORKERS, progress=None):
     """Best-effort switch monitoring evidence; never block the configuration audit."""
     tasks = [(persona, scope) for persona, entry in sorted(results.items())
@@ -2828,6 +2925,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress)
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress,
                                            scopes_by_persona=scopes_by_persona, deep_catalog=deep_catalog)
+    health = capture_configuration_health(client, records, workers, progress)
     details = capture_vlan_instance_details(client, results, workers, progress)
     operational = capture_configuration_operational_vlans(client, results, workers, progress)
     cli = capture_switch_vlan_cli(client, results, details, workers, progress)
@@ -2838,6 +2936,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             "results": results, "unqualified_personas": unqualified, "library": library,
             "profile_type_discovery": profile_types, "unadapted_profiles": unadapted,
             "operational_vlans": operational, "vlan_instance_details": details, "switch_vlan_cli": cli,
+            "configuration_health": health,
             "catalog_exhaustive": False, "safe_to_apply": False}
 
     print("VLAN evidence coverage: " + canonical(vlan_evidence_summary(bundle)), flush=True)
