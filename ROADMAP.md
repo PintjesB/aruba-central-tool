@@ -40,6 +40,7 @@ Reduce configuration duplication and unnecessary scope overrides in New Central 
 - [x] Expand observed but unadapted module collection to all discovered scopes for the observed device functions, retaining committed and effective responses separately. Paginate assignment/scope-map inventories when explicit counts indicate truncation. Preserve positive observations even if completion cannot be verified.
 - [x] Display raw-only modules as structured Library and scoped configuration with separate technical evidence and per-scope capture outcomes.
 - [ ] Qualify response envelopes, individual-object reads and reference semantics. Resolve catalog-only module applicability and unsupported device functions. Validate expanded collection duration, rate limits and completeness on a live tenant.
+- [x] Provide offline allowlisted aggregate collection diagnostics without customer identifiers or profile bodies.
 - [ ] Validate the new coverage report against a real customer refresh, and use its anonymous outcomes to prioritize the remaining adapters.
 
 References: [aliases](https://developer.arubanetworks.com/new-central-config/reference/readaliasesaliasbyid), [network groups](https://developer.arubanetworks.com/new-central-config/reference/readnetgroupsnetgroupbyid), [policies](https://developer.arubanetworks.com/new-central-config/reference/readpoliciespolicybyid), [role ACLs](https://developer.arubanetworks.com/new-central-config/reference/readroleaclsaclbyid), [ALG](https://developer.arubanetworks.com/new-central-config/reference/readalgprofilebyid), [ARC](https://developer.arubanetworks.com/new-central-config/reference/readarc), [policy groups](https://developer.arubanetworks.com/new-central-config/reference/readpolicygroups), [USB](https://developer.arubanetworks.com/new-central-config/reference/readusb).
@@ -109,7 +110,8 @@ No live write may be authorized by profile similarity, inferred identity, or a s
 ## Priority 3: adjacent engineering workflows
 
 - [ ] Bulk profile and scope assignment editor, device-group rename and membership change preview.
-- [ ] NAC MAC identity/tag/role/VLAN assignment inspection and controlled bulk administration.
+- [x] Read-only NAC MAC registrations, tag evidence, authentication and authorization configuration, conditional RADIUS attributes and switch VLAN visibility. Dedicated tenant-default and keyed reads plus qualified recovery implemented.
+- [ ] Qualify actual client authorization results and resultant role/VLAN behavior in a live tenant. Controlled bulk administration requires separate write qualification.
 - [x] Configuration drift worklist compares saved and effective profile bodies, source annotations, Library definitions, observed assignments and scope metadata across explicitly confirmed same-tenant snapshots. Require region/Global agreement and common device serial evidence; keep missing reads and unverified absence distinct.
 - [x] Standards compliance worklist compares explicitly selected reference-device effective configuration against known recipients of a selected target scope, with count-aware differences and unknown membership.
 - [x] Persist named immutable standard versions with baseline checksums, exact module sets and target scope identities. Approve exact observed profile deviations with a reason and expiry; retain revocation history. Export private drift and standards evidence.
@@ -120,8 +122,10 @@ No live write may be authorized by profile similarity, inferred identity, or a s
 - [x] Private CLI/browser recovery of qualified structured scope, Library, raw catalog and keyed reads, with bounded age, identity checks, live discovery and mixed-time disclosure.
 - [x] Dependency-aware bulk review ordering and cycle detection, consolidated customer assessment, indexed usage analysis and selected-workflow detail rendering.
 - [x] Review documented default security-policy rule subsets and captured policy-group order; retain unsupported predicates and unresolved policy targets as evidence gaps.
-- [ ] Extend semantic ACL and policy analysis to services, addresses, rule side effects and resultant role-specific policies. Extend reference schemas and inheritance qualification; validate against live customer coverage.
-- [ ] Multi-customer workspaces with explicit tenant separation, credential entry in memory only, no persistent API credentials and no cross-tenant comparison by default.
+- [x] Literal IPv4/IPv6 role ACL destination overlap with explicit source-role, VRF, order, action and counter evidence.
+- [ ] Extend semantic ACL and policy analysis to services, address objects, rule side effects and resultant role-specific policies. Extend reference schemas and inheritance qualification; validate against live customer coverage.
+- [x] Separate private customer directories, transient credential entry, region/Global/common-serial continuity guard before scoped collection and publication.
+- [ ] Authoritative tenant identity and multi-customer workspace switching; validate continuity in live environments.
 
 ## Vendor references
 
