@@ -1,5 +1,5 @@
 import unittest
-from central_tool import Central, inventory, offset_rows, report, vlan_map
+from central_tool import APIError, Central, EU_REGIONS, detect_region, inventory, offset_rows, report, vlan_map
 
 
 class Fake:
@@ -16,7 +16,52 @@ def scope(id_, kind, effective, local=()):
     return {"id": id_, "kind": kind, "name": id_, "effective": effective, "local": list(local)}
 
 
+class RegionFake:
+    def __init__(self, results):
+        self.results = results
+        self.calls = []
+        self.base = None
+
+    def get(self, path, **params):
+        self.calls.append(self.base)
+        status = self.results[self.base]
+        if status != 200:
+            raise APIError(path, status)
+        return {"items": []}
+
+
 class Tests(unittest.TestCase):
+    def test_region_preferred_success(self):
+        client = RegionFake({EU_REGIONS[1]: 200})
+        self.assertEqual(detect_region(client, EU_REGIONS[1]), EU_REGIONS[1])
+        self.assertEqual(client.calls, [EU_REGIONS[1]])
+
+    def test_region_fallback(self):
+        client = RegionFake(dict(zip(EU_REGIONS, (401, 200, 401))))
+        self.assertEqual(detect_region(client, EU_REGIONS[0]), EU_REGIONS[1])
+        self.assertEqual(client.base, EU_REGIONS[1])
+        self.assertEqual(client.calls, list(EU_REGIONS))
+
+    def test_region_without_preference(self):
+        client = RegionFake(dict(zip(EU_REGIONS, (401, 200, 401))))
+        self.assertEqual(detect_region(client), EU_REGIONS[1])
+
+    def test_region_ambiguous(self):
+        client = RegionFake(dict(zip(EU_REGIONS, (401, 200, 200))))
+        with self.assertRaisesRegex(RuntimeError, "Multiple"):
+            detect_region(client)
+
+    def test_region_no_match(self):
+        client = RegionFake(dict(zip(EU_REGIONS, (401, 401, 401))))
+        with self.assertRaisesRegex(RuntimeError, "no authorized"):
+            detect_region(client)
+
+    def test_region_permission_failure_no_fallback(self):
+        client = RegionFake({EU_REGIONS[0]: 403})
+        with self.assertRaises(APIError):
+            detect_region(client, EU_REGIONS[0])
+        self.assertEqual(client.calls, [EU_REGIONS[0]])
+
     def test_cursor_pagination(self):
         client = Fake([{"items": [{"id": "1"}], "next": "2", "total": 2},
                        {"items": [{"id": "2"}], "total": 2}])
