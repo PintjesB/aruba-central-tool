@@ -113,22 +113,47 @@ def inspect(title, content, label="Inspect"):
             f'<template><div class="inspector-title"><h2>{e(title)}</h2></div>{content}</template>')
 
 
+def setting_value(value):
+    """Render typed configuration data without converting it to a JSON string.
+
+    Keep exact field names and values; null, missing, false and empty
+    containers remain distinct. All Central-controlled text is escaped.
+    """
+    if value is None:
+        return '<span class="value-empty">Null</span>'
+    if isinstance(value, bool):
+        return '<span class="value-bool">' + ("True" if value else "False") + '</span>'
+    if isinstance(value, dict):
+        if not value:
+            return '<span class="value-empty">Empty object</span>'
+        return '<dl class="value-object">' + "".join(
+            f'<div><dt>{e(key)}</dt><dd>{setting_value(item)}</dd></div>'
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))) + '</dl>'
+    if isinstance(value, list):
+        if not value:
+            return '<span class="value-empty">Empty list</span>'
+        return '<ul class="value-list">' + "".join(f'<li>{setting_value(item)}</li>' for item in value) + '</ul>'
+    if isinstance(value, str) and value == "":
+        return '<span class="value-empty">Empty string</span>'
+    return '<span class="value-scalar">' + e(value) + '</span>'
+
+
 def diff_table(fields, left="Local", right="Reference"):
     if fields is None:
         return '<p class="empty">No comparable reference captured.</p>'
     if not fields:
         return '<p class="inline-good">Captured configuration bodies are identical.</p>'
     def value(d, key):
-        return '<code>' + e(json.dumps(d[key], ensure_ascii=False)) + '</code>' if key in d else '<span class="muted">Not returned</span>'
+        return setting_value(d[key]) if key in d else '<span class="muted">Not returned</span>'
     return table(("Setting", left, right), [tr(e(".".join(map(str, f["path"])) or "(root)"),
-                value(f, "local_value"), value(f, "reference_value")) for f in fields])
+                value(f, "local_value"), value(f, "reference_value")) for f in fields], style="setting-table")
 
 
 def property_table(data):
     if not isinstance(data, dict) or not data:
         return '<p class="empty">No settings captured.</p>'
-    return table(("Setting", "Value"), [tr(e(key), '<code>' + e(json.dumps(value, ensure_ascii=False)) + '</code>')
-                                        for key, value in sorted(data.items())])
+    return table(("Setting", "Value"), [tr(e(key), setting_value(value))
+                                        for key, value in sorted(data.items())], style="setting-table")
 
 
 def metrics(items):
@@ -346,6 +371,29 @@ input:not([type=checkbox]):not([type=radio]),select { border: 1px solid var(--li
 input[type=checkbox] { accent-color: var(--primary); width: 16px; height: 16px; vertical-align: middle; margin: 0; }
 label { display: grid; gap: 5px; color: var(--muted); font-weight: 600; font-size: 11px; }
 form,.toolbar,.table-toolbar,.snapshot-picker { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.worklist { padding: 20px; }
+.worklist-controls { padding: 0 0 18px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+.worklist-summary { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+.worklist-summary h2,.worklist-summary .result-summary { margin: 0; }
+.worklist .filter-bar label { flex-basis: 135px; }
+.override-table th:first-child { width: 23%; }
+.override-table th:nth-child(2) { width: 30%; }
+.override-table th:nth-child(3) { width: 33%; }
+.override-table td:last-child { text-align: right; }
+.override-table td small { line-height: 1.4; }
+.setting-table th:first-child { width: 28%; }
+.setting-table td { vertical-align: top; }
+.value-scalar { white-space: pre-wrap; overflow-wrap: anywhere; }
+.value-empty { color: var(--muted); font-style: italic; }
+.value-bool { font-weight: 600; }
+.value-object { margin: 0; min-width: 0; }
+.value-object > div { display: grid; grid-template-columns: minmax(70px,1fr) minmax(0,1.5fr); gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.value-object > div:last-child { border-bottom: 0; }
+.value-object dt { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.value-object dd { margin: 0; min-width: 0; }
+.value-list { margin: 0; padding-left: 17px; }
+.value-list li + li { margin-top: 6px; }
+@media(max-width: 680px) { .override-table { min-width: 560px; } .worklist-summary { align-items: flex-start; flex-direction: column; } .value-object > div { grid-template-columns: 1fr; gap: 3px; } }
 .filter-section { padding: 15px 18px !important; }
 .filter-bar { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
 .filter-bar label { flex: 1 1 145px; min-width: 0; }
