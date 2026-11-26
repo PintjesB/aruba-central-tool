@@ -9,6 +9,7 @@ from workspace_views import load, url, select, title_profile, vlan_explanation, 
 RESULTS = {
     "identical": "Matches Global",
     "nearest_match": "Matches nearest inherited definition",
+    "nearest_settings_match": "Nearest settings match; profile identity changes",
     "effective_match": "Effective settings match Global",
     "partial_match": "Likely redundant",
     "omitted": "Insufficient comparable settings",
@@ -21,6 +22,7 @@ RESULTS = {
 NEXT_STEP = {
     "identical": "Review whether removing the local copy preserves these settings",
     "nearest_match": "Review removal against the observed nearest inherited definition",
+    "nearest_settings_match": "Verify profile references before replacing the local identity",
     "effective_match": "Potentially redundant: verify saved definition and inheritance before removal",
     "partial_match": "Known settings match Global; verify unavailable settings before removal",
     "omitted": "No sufficient observed settings to assess redundancy",
@@ -140,7 +142,10 @@ def device_override_rows(bundle, persona):
                 fallback = nearest_fallback(entry, module, sid, identity, local, row["effective"], row.get("annotations", {}))
                 if fallback["status"] == "matching_fallback" and state in ("different", "no_global", "global_unknown"):
                     state = "nearest_match"
-                if fallback["status"] == "matching_fallback":
+                if fallback["status"] == "matching_settings_identity_changed":
+                    state = "nearest_settings_match"
+                    removal = "verification_required"
+                elif fallback["status"] == "matching_fallback":
                     removal = "review_removal"
                 elif fallback["status"] == "different_fallback":
                     removal = "higher_scope_differs"
@@ -150,7 +155,7 @@ def device_override_rows(bundle, persona):
                                  "identity": identity, "result": state, "profile": row, "chain": chain,
                                  "direct_confirmed": direct, "evidence": evidence, "assessment": assessment,
                                  "candidate": state in ("identical", "nearest_match") and module in REUSABLE and direct,
-                                 "review_candidate": state in ("identical", "effective_match", "partial_match", "nearest_match"),
+                                 "review_candidate": state in ("identical", "effective_match", "partial_match", "nearest_match", "nearest_settings_match"),
                                  "fallback": fallback,
                                  "removal": removal,
                                  "safe_to_apply": False})
@@ -186,6 +191,7 @@ def overrides_view(workspace, query):
     short_action = {
         "identical": "Review redundant local copy",
         "nearest_match": "Review nearest-scope match",
+        "nearest_settings_match": "Verify identity change",
         "effective_match": "Verify inheritance",
         "partial_match": "Potential cleanup; verify gaps",
         "omitted": "Not enough evidence",
@@ -267,7 +273,7 @@ def overrides_view(workspace, query):
                        inspect(label, detail, "Compare settings")))
     result_summary = '<div class="result-summary" aria-label="Comparison results">' + "".join(
         f'<span><strong>{counts[key]}</strong> {e(label)}</span>' for key, label in (
-            ("identical", "Global matches"), ("nearest_match", "nearest-scope matches"), ("effective_match", "effective matches"),
+            ("identical", "Global matches"), ("nearest_match", "nearest-scope matches"), ("nearest_settings_match", "identity changes"), ("effective_match", "effective matches"),
             ("partial_match", "likely redundant"), ("different", "different"), ("omitted", "insufficient evidence"), ("no_global", "no Global profile"),
             ("protected", "protected"), ("global_unknown", "Global unavailable"),
             ("source_uncertain", "source conflict")) if counts[key]) + '</div>'
