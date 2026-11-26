@@ -373,6 +373,24 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("device.name", f["evidence"]["conflicts"])
         self.assertFalse(f["candidate"])
 
+    def test_feature_evidence_completes_nested_vlan_comparison(self):
+        from central_tool import vlan_comparison_evidence
+        row = {"identity": "10", "local": {"vlan": 10}, "effective": {"vlan": 10},
+               "global_reference": {"vlan": 10, "igmp": {"snooping": True},
+                                    "dhcpv4-snooping": {"enable": False}, "voice-enable": False}}
+        data = {"switch_vlan_cli": {"ACCESS_SWITCH": {"3": {"status": "observed",
+            "vlans": {"10": {"igmp": {"snooping": True},
+                             "dhcpv4-snooping": {"enable": False}, "voice-enable": False}}}}}}
+        evidence = vlan_comparison_evidence(data, "ACCESS_SWITCH", "3", row)
+        self.assertEqual(evidence["differences"], [])
+        self.assertEqual(evidence["local"], {"vlan": 10})
+        self.assertEqual(evidence["effective"], {"vlan": 10})
+        self.assertFalse(evidence["safe_to_apply"])
+        row["global_reference"]["igmp"]["extra-setting"] = 1
+        evidence = vlan_comparison_evidence(data, "ACCESS_SWITCH", "3", row)
+        self.assertEqual(evidence["differences"][0]["path"], ["igmp", "extra-setting"])
+        self.assertEqual(evidence["differences"][0]["kind"], "missing_local")
+
     def test_vlan_summary_reports_counts_without_tenant_values(self):
         from central_tool import vlan_evidence_summary, refresh_configuration_review
         import json

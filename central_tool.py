@@ -120,11 +120,16 @@ class Central:
             return self.token
 
     def show_vlans(self, serial):
-        """Submit only the fixed read-only show vlan command, never retry submission."""
+        return self.show_vlan_command(serial, "show vlan")
+
+    def show_vlan_command(self, serial, command):
+        """Only fixed VLAN inspection commands; never retry submission."""
+        if command not in {"show vlan", *VLAN_FEATURE_COMMANDS.values()}:
+            raise ValueError("Unsupported VLAN inspection command")
         if not isinstance(serial, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", serial):
             raise ValueError("Invalid switch serial")
         path = "/network-troubleshooting/v1/cx/" + quote(serial, safe="") + "/showCommands"
-        request = Request(self.base + path, data=b'{"commands":["show vlan"]}',
+        request = Request(self.base + path, data=canonical({"commands": [command]}).encode("utf-8"),
                           headers={"Accept": "application/json", "Content-Type": "application/json",
                                    "Authorization": "Bearer " + self._token()}, method="POST")
         self._wait_rate_limit()
@@ -1833,6 +1838,88 @@ def parse_show_vlan(result):
     return {"status": "observed" if vlans else "schema_unresolved", "vlans": vlans}
 
 
+VLAN_FEATURE_COMMANDS = {
+    "voice-enable": "show vlan voice",
+    "igmp": "show ip igmp snooping",
+    "mld": "show ipv6 mld snooping",
+    "dhcpv4-snooping": "show dhcpv4-snooping",
+    "dhcpv6-snooping": "show dhcpv6-snooping",
+}
+
+
+def parse_vlan_feature(result, field, vlan_ids):
+    """Only use explicit, recognized CLI evidence for known VLAN identities."""
+    texts = []
+    def collect(value):
+        if isinstance(value, str) and value.strip():
+            texts.append(value)
+        elif isinstance(value, dict):
+            for child in value.values():
+                collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+    collect(result)
+    candidates = []
+    for body in texts:
+        lines = body.splitlines()
+        if field == "voice-enable":
+            if any(re.fullmatch(r"\s*Voice VLAN not configured\s*", line, re.I) for line in lines):
+                candidates.append({vid: False for vid in vlan_ids})
+                continue
+            header = re.compile(r"\s*VLAN\s+Name\s+Status\s+Type\s+Interfaces\s*", re.I)
+            if not any(header.fullmatch(line) for line in lines):
+                continue
+            seen, members, invalid = False, set(), False
+            for line in lines:
+                if header.fullmatch(line):
+                    seen = True
+                    continue
+                if not seen or not line.strip() or re.fullmatch(r"\s*-+\s*", line):
+                    continue
+                match = re.fullmatch(r"\s*(\d+)\s+.+?\s+(?:up|down)\s+\S+(?:\s+.*)?", line, re.I)
+                if match and match[1] in vlan_ids:
+                    members.add(match[1])
+                elif re.match(r"\s*\d+\s", line):
+                    invalid = True
+            if not invalid and members:
+                candidates.append({vid: vid in members for vid in vlan_ids})
+        elif field in ("dhcpv4-snooping", "dhcpv6-snooping"):
+            label = "DHCPv6-Snooping" if field == "dhcpv6-snooping" else "(?:DHCPv4-Snooping|DHCP-Snooping)"
+            if not any(re.fullmatch(r"\s*" + label + r"\s*:\s*(?:Yes|No)\s*", line, re.I) for line in lines):
+                continue
+            values = [m[1].strip() for line in lines if (m := re.fullmatch(r"\s*Enabled VLANs\s*:\s*(.*?)\s*", line, re.I))]
+            if len(values) != 1:
+                continue
+            members = set() if values[0].lower() in ("", "none") else parse_reference_ids(values[0], True)
+            if members is not None and members <= vlan_ids:
+                candidates.append({vid: {"enable": vid in members} for vid in vlan_ids})
+        else:
+            protocol = field.upper()
+            records, current, invalid = {}, None, False
+            for line in lines:
+                match = re.fullmatch(r"\s*VLAN ID\s*:\s*(\d+)\s*", line, re.I)
+                if match:
+                    current = match[1]
+                    if current in records:
+                        invalid = True
+                    continue
+                if current not in vlan_ids:
+                    continue
+                disabled = re.fullmatch(r"\s*" + protocol + r" Snooping is not enabled\s*", line, re.I)
+                enabled = re.fullmatch(r"\s*" + protocol + r" Operating Version\s*:\s*[123]\s*", line, re.I)
+                if disabled or enabled:
+                    value = {"snooping": bool(enabled)}
+                    if current in records and records[current] != value:
+                        invalid = True
+                    records[current] = value
+            if records and not invalid:
+                candidates.append(records)
+    if len(candidates) != 1:
+        return {"status": "schema_unresolved", "vlans": {}}
+    return {"status": "observed", "vlans": candidates[0]}
+
+
 def capture_switch_vlan_cli(client, results, details, workers=AUDIT_WORKERS, progress=None):
     """One bounded show vlan task per affected switch, after direct API reads."""
     tasks = []
@@ -1863,6 +1950,38 @@ def capture_switch_vlan_cli(client, results, details, workers=AUDIT_WORKERS, pro
     for persona, sid, evidence in ordered_parallel(tasks, collect, min(workers, 4),
             completed=lambda done, total: audit_progress(progress, "Switch VLAN verification", done, total, "Reading show vlan")):
         output.setdefault(persona, {})[sid] = evidence
+    # Run feature commands separately: a rejected command must not discard
+    # successful evidence from other commands or the base VLAN table.
+    feature_tasks = []
+    for persona, sid, serial in tasks:
+        base = output[persona][sid]
+        if base["status"] == "observed":
+            feature_tasks.append((persona, sid, serial, set(base["vlans"])))
+    def collect_feature(task):
+        persona, sid, serial, field, command, ids = task
+        try:
+            response = client.show_vlan_command(serial, command)
+            result = parse_vlan_feature(response["result"], field, ids) if response["status"] == "completed" else response
+        except APIError as exc:
+            result = {"status": "permission_denied" if exc.status == 403 else "request_rejected",
+                      "http_error": exc.status}
+        except (RuntimeError, OSError, ValueError, AttributeError):
+            result = {"status": "read_failed"}
+        return persona, sid, field, result
+    def collect_features(task):
+        persona, sid, serial, ids = task
+        return [collect_feature((persona, sid, serial, field, command, ids))
+                for field, command in VLAN_FEATURE_COMMANDS.items()]
+    audit_progress(progress, "Switch VLAN features", 0, len(feature_tasks), "Reading snooping and voice VLAN settings")
+    # Run at most one command at a time on each device.
+    for feature_results in ordered_parallel(feature_tasks, collect_features, min(workers, 4),
+            completed=lambda done, total: audit_progress(progress, "Switch VLAN features", done, total, "Reading VLAN feature evidence")):
+        for persona, sid, field, result in feature_results:
+            base = output[persona][sid]
+            base.setdefault("features", {})[field] = {"status": result["status"],
+                                                     **({"http_error": result["http_error"]} if "http_error" in result else {})}
+            for vid, value in result.get("vlans", {}).items():
+                base["vlans"][vid][field] = value
     return output
 
 
@@ -1897,11 +2016,11 @@ def vlan_comparison_evidence(bundle, persona, sid, row):
     monitor = configuration_operational_vlan(bundle, persona, sid, row["identity"])
     if monitor["status"] == "observed" and isinstance(monitor["fields"].get("name"), str):
         deployed["name"] = {"value": monitor["fields"]["name"], "source": "Switch monitoring"}
-    for key in ("name", "enable"):
+    for key in ("name", "enable", *VLAN_FEATURE_COMMANDS):
         if key in live:
             if key in deployed and canonical(deployed[key]["value"]) != canonical(live[key]):
                 conflicts.append("device." + key)
-            deployed[key] = {"value": live[key], "source": "Switch show vlan"}
+            deployed[key] = {"value": live[key], "source": "Switch " + VLAN_FEATURE_COMMANDS.get(key, "show vlan")}
     # Actual device observations complement the comparison, but are not saved
     # local fields and must not be used as executable configuration.
     comparison = copy.deepcopy(effective)
@@ -1910,6 +2029,8 @@ def vlan_comparison_evidence(bundle, persona, sid, row):
             if key not in comparison:
                 comparison[key] = observed["value"]
                 sources["comparison." + key] = observed["source"]
+            elif isinstance(comparison[key], dict) and isinstance(observed["value"], dict):
+                merge(comparison[key], observed["value"], ("comparison", key), observed["source"])
             elif canonical(comparison[key]) != canonical(observed["value"]):
                 conflicts.append("device." + key)
     reference = row["global_reference"]
@@ -1922,6 +2043,7 @@ def vlan_comparison_evidence(bundle, persona, sid, row):
 def vlan_evidence_summary(bundle):
     """Anonymous diagnostics: field names and counts only; no tenant values."""
     states, fields, sources, cli, details, monitoring = (Counter() for _ in range(6))
+    features = defaultdict(Counter)
     for persona, entry in bundle["results"].items():
         if persona not in PERSONAS:
             continue
@@ -1952,6 +2074,8 @@ def vlan_evidence_summary(bundle):
     for scopes in bundle.get("switch_vlan_cli", {}).values():
         for value in scopes.values():
             cli[value["status"]] += 1
+            for field, outcome in value.get("features", {}).items():
+                features[field][outcome["status"]] += 1
     for scopes in bundle.get("operational_vlans", {}).values():
         for value in scopes.values():
             monitoring[value["status"]] += 1
@@ -1961,7 +2085,8 @@ def vlan_evidence_summary(bundle):
                 details.update(v["status"] for v in views.values())
     return {"comparisons": dict(states), "remaining_fields": dict(fields),
             "recovered_values": dict(sources), "individual_vlan_reads": dict(details),
-            "switch_cli": dict(cli), "monitoring": dict(monitoring)}
+            "switch_cli": dict(cli), "monitoring": dict(monitoring),
+            "feature_cli": {field: dict(counts) for field, counts in features.items()}}
 
 
 def configuration_operational_vlan(bundle, persona, sid, vid):
