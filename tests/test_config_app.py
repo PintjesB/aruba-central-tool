@@ -125,7 +125,8 @@ class WorkspaceTests(unittest.TestCase):
             workspace = Workspace(directory)
             with patch("central_tool.detect_region"), patch("central_tool.configuration_audit", return_value=self.fixture()):
                 refresh = credential_refresh("test-client-id", "test-secret", EU_REGIONS[0])
-                client = refresh.__closure__[0].cell_contents
+                from inspect import getclosurevars
+                client = getclosurevars(refresh).nonlocals['client']
                 self.assertTrue(workspace.start_refresh(refresh))
                 deadline = time.monotonic() + 3
                 while workspace.state == "running" and time.monotonic() < deadline:
