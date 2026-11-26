@@ -75,13 +75,18 @@ class Central:
         self._token_lock = threading.Lock()
         self._rate_lock = threading.Lock()
         self._retry_at = 0.0
+        self._next_request_at = 0.0
 
     def _wait_rate_limit(self):
+        # HPE documents 10 requests/s per account across all credentials.
+        # Pace this client at 8/s, leaving limited headroom for other consumers.
         while True:
             with self._rate_lock:
-                delay = self._retry_at - time.monotonic()
-            if delay <= 0:
-                return
+                now = time.monotonic()
+                delay = max(self._retry_at, self._next_request_at) - now
+                if delay <= 0:
+                    self._next_request_at = now + 0.125
+                    return
             time.sleep(delay)
 
     def _request(self, request, label):
@@ -102,7 +107,6 @@ class Central:
                     if exc.code == 429:
                         with self._rate_lock:
                             self._retry_at = max(self._retry_at, time.monotonic() + seconds)
-                        self._wait_rate_limit()
                     else:
                         time.sleep(seconds)
                     continue
