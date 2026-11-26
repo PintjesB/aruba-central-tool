@@ -48,7 +48,7 @@ body{margin:0;background:var(--bg);color:var(--text)}header{padding:18px 30px;ba
 header a{color:#b8dcff;margin-right:20px}main{max-width:1250px;margin:auto;padding:25px}
 h1{font-size:23px;margin:0 0 10px}h2{font-size:18px}section{background:var(--surface);border:1px solid var(--line);border-radius:10px;margin:18px 0;padding:20px}
 table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
-button,select{font:inherit;padding:8px 12px;margin:4px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:inherit}
+button,select,input{font:inherit;padding:8px 12px;margin:4px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:inherit}
 a{color:#1674c8}@media(prefers-color-scheme:dark){a{color:#8dc2ff}}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
 label{display:inline-block;margin:6px}small{opacity:.8}.pill{padding:4px 8px;border-radius:6px;background:#fff0d7;color:#804a0b}
 </style></head><body><header><h1>Central Configuration Workspace</h1>""" + nav + "</header><main>" + content + "</main></body></html>"
@@ -57,6 +57,38 @@ label{display:inline-block;margin:6px}small{opacity:.8}.pill{padding:4px 8px;bor
 def options(items, selected=None):
     return "".join(f'<option value="{e(key)}"{" selected" if key == selected else ""}>{e(label)}</option>'
                    for key, label in items)
+
+
+def module_coverage(bundle):
+    """Count actual qualified scopes, not merely successful API requests."""
+    result = []
+    for persona, entry in sorted(bundle["results"].items()):
+        for module, data in sorted(entry["modules"].items()):
+            scopes = data["scope_results"]
+            qualified = sum(s.get("review", {}).get("qualified") is True for s in scopes)
+            result.append({"persona": persona, "module": module, "qualified": qualified,
+                           "total": len(scopes), "status": "qualified" if scopes and qualified == len(scopes)
+                           else "partial" if qualified else "unqualified"})
+    return result
+
+
+def credential_refresh(client_id, client_secret, region):
+    """One-shot credentials captured in a worker closure, not a workspace or file."""
+    from central_tool import Central, EU_REGIONS, detect_region, configuration_audit
+    if region and region not in EU_REGIONS:
+        raise ValueError("Choose an official EU region")
+    if not client_id.strip() or not client_secret or len(client_id) > 1024 or len(client_secret) > 4096:
+        raise ValueError("Invalid credentials")
+    client = Central(region or EU_REGIONS[0], None, client_id, client_secret)
+    def run():
+        try:
+            detect_region(client, region or None)
+            return configuration_audit(client)
+        finally:
+            client.client_id = None
+            client.client_secret = None
+            client.token = None
+    return run
 
 
 def compare_devices(bundle, persona, left, right, module=None):
@@ -106,15 +138,16 @@ class Workspace:
         self.lock = threading.Lock()
         self.state = "idle"
 
-    def start_refresh(self):
+    def start_refresh(self, one_shot=None):
         with self.lock:
-            if self.refresh is None or self.state == "running":
+            refresh = one_shot if one_shot is not None else self.refresh
+            if refresh is None or self.state == "running":
                 return False
             self.state = "running"
         def run():
             try:
                 from central_tool import write_private
-                bundle = self.refresh()
+                bundle = refresh()
                 stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
                 target = self.directory / f"config-audit-{stamp}.json"
                 temporary = target.with_suffix(".partial")
@@ -134,39 +167,77 @@ class Workspace:
 
     def nav(self):
         root = "/" + self.token + "/"
-        return f'<a href="{root}">Snapshots</a><a href="{root}scopes">Scopes</a><a href="{root}compare">Compare devices</a>'
+        return f'<a href="{root}">Snapshots</a><a href="{root}coverage">Module coverage</a><a href="{root}scopes">Scopes</a><a href="{root}compare">Compare devices</a>'
 
     def home(self):
         root = "/" + self.token + "/"
         files = audit_files(self.directory)
         with self.lock:
             state = self.state
-        refresh = ""
+        from central_tool import EU_REGIONS
+        disabled = " disabled" if state == "running" else ""
+        refresh = (f'<form method="post" action="{root}credentials" autocomplete="off">'
+                   '<label>API region<select name="region">'
+                   + options([("", "Detect EU region")] + [(r, urlsplit(r).hostname.split(".")[0].upper()) for r in EU_REGIONS])
+                   + '</select></label><label>Client ID<input name="client_id" type="text" required maxlength="1024" autocomplete="off"></label>'
+                   '<label>Client secret<input name="client_secret" type="password" required maxlength="4096" autocomplete="new-password"></label>'
+                   f'<button type="submit"{disabled}>Connect and refresh</button></form>'
+                   '<p><small>Credentials are used only for this audit, in process memory. '
+                   'They are not saved or returned by the application. Decline browser password-saving prompts.</small></p>')
         if self.refresh is not None:
-            refresh = (f'<form method="post" action="{root}refresh"><button type="submit"'
+            refresh += (f'<form method="post" action="{root}refresh"><button type="submit"'
                        + (" disabled" if state == "running" else "")
-                       + ">Refresh from Central</button></form>")
+                       + ">Refresh using environment credentials</button></form>")
         return page("Snapshots", '<p>Private local workspace. Select a saved configuration capture. '
                     'Use a separate directory for each customer; tenant identity is not independently verified.</p>'
                     f'<section><h2>Audit refresh</h2><p>Status: {e(state)}</p>{refresh}'
                     f'<p><a href="{root}">Reload status</a></p></section><section><h2>Saved snapshots ({len(files)})</h2>'
                     '<table><thead><tr><th>Capture file</th><th>Action</th></tr></thead><tbody>' +
                     "".join(f'<tr><td>{e(p.name)}</td><td><a href="{root}report?{e(urlencode({"snapshot": p.name}))}">Open explorer</a>'
+                            f' · <a href="{root}coverage?{e(urlencode({"snapshot": p.name}))}">Module coverage</a>'
                             f' · <a href="{root}scopes?{e(urlencode({"snapshot": p.name}))}">Browse scopes</a>' 
                             f' · <a href="{root}compare?{e(urlencode({"snapshot": p.name}))}">Compare devices</a></td></tr>'
                             for p in files) + '</tbody></table></section>', self.nav())
 
+    def coverage(self, query):
+        from central_tool import refresh_configuration_review
+        root = "/" + self.token + "/"
+        files = audit_files(self.directory)
+        if not files:
+            return page("Module coverage", "<p>No snapshots available.</p>", self.nav())
+        name = query.get("snapshot", files[0].name)
+        bundle = refresh_configuration_review(read_audit(self.directory, name))
+        rows = module_coverage(bundle)
+        order = {"qualified": 0, "partial": 1, "unqualified": 2}
+        rows.sort(key=lambda r: (order[r["status"]], r["persona"], r["module"]))
+        body = ""
+        for row in rows:
+            href = root + "report?" + urlencode({"snapshot": name, "persona": row["persona"], "module": row["module"]})
+            body += (f'<tr><td>{e(row["persona"])}</td><td>{e(row["module"])}</td>'
+                     f'<td>{row["qualified"]}/{row["total"]}</td><td>{e(row["status"])}</td>'
+                     f'<td><a href="{e(href)}">Inspect evidence</a></td></tr>')
+        return page("Module coverage", '<section><h2>Configuration module qualification</h2>'
+                    '<p>Fully qualified modules first. Partial modules retain their valid scope evidence; '
+                    'unqualified scopes are diagnostics only. Qualification is not permission to modify configuration.</p>'
+                    f'<form method="get" action="{root}coverage"><label>Snapshot<select name="snapshot">'
+                    + options([(p.name, p.name) for p in files], name)
+                    + '</select></label><button>Open</button></form><table><thead><tr><th>Function</th><th>Module</th>'
+                    '<th>Qualified scopes</th><th>Status</th><th>Evidence</th></tr></thead><tbody>'
+                    + body + '</tbody></table></section>', self.nav())
+
     def report(self, query):
         from central_tool import configuration_html, refresh_configuration_review
         bundle = refresh_configuration_review(read_audit(self.directory, query["snapshot"]))
-        if "scope" in query:
+        if "scope" in query or "module" in query:
             from central_tool import config_review_rows, configuration_view_shape
             from config_dashboard import render_dashboard
-            records = [r for r in config_review_rows(bundle) if r[0] == query.get("persona") and r[3]["scope"] == query["scope"]]
+            records = [r for r in config_review_rows(bundle) if r[0] == query.get("persona")
+                       and ("scope" not in query or r[3]["scope"] == query["scope"])
+                       and ("module" not in query or r[1] == query["module"])]
             if not records:
                 raise ValueError("Unknown scope")
             html = render_dashboard(bundle, records, configuration_view_shape)
-            html = html.replace("<main>", f"<main><p>Scope view: {e(records[0][2])}. Counts and repeat groups are limited to this scope.</p>", 1)
+            html = html.replace("<main>", "<main><p>Filtered evidence. Counts and repeat groups are limited to this selection.</p>", 1)
         else:
             html = configuration_html(bundle)
         # Static report remains standalone; add a local navigation link only here.
@@ -278,6 +349,8 @@ def handler_for(workspace):
                     body = workspace.home()
                 elif parsed.path == root + "report":
                     body = workspace.report(query)
+                elif parsed.path == root + "coverage":
+                    body = workspace.coverage(query)
                 elif parsed.path == root + "scopes":
                     body = workspace.scopes(query)
                 elif parsed.path == root + "compare":
@@ -291,14 +364,32 @@ def handler_for(workspace):
 
         def do_POST(self):
             expected = f"http://127.0.0.1:{self.server.server_port}"
-            if (not self.valid_host() or self.path != root + "refresh"
+            if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials")
                     or self.headers.get("Origin") != expected):
                 self.reply("Forbidden", 403)
                 return
-            if self.headers.get("Content-Length", "0") != "0":
-                self.reply("Unexpected request body", 400)
-                return
-            if not workspace.start_refresh():
+            if self.path == root + "credentials":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < length <= 24576 or self.headers.get_content_type() != "application/x-www-form-urlencoded":
+                        raise ValueError("Invalid credential form")
+                    self.connection.settimeout(10)
+                    values = parse_qs(self.rfile.read(length).decode("utf-8"),
+                                      keep_blank_values=True, strict_parsing=True, max_num_fields=3)
+                    if set(values) != {"client_id", "client_secret", "region"} or any(len(v) != 1 for v in values.values()):
+                        raise ValueError("Invalid credential form")
+                    refresh = credential_refresh(values["client_id"][0], values["client_secret"][0], values["region"][0])
+                    values.clear()
+                    started = workspace.start_refresh(refresh)
+                except (ValueError, OSError, UnicodeError):
+                    self.reply("Invalid credential form", 400)
+                    return
+            else:
+                if self.headers.get("Content-Length", "0") != "0":
+                    self.reply("Unexpected request body", 400)
+                    return
+                started = workspace.start_refresh()
+            if not started:
                 self.reply(page("Refresh unavailable", "<p>Refresh unavailable or already running.</p>",
                                 workspace.nav()), 409)
                 return
