@@ -1953,6 +1953,19 @@ def parse_multicast_interface_output(text, field, vlan_ids):
     return {vid: value for vid, value in records.items() if vid not in conflicts}
 
 
+def multicast_interface_evidence(text, field, vlan_ids):
+    """Recognize empty L3 interface output without guessing L2 snooping."""
+    values = parse_multicast_interface_output(text, field, vlan_ids)
+    if values:
+        status = "observed" if set(values) == vlan_ids else "partial"
+    elif field in VLAN_FEATURE_ALTERNATIVES and isinstance(text, str) and re.fullmatch(
+            r"\s*" + field.upper() + r" is not enabled on any of the interfaces\.\s*", text):
+        status = "no_multicast_interfaces"
+    else:
+        status = "schema_unresolved"
+    return {"status": status, "vlans": values}
+
+
 def extract_command_output(result, command):
     """Read the exact live Central result envelope, not arbitrary strings."""
     if not isinstance(result, dict) or not isinstance(result.get("output"), dict):
@@ -2161,9 +2174,8 @@ def capture_switch_vlan_cli(client, results, details, workers=AUDIT_WORKERS, pro
                 try:
                     response = client.show_vlan_command(serial, alternative)
                     if response["status"] == "completed":
-                        values = parse_multicast_interface_output(extract_command_output(response["result"], alternative), field, ids)
-                        result = {"status": ("observed" if set(values) == ids else "partial") if values else "schema_unresolved",
-                                  "vlans": values, "sources": {vid: alternative for vid in values}}
+                        result = multicast_interface_evidence(extract_command_output(response["result"], alternative), field, ids)
+                        result["sources"] = {vid: alternative for vid in result["vlans"]}
                     else:
                         result = response
                 except APIError as exc:
@@ -2274,6 +2286,7 @@ def vlan_comparison_evidence(bundle, persona, sid, row):
     differences = field_differences(comparison, reference) if comparison is not None and reference is not None else None
     return {"local": local, "effective": effective, "comparison": comparison,
             "sources": sources, "device_observations": deployed, "conflicts": sorted(set(conflicts)),
+            "feature_status": {field: outcome.get("status") for field, outcome in cli.get("features", {}).items()},
             "differences": differences, "safe_to_apply": False}
 
 
@@ -2332,6 +2345,11 @@ def monitoring_vlan_records(payload):
         return None
     lists = [v for k, v in payload.items() if k != "metadata" and isinstance(v, list)]
     if len(lists) != 1 or len(lists[0]) >= 1000:
+        return None
+    if any(type(payload[key]) is not int or payload[key] != len(lists[0])
+           for key in ("count", "total") if key in payload):
+        return None
+    if "offset" in payload and (type(payload["offset"]) is not int or payload["offset"] != 0):
         return None
     records = {}
     for item in lists[0]:
