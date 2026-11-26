@@ -122,9 +122,9 @@ class Central:
     def show_vlans(self, serial):
         return self.show_vlan_command(serial, "show vlan")
 
-    def show_vlan_command(self, serial, command):
+    def show_vlan_command(self, serial, command, *, diagnostic=False):
         """Only fixed VLAN inspection commands; never retry submission."""
-        if command not in {"show vlan", *VLAN_FEATURE_COMMANDS.values()}:
+        if command not in {"show vlan", "show dhcp-snooping", *VLAN_FEATURE_COMMANDS.values()}:
             raise ValueError("Unsupported VLAN inspection command")
         if not isinstance(serial, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", serial):
             raise ValueError("Invalid switch serial")
@@ -153,13 +153,13 @@ class Central:
         for attempt in range(12):
             result = self.get(path + "/async-operations/" + task)
             if not isinstance(result, dict):
-                return {"status": "schema_unresolved"}
+                return {"status": "schema_unresolved", **({"result": result} if diagnostic else {})}
             if result.get("status") == "COMPLETED":
                 return {"status": "completed", "result": result}
             if result.get("status") == "FAILED":
-                return {"status": "command_failed"}
+                return {"status": "command_failed", **({"result": result} if diagnostic else {})}
             if result.get("status") not in ("INITIATED", "RUNNING"):
-                return {"status": "schema_unresolved"}
+                return {"status": "schema_unresolved", **({"result": result} if diagnostic else {})}
             if attempt < 11:
                 time.sleep(2)
         return {"status": "poll_timeout"}
