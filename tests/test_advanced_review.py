@@ -31,9 +31,34 @@ class AdvancedTests(unittest.TestCase):
         data = advanced_analysis(bundle)
         self.assertEqual(len(data["port_groups"]), 1)
         self.assertEqual(len(data["port_groups"][0]["ports"]), 3)
+        self.assertEqual([m["identity"] for m in data["port_groups"][0]["matching_library_profiles"]], ["a", "b"])
+        self.assertEqual(len(data["port_groups"][0]["proposed_mapping"]), 3)
+        self.assertTrue(data["port_groups"][0]["dependencies"])
         self.assertEqual(data["library_duplicates"][0]["identities"], ["a", "b"])
         self.assertEqual(data["shadowed"][0]["relationship"], "different_body")
         self.assertTrue(any(r["target"] == "existing" and r["status"] == "observed" for r in data["references"]))
         self.assertTrue(any(r["scope"] == "3" and r["status"] == "unresolved" for r in data["references"]))
         self.assertFalse(data["reference_graph_complete"])
         self.assertFalse(data["safe_to_apply"])
+
+    def test_group_shadows_site_and_global_when_membership_and_source_are_observed(self):
+        scopes = [{"id": "1", "kind": "global", "name": "Global"},
+                  {"id": "2", "kind": "site", "name": "Site", "metadata": {"id": 20}},
+                  {"id": "3", "kind": "group", "name": "Group", "metadata": {"id": 30}},
+                  {"id": "4", "kind": "device", "name": "Switch",
+                   "metadata": {"siteId": 20, "deviceGroupId": 30}}]
+        direct = {"aruba-annotation:inherited": False, "aruba-annotation:object_type": "LOCAL"}
+        inherited = {**direct, "aruba-annotation:inherited": True}
+        def vlan(name, ann):
+            return view({"10": {"vlan": 10, "name": name, "@": ann}})
+        data = {"results": {"ACCESS_SWITCH": {"scopes": scopes, "modules": {
+            "layer2-vlan": {"scope_results": [
+                {"scope": "1", "effective_view": vlan("Global", direct)},
+                {"scope": "2", "effective_view": vlan("Site", direct)},
+                {"scope": "3", "effective_view": vlan("Group", direct)},
+                {"scope": "4", "effective_view": vlan("Group", inherited)}]}}}}}
+        findings = advanced_analysis(data)["shadowed"]
+        self.assertEqual({f["winning_scope"] for f in findings}, {"Group"})
+        self.assertEqual({f["higher_scope"] for f in findings}, {"Site", "Global"})
+        scopes[-1]["metadata"].pop("deviceGroupId")
+        self.assertEqual(advanced_analysis(data)["shadowed"], [])
