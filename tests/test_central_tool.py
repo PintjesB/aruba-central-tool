@@ -685,6 +685,40 @@ class Tests(unittest.TestCase):
         self.assertEqual(qualify_observed_identities({"source_views": [broken]})
                          ["ACCESS_SWITCH"]["status"], "identity_unresolved")
 
+    def test_ordered_parallel_bounds_workers_and_preserves_order(self):
+        import threading
+        import time
+        from central_tool import ordered_parallel, AUDIT_WORKERS
+        lock = threading.Lock()
+        active = peak = 0
+        updates = []
+        def read(i):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(.02)
+            with lock:
+                active -= 1
+            return i * 2
+        self.assertEqual(ordered_parallel(range(12), read, 4,
+                         lambda done, total: updates.append((done, total))), list(range(0, 24, 2)))
+        self.assertGreater(peak, 1)
+        self.assertLessEqual(peak, AUDIT_WORKERS)
+        self.assertEqual(updates, [(i, 12) for i in range(1, 13)])
+
+    def test_concurrent_token_refresh_is_single_flight(self):
+        import time
+        from unittest.mock import patch
+        from central_tool import Central, EU_REGIONS, ordered_parallel
+        client = Central(EU_REGIONS[0], client_id="test", client_secret="secret")
+        def token(*args):
+            time.sleep(.02)
+            return {"access_token": "token", "expires_in": 3600}
+        with patch.object(client, "_request", side_effect=token) as request:
+            self.assertEqual(ordered_parallel(range(8), lambda _: client._token(), 4), ["token"] * 8)
+            self.assertEqual(request.call_count, 1)
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
