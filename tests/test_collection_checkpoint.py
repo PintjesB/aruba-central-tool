@@ -47,3 +47,25 @@ class CheckpointTests(unittest.TestCase):
         from remediation_review import comparable
         with self.assertRaisesRegex(ValueError, "fresh captures"):
             comparable({}, {"collection_checkpoint": {"mixed_capture_times": True}}, True)
+
+
+    def test_workspace_lists_only_valid_checkpoints(self):
+        from collection_checkpoint import available_checkpoints
+        from config_app import Workspace
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            path = directory / ("collection-" + "a" * 32 + ".db")
+            cp = ScopeCheckpoint(path, "manifest")
+            view = {"status": "list_parsed", "count_confirmed": True, "profiles": {}}
+            cp.save("ACCESS_SWITCH", "layer2-vlan", "1", view, view)
+            ScopeCheckpoint(directory / ("collection-" + "b" * 32 + ".db"), "manifest",
+                            now=lambda: datetime.now(timezone.utc) - timedelta(hours=25))
+            (directory / ("collection-" + "c" * 32 + ".db")).write_text("invalid")
+            self.assertEqual([row["name"] for row in available_checkpoints(directory)], [path.name])
+            html = Workspace(directory).home()
+            self.assertIn("Collection recovery", html)
+            self.assertIn(path.name, html)
+            self.assertIn("1 saved scope pairs", html)
+            mark_complete(path)
+            self.assertEqual(available_checkpoints(directory), [])
+            self.assertNotIn(path.name, Workspace(directory).home())
