@@ -269,6 +269,29 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("Not returned", html)
         self.assertIn("not a live switch CLI", html)
 
+    def test_vlan_comparison_exposes_effective_only_and_matching_fields(self):
+        from workspace_views import vlan_explanation
+        html = vlan_explanation({"vlan": 10, "name": "Same"},
+                                {"vlan": 10, "name": "Same"},
+                                {"vlan": 10, "name": "Same", "voice-enable": True})
+        self.assertIn("voice-enable", html)
+        self.assertIn("true", html)
+        self.assertIn("Same", html)
+        self.assertIn("Not returned", html)
+
+    def test_protected_vlan_is_included_in_missing_field_diagnostics(self):
+        from central_tool import refresh_configuration_review, vlan_evidence_summary
+        data = fixture()
+        views = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]
+        views[0]["effective_view"]["profiles"]["1"] = {"vlan": 1, "name": "Default", "enable": True}
+        for key in ("local_view", "effective_view"):
+            views[2][key]["profiles"]["1"] = {"vlan": 1}
+        refresh_configuration_review(data)
+        summary = vlan_evidence_summary(data)
+        self.assertGreaterEqual(summary["comparisons"]["protected_default_vlan"], 1)
+        self.assertGreaterEqual(summary["remaining_fields"]["name"], 1)
+        self.assertGreaterEqual(summary["remaining_fields"]["enable"], 1)
+
     def test_operational_vlan_context_does_not_infer_configured_enable(self):
         from central_tool import configuration_operational_vlan
         from workspace_views import operational_vlan_context
