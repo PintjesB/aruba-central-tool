@@ -454,6 +454,10 @@ if(panel.dataset.state==='running')poll();
         from workspace_views import inventory_view
         return inventory_view(self, query)
 
+    def assessment(self, query):
+        from assessment_view import assessment_view
+        return assessment_view(self, query)
+
     def assignments(self, query):
         from assignment_view import assignments_view
         return assignments_view(self, query)
@@ -533,6 +537,8 @@ def handler_for(workspace):
                     body = workspace.overrides(query)
                 elif parsed.path == root + "advisor":
                     body = workspace.advisor(query)
+                elif parsed.path == root + "assessment":
+                    body = workspace.assessment(query)
                 elif parsed.path == root + "assignments":
                     body = workspace.assignments(query)
                 elif parsed.path == root + "sources":
