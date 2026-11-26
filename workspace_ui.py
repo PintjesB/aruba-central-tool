@@ -211,7 +211,7 @@ def navigation(root, snapshot=None):
     links = []
     for group, items in (
         ("Analyze", (("", "Overview"), ("overrides", "Device overrides"), ("advisor", "Consolidation"),
-                       ("assessment", "Configuration assessment"), ("advanced", "Engineering"), ("assignments", "Library assignments"), ("sources", "Configuration sources"), ("impact", "Dependency impact"), ("drift", "Configuration drift"), ("remediation", "Remediation verification"), ("standards", "Standards compliance"), ("trends", "Compliance trends"))),
+                       ("assessment", "Configuration assessment"), ("advanced", "Engineering"), ("assignments", "Library assignments"), ("nac", "NAC identities"), ("sources", "Configuration sources"), ("impact", "Dependency impact"), ("drift", "Configuration drift"), ("remediation", "Remediation verification"), ("standards", "Standards compliance"), ("trends", "Compliance trends"))),
         ("Explore", (("report", "Configuration"), ("scopes", "Inventory"), ("library", "Library"), ("compare", "Compare"))),
         ("System", (("coverage", "Coverage"),))):
         links.append(f'<div class="nav-group"><span>{e(group)}</span>')
