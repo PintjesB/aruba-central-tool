@@ -1885,9 +1885,7 @@ def parse_vlan_feature(result, field, vlan_ids):
             if not invalid and members:
                 candidates.append({vid: vid in members for vid in vlan_ids})
         elif field in ("dhcpv4-snooping", "dhcpv6-snooping"):
-            label = "DHCPv[46]-Snooping" if field == "dhcpv6-snooping" else "(?:DHCPv4-Snooping|DHCP-Snooping)"
-            if field == "dhcpv6-snooping":
-                label = "DHCPv6-Snooping"
+            label = "DHCPv6-Snooping" if field == "dhcpv6-snooping" else "(?:DHCPv4-Snooping|DHCP-Snooping)"
             if not any(re.fullmatch(r"\s*" + label + r"\s*:\s*(?:Yes|No)\s*", line, re.I) for line in lines):
                 continue
             values = [m[1].strip() for line in lines if (m := re.fullmatch(r"\s*Enabled VLANs\s*:\s*(.*?)\s*", line, re.I))]
@@ -1958,8 +1956,7 @@ def capture_switch_vlan_cli(client, results, details, workers=AUDIT_WORKERS, pro
     for persona, sid, serial in tasks:
         base = output[persona][sid]
         if base["status"] == "observed":
-            for field, command in VLAN_FEATURE_COMMANDS.items():
-                feature_tasks.append((persona, sid, serial, field, command, set(base["vlans"])))
+            feature_tasks.append((persona, sid, serial, set(base["vlans"])))
     def collect_feature(task):
         persona, sid, serial, field, command, ids = task
         try:
@@ -1971,15 +1968,20 @@ def capture_switch_vlan_cli(client, results, details, workers=AUDIT_WORKERS, pro
         except (RuntimeError, OSError, ValueError, AttributeError):
             result = {"status": "read_failed"}
         return persona, sid, field, result
+    def collect_features(task):
+        persona, sid, serial, ids = task
+        return [collect_feature((persona, sid, serial, field, command, ids))
+                for field, command in VLAN_FEATURE_COMMANDS.items()]
     audit_progress(progress, "Switch VLAN features", 0, len(feature_tasks), "Reading snooping and voice VLAN settings")
-    # Preserve individual command outcomes and use only parsed values.
-    for persona, sid, field, result in ordered_parallel(feature_tasks, collect_feature, min(workers, 4),
+    # Run at most one command at a time on each device.
+    for feature_results in ordered_parallel(feature_tasks, collect_features, min(workers, 4),
             completed=lambda done, total: audit_progress(progress, "Switch VLAN features", done, total, "Reading VLAN feature evidence")):
-        base = output[persona][sid]
-        base.setdefault("features", {})[field] = {"status": result["status"],
-                                                 **({"http_error": result["http_error"]} if "http_error" in result else {})}
-        for vid, value in result.get("vlans", {}).items():
-            base["vlans"][vid][field] = value
+        for persona, sid, field, result in feature_results:
+            base = output[persona][sid]
+            base.setdefault("features", {})[field] = {"status": result["status"],
+                                                     **({"http_error": result["http_error"]} if "http_error" in result else {})}
+            for vid, value in result.get("vlans", {}).items():
+                base["vlans"][vid][field] = value
     return output
 
 
