@@ -2939,7 +2939,7 @@ def configuration_operational_vlan(bundle, persona, sid, vid):
             "may_be_truncated": len(lists[0]) >= 1000}
 
 
-def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None, deep_catalog=False):
+def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None, deep_catalog=False, checkpoint_path=None, resume=False):
     """Inventory-driven read-only audit with bounded parallel scope reads."""
     from api_coverage import ReadCoverage
     client = ReadCoverage(client)
@@ -2990,6 +2990,13 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
         if scopes is None:
             scopes, _ = discover_scopes(client, persona, devices)
         plans.append((persona, modules, scopes))
+    checkpoint = None
+    if checkpoint_path is not None:
+        from collection_checkpoint import ScopeCheckpoint, qualification_manifest
+        checkpoint = ScopeCheckpoint(checkpoint_path, qualification_manifest(client.base, plans, records,
+                                     [client.revision, deep_catalog, selected_persona]), resume=resume)
+    elif resume:
+        raise ValueError("Resume requires an explicit checkpoint path")
     total_scopes = sum(sum(not spec[2] or s["kind"] == "device" for s in scopes)
                        for _, modules, scopes in plans for spec in modules.values())
     completed_scopes = 0
@@ -3002,11 +3009,16 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
         audit_progress(progress, "Configuration scopes", completed_scopes, total_scopes, persona)
         def read_scope(task):
             module, identity, scope = task
+            previous = checkpoint.get(persona, module, scope["id"]) if checkpoint else None
+            if previous is not None:
+                return module, scope, previous["local"], previous["effective"]
             params = {"view-type": "LOCAL", "scope-id": scope["id"], "device-function": persona}
             local = read_module_view(client, module, identity, {**params, "object-type": "LOCAL",
                                                                 "effective": "false", "detailed": "false"})
             effective = read_module_view(client, module, identity, {**params, "effective": "true", "detailed": "true"})
             local = recover_local_view(client, module, identity, params, local, effective)
+            if checkpoint:
+                checkpoint.save(persona, module, scope["id"], local, effective)
             return module, scope, local, effective
         grouped = defaultdict(list)
         for module, scope, local, effective in ordered_parallel(
@@ -3066,6 +3078,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             "configuration_health": health,
             "keyed_profile_details": keyed_details,
             "api_read_coverage": client.report(),
+            "collection_checkpoint": checkpoint.evidence() if checkpoint else {"enabled": False, "mixed_capture_times": False},
             "catalog_exhaustive": False, "safe_to_apply": False}
 
     coverage_counts = Counter(row["status"] for row in bundle["api_read_coverage"]["operations"])
@@ -3396,6 +3409,8 @@ def main():
     config.add_argument("--output", required=True, type=Path)
     config.add_argument("--region-file", type=Path)
     config.add_argument("--deep-catalog", action="store_true", help="Survey documented unadapted collections at every discovered scope; may take substantially longer")
+    config.add_argument("--checkpoint", type=Path, help="Private interrupted scope-read checkpoint file")
+    config.add_argument("--resume", action="store_true", help="Explicitly reuse a matching checkpoint less than 24 hours old; mixed capture times")
     config.add_argument("--persona", choices=sorted(NETWORK_PERSONAS), help="Optional limit to one discovered persona")
     browser = commands.add_parser("review-config", help="Generate an offline configuration browser and anonymous schema diagnostics")
     browser.add_argument("audit", type=Path)
@@ -3472,7 +3487,8 @@ def main():
             elif args.command == "audit":
                 data = audit(client)
             elif args.command == "config-audit":
-                data = configuration_audit(client, args.persona, deep_catalog=args.deep_catalog)
+                data = configuration_audit(client, args.persona, deep_catalog=args.deep_catalog,
+                                           checkpoint_path=args.checkpoint, resume=args.resume)
             elif args.command == "inventory":
                 records = inventory_capabilities(inventory(client))
                 data = {"region": region, "devices": records}
