@@ -849,6 +849,42 @@ class Tests(unittest.TestCase):
         self.assertEqual(set(details["ACCESS_SWITCH"]["12"]["1"]), {"local", "effective"})
         self.assertNotIn("10", details["ACCESS_SWITCH"]["12"])
 
+    def test_live_dhcp_output_and_central_rejection(self):
+        from central_tool import parse_vlan_feature, supported_show_commands
+        ids = {"1", "1000"}
+        def envelope(command, output):
+            return {"status": "COMPLETED", "output": {"results": [
+                {"command": command, "output": output}], "commands": [command]}}
+        samples = {
+            "dhcpv4-snooping": "\n DHCPv4-Snooping Information\n\n  DHCPv4-Snooping         : No          Verify MAC Address  : Yes\n  Allow Overwrite Binding : No          Enabled VLANs       : \n  Static Attributes : No \n",
+            "dhcpv6-snooping": "\n DHCPv6-Snooping Information\n\n  DHCPv6-Snooping      : No   Enabled VLANs        : \n  Trusted Port Bindings Enabled VLANs : \n  Client Event Logs                   : No \n",
+        }
+        for field, output in samples.items():
+            with self.subTest(field=field):
+                parsed = parse_vlan_feature(envelope("show " + field, output), field, ids)
+                self.assertEqual(parsed["status"], "observed")
+                self.assertEqual(parsed["vlans"], {vid: {"enable": False} for vid in ids})
+        enabled = "DHCPv6-Snooping : Yes   Enabled VLANs : 1000"
+        self.assertEqual(parse_vlan_feature(envelope("show dhcpv6-snooping", enabled),
+                         "dhcpv6-snooping", ids)["vlans"], {"1": {"enable": False}, "1000": {"enable": True}})
+        rejected = envelope("show vlan voice", "Command 'show vlan voice' not allowed\n")
+        self.assertEqual(parse_vlan_feature(rejected, "voice-enable", ids)["status"], "command_not_allowed")
+        self.assertEqual(supported_show_commands({"commands": ["show vlan", "show running-config all", "description"]}),
+                         {"show vlan", "show running-config all"})
+
+    def test_running_config_only_recovers_explicit_vlan_context(self):
+        from central_tool import parse_vlan_running_config
+        text = ("Current configuration:\n!\nvlan 1\n    no voice\n"
+                "vlan 10,20\n    voice\n    ip igmp snooping enable\n"
+                "    ipv6 mld snooping disable\n"
+                "interface vlan 1\n    ip igmp snooping enable\n"
+                "vlan 30\n    name Voice\n")
+        result = parse_vlan_running_config(text, {"1", "10", "20", "30"})
+        self.assertEqual(result["1"], {"voice-enable": False})
+        self.assertEqual(result["10"], {"voice-enable": True, "igmp": {"snooping": True}, "mld": {"snooping": False}})
+        self.assertEqual(result["20"], result["10"])
+        self.assertNotIn("30", result)
+
     def test_vlan_feature_parsers_require_explicit_evidence(self):
         from central_tool import parse_vlan_feature
         ids = {"1", "10", "20"}
