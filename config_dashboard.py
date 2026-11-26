@@ -1,6 +1,6 @@
 """Standalone, offline configuration review dashboard."""
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from html import escape
 
 
@@ -60,9 +60,47 @@ def difference_table(fields):
             '<th>Local value</th><th>Difference</th></tr></thead><tbody>' + "".join(rows) + '</tbody></table></div>')
 
 
+INFRASTRUCTURE = {"ethernet-interfaces", "vlan-interfaces", "portchannels"}
+COMPARISON = {"local_differs_from_global", "local_matches_global", "local_without_global_match",
+              "global_reference_unverified"}
+
+
+def finding_category(module, scope, row):
+    if row.get("local") is None or row["status"] == "default_profile":
+        return "other"
+    if scope["scope_kind"] == "global":
+        return "global"
+    if module in INFRASTRUCTURE or row["status"] == "device_local_profile":
+        return "infrastructure"
+    if row["status"] in COMPARISON:
+        return "candidate"
+    return "unclassified_local"
+
+
+def repeated_key(persona, module, row):
+    return (persona, module, row["identity"],
+            json.dumps(row["local"], sort_keys=True, separators=(",", ":"), allow_nan=False))
+
+
+def repeated_local_profiles(records):
+    """Group exact reusable local bodies across distinct scopes, never ports."""
+    groups = defaultdict(dict)
+    for persona, module, name, scope in records:
+        if not scope["review"]["qualified"]:
+            continue
+        for row in scope["review"]["profiles"]:
+            if finding_category(module, scope, row) == "candidate":
+                groups[repeated_key(persona, module, row)][scope["scope"]] = (
+                    scope["scope_kind"], name, row["status"])
+    return {key: members for key, members in groups.items() if len(members) > 1}
+
+
 def render_dashboard(bundle, records, shape):
     rows = []
     counts = Counter()
+    categories = Counter()
+    repeated = repeated_local_profiles(records)
+    repeated_ids = {key: index for index, key in enumerate(sorted(repeated), 1)}
     qualified = sum(scope["review"]["qualified"] for _, _, _, scope in records)
     for persona, module, name, scope in records:
         review = scope["review"]
@@ -80,6 +118,14 @@ def render_dashboard(bundle, records, shape):
         for row in profiles:
             status = row["status"]
             counts[status] += 1
+            category = finding_category(module, scope, row)
+            categories[category] += 1
+            repeated_id = ""
+            members = {}
+            if category == "candidate":
+                key = repeated_key(persona, module, row)
+                members = repeated.get(key, {})
+                repeated_id = repeated_ids.get(key, "")
             fields = row.get("global_differences")
             diff_count = "Not comparable" if fields is None else str(len(fields))
             body = {k: row[k] for k in ("local", "effective", "global_reference",
@@ -91,7 +137,9 @@ def render_dashboard(bundle, records, shape):
             tone = ("warning" if status in REVIEW else "positive" if status in
                     {"inherited", "shared", "local_matches_global"} else "neutral")
             attrs = {"persona": persona, "module": module, "scope": scope["scope_kind"],
-                     "name": name, "status": status, "local": "yes" if status in LOCAL else "no",
+                     "name": name, "status": status,
+                     "local": "yes" if row.get("local") is not None and status != "default_profile" else "no",
+                     "category": category, "repeated": str(repeated_id),
                      "review": "yes" if status in REVIEW else "no"}
             attributes = " ".join(f'data-{k}="{e(v)}"' for k, v in attrs.items())
             cells = (persona, module, scope["scope_kind"], name, row["identity"] or "—")
@@ -103,9 +151,14 @@ def render_dashboard(bundle, records, shape):
                                                   ("global_reference", "Global reference")))
                        + '</div>' if status != "scope_unqualified" else
                        '<p class="muted">These views are not sufficiently validated to classify the scope.</p>')
+            if members:
+                details += '<h4>Identical local profile across scopes</h4><p class="muted">Exact captured body and identity match; inheritance and migration safety are not established.</p><ul>' + "".join(
+                    f"<li>{e(kind)} / {e(member)} ({e(LABELS.get(member_status, member_status))})</li>"
+                    for _, (kind, member, member_status) in sorted(members.items())) + "</ul>"
             rows.append(f'<tr class="finding" {attributes}>' + cells_html +
                         f'<td><span class="status {tone}">{e(LABELS.get(status, status))}</span></td>'
                         f'<td class="numeric">{e(diff_count)}</td>'
+                        f'<td class="numeric">{len(members) if members else "—"}</td>'
                         f'<td><button class="inspect" type="button">Inspect</button>'
                         f'<template><div class="detail-title"><h2>{e(module)} · {e(row["identity"] or name)}</h2>'
                         f'<p>{e(persona)} / {e(scope["scope_kind"])} / {e(name)} · {e(LABELS.get(status, status))}</p></div>'
@@ -122,9 +175,11 @@ def render_dashboard(bundle, records, shape):
                       for key, label, values, labels in selectors)
     metrics = [
         ("all", "Qualified module scopes", f"{qualified}/{len(records)}", "Coverage of captured scope views"),
-        ("local", "Local profiles", sum(counts[s] for s in LOCAL), "Includes device-specific configuration"),
-        ("different", "Global differences", counts["local_differs_from_global"], "Exact configuration comparisons"),
-        ("review", "Needs review", sum(counts[s] for s in REVIEW), "Includes unqualified evidence"),
+        ("candidate", "Reusable-profile candidates", categories["candidate"], "Local instances; not verified redundant"),
+        ("repeated", "Repeated profile groups", len(repeated), "Identical local bodies across scopes"),
+        ("infrastructure", "Local infrastructure", categories["infrastructure"], "Ports, SVIs, LAGs and device-local objects"),
+        ("review", "Needs review", sum(counts[s] for s in REVIEW), "Includes incomplete or differing evidence"),
+        ("local", "All local instances", sum(categories[k] for k in ("candidate", "infrastructure", "global", "unclassified_local")), "Inventory count, not override count"),
     ]
     cards = "".join(f'<button class="metric" data-quick="{k}"><span>{e(title)}</span>'
                     f'<strong>{e(number)}</strong><small>{e(note)}</small></button>'
@@ -132,20 +187,20 @@ def render_dashboard(bundle, records, shape):
     return HEAD + f'<p class="captured">Captured {e(bundle.get("captured_at", "unknown"))} · Qualified module scopes: {qualified}/{len(records)}</p>' + (
         '<section class="metrics" aria-label="Overview">' + cards + '</section>'
         '<section class="workspace"><div class="section-head"><div><h2>Configuration explorer</h2>'
-        '<p class="muted">Filter by scope, profile type and observed configuration source.</p></div>'
+        '<p class="muted">Start with reusable-profile candidates. Infrastructure is reviewed separately. Identical local bodies are not proof of redundancy.</p></div>'
         '<button id="export">Export filtered summary CSV</button></div>'
-        '<div class="quick"><button data-quick="all" class="selected">All findings</button>'
-        '<button data-quick="local">Local profiles</button><button data-quick="different">Global differences</button>'
+        '<div class="quick"><button data-quick="candidate" class="selected">Consolidation candidates</button><button data-quick="repeated">Repeated profiles</button><button data-quick="infrastructure">Infrastructure</button><button data-quick="all">All findings</button>'
+        '<button data-quick="local">All local instances</button><button data-quick="different">Global differences</button>'
         '<button data-quick="review">Needs review</button><button data-quick="unqualified">Unqualified scopes</button></div>'
         '<div class="filters">' + filters +
         '<label class="search">Search<input id="query" type="search" placeholder="Scope, profile, status or setting"></label>'
         '<button id="reset">Reset filters</button></div>'
-        '<div class="table-bar"><span id="count" aria-live="polite"></span><label>Rows per page '
+        '<div class="table-bar"><span id="count" aria-live="polite"></span><label><input id="grouped" type="checkbox"> Group identical candidates</label><label>Rows per page '
         '<select id="page-size"><option>25</option><option selected>50</option><option>100</option></select></label></div>'
         '<div class="table-wrap"><table id="findings"><thead><tr>' +
         "".join(f'<th><button data-sort="{i}">{label}</button></th>'
                 for i, label in enumerate(("Function", "Module", "Scope type", "Scope / device", "Profile",
-                                           "Finding", "Fields"))) +
+                                           "Finding", "Fields", "Matching scopes"))) +
         '<th>Evidence</th></tr></thead><tbody>' + "".join(rows) +
         '</tbody></table><p id="empty" hidden>No findings match your filters.</p></div>'
         '<div class="pager"><button id="prev">Previous</button><span id="page"></span><button id="next">Next</button></div></section>'
@@ -163,7 +218,7 @@ header{background:#18304c;color:#fff;padding:20px max(24px,calc((100vw - 1500px)
 header h1{font-size:22px;margin:0;letter-spacing:-.5px}header p{margin:3px 0 0;color:#c7d6ea}
 header button{background:#274666;color:#fff;border-color:#456580}main{max-width:1500px;margin:auto;padding:24px}
 .captured,.muted{color:var(--muted);margin:0 0 12px}.notice{border-left:4px solid var(--accent);background:var(--surface);padding:12px 16px;border-radius:6px;margin-bottom:18px}
-.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0}
+.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}
 button,select,input{font:inherit;color:var(--text)}button{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:8px 12px;cursor:pointer}
 button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 button:disabled{opacity:.45;cursor:default}.metric{text-align:left;padding:18px;box-shadow:var(--shadow);display:grid;gap:7px;border-top:3px solid var(--accent)}
@@ -199,10 +254,13 @@ const table=$('findings'), tbody=table.tBodies[0];
 const rows=Array.from(tbody.querySelectorAll('.finding'));
 const keys=['persona','module','scope','name','status'];
 const searchable=new Map(rows.map(row=>[row,(Array.from(row.cells).slice(0,7).map(c=>c.textContent).join(' ')+' '+row.querySelector('template').content.textContent).toLowerCase()]));
-let quick='all', page=0, sort=0, ascending=true, filtered=[];
+let quick='candidate', page=0, sort=0, ascending=true, filtered=[];
 const collator=new Intl.Collator(undefined,{numeric:true,sensitivity:'base'});
 function matchQuick(r){
   if(quick==='local')return r.dataset.local==='yes';
+  if(quick==='candidate')return r.dataset.category==='candidate';
+  if(quick==='infrastructure')return r.dataset.category==='infrastructure';
+  if(quick==='repeated')return Boolean(r.dataset.repeated);
   if(quick==='review')return r.dataset.review==='yes';
   if(quick==='different')return r.dataset.status==='local_differs_from_global';
   if(quick==='unqualified')return r.dataset.status==='scope_unqualified';
@@ -213,15 +271,23 @@ function update(reset=false){
   const q=$('query').value.trim().toLowerCase();
   filtered=rows.filter(r=>matchQuick(r)&&keys.every(k=>!$(k).value||r.dataset[k]===$(k).value)&&searchable.get(r).includes(q));
   filtered.sort((a,b)=>(ascending?1:-1)*collator.compare(a.cells[sort].textContent,b.cells[sort].textContent));
-  const size=Number($('page-size').value), pages=Math.max(1,Math.ceil(filtered.length/size));
+  // Preserve all matching instances for filtering and export.
+  const seen=new Set();
+  const display=$('grouped').checked?filtered.filter(r=>{
+    if(!r.dataset.repeated)return true;
+    const k=r.dataset.repeated+'|'+r.dataset.status;
+    if(seen.has(k))return false;
+    seen.add(k);return true;
+  }):filtered;
+  const size=Number($('page-size').value), pages=Math.max(1,Math.ceil(display.length/size));
   page=Math.max(0,Math.min(page,pages-1));
-  const visible=filtered.slice(page*size,(page+1)*size);
+  const visible=display.slice(page*size,(page+1)*size);
   for(const r of rows)r.hidden=true;
   for(const r of visible){r.hidden=false;tbody.appendChild(r);}
-  $('count').textContent=filtered.length.toLocaleString()+' of '+rows.length.toLocaleString()+' findings';
+  $('count').textContent=display.length.toLocaleString()+' displayed / '+filtered.length.toLocaleString()+' matching instances'+($('grouped').checked?' (grouped)':'');
   $('page').textContent='Page '+(page+1)+' of '+pages;
   $('prev').disabled=page===0;$('next').disabled=page>=pages-1;
-  $('empty').hidden=filtered.length!==0;
+  $('empty').hidden=display.length!==0;
   for(const b of document.querySelectorAll('[data-quick]'))b.classList.toggle('selected',b.dataset.quick===quick);
   for(const b of table.querySelectorAll('[data-sort]')){
     b.parentElement.removeAttribute('aria-sort');
@@ -232,7 +298,8 @@ for(const b of document.querySelectorAll('[data-quick]'))b.addEventListener('cli
 for(const k of keys)$(k).addEventListener('change',()=>update(true));
 $('query').addEventListener('input',()=>update(true));
 $('page-size').addEventListener('change',()=>update(true));
-$('reset').addEventListener('click',()=>{for(const k of keys)$(k).value='';$('query').value='';quick='all';update(true);});
+$('grouped').addEventListener('change',()=>update(true));
+$('reset').addEventListener('click',()=>{for(const k of keys)$(k).value='';$('query').value='';$('grouped').checked=false;quick='candidate';update(true);});
 $('prev').addEventListener('click',()=>{page--;update();});
 $('next').addEventListener('click',()=>{page++;update();});
 for(const b of table.querySelectorAll('[data-sort]'))b.addEventListener('click',()=>{
@@ -254,8 +321,8 @@ function csvCell(value){
   return '"'+s.replace(/"/g,'""')+'"';
 }
 $('export').addEventListener('click',()=>{
-  const header=['Function','Module','Scope type','Scope','Profile','Finding','Global differences'];
-  const csv=[header,...filtered.map(row=>Array.from(row.cells).slice(0,7).map(c=>c.textContent))].map(r=>r.map(csvCell).join(',')).join('\r\n');
+  const header=['Function','Module','Scope type','Scope','Profile','Finding','Global differences','Matching scopes'];
+  const csv=[header,...filtered.map(row=>Array.from(row.cells).slice(0,8).map(c=>c.textContent))].map(r=>r.map(csvCell).join(',')).join('\r\n');
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
   const a=document.createElement('a');a.href=url;a.download='central-config-summary.csv';a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
