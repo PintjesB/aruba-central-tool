@@ -39,7 +39,7 @@ def read_audit(directory, name):
     return data
 
 
-from workspace_ui import page, navigation, intro, snapshot_picker, metrics, e as ui_escape
+from workspace_ui import page, navigation, intro, snapshot_picker, metrics
 
 
 def options(items, selected=None):
@@ -427,6 +427,10 @@ def handler_for(workspace):
                     body = workspace.home(query)
                 elif parsed.path == root + "report":
                     body = workspace.report(query)
+                elif parsed.path == root + "legacy-report":
+                    from central_tool import configuration_html, refresh_configuration_review
+                    bundle = refresh_configuration_review(read_audit(workspace.directory, query["snapshot"]))
+                    body = configuration_html(bundle).replace("<main>", f\'<main><p><a href="{root}report?{e(urlencode({"snapshot": query["snapshot"]}))}">Back to workspace</a></p>\', 1)
                 elif parsed.path == root + "advisor":
                     body = workspace.advisor(query)
                 elif parsed.path == root + "advanced":
