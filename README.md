@@ -46,6 +46,10 @@ The audit probes interface profiles, roles and port channels in addition to the 
 
 Run `python central_tool.py review-audit audit.json --previous earlier-audit.json --output review.json` to regenerate the review and compare two captures without credentials or network requests. Omit `--previous` to review just one capture. Match scopes by ID and compare exact local, effective and Library bodies. The private report includes before/reference field differences and blockers per profile. Reference bodies are not predictions of actual post-change inheritance and no preview is executable. Region and Global scope checks are not independent proof of tenant identity; compare only captures from the same tenant.
 
+### Inheritance evidence
+
+Offline reference previews include observed Library assignments matching the VLAN endpoint, numeric instance and persona. They do not infer intermediate scope precedence or guarantee that deleting a local profile restores a Library assignment. Historical local removals include effective field differences and comparisons of available monitoring fields; exact or default-only differences are not proof of operational equivalence.
+
 ## Safety boundary
 
 No configuration mutation API calls exist yet. Only OAuth token issuance uses POST. Candidate findings are not executable plans. The API is v1alpha1 and real tenant response shapes, group access, annotation semantics, and Classic/New configuration authority must be validated before enabling writes. Scope IDs are strings, not floating-point numbers.
