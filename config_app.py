@@ -454,6 +454,10 @@ if(panel.dataset.state==='running')poll();
         from workspace_views import inventory_view
         return inventory_view(self, query)
 
+    def sources(self, query):
+        from source_view import source_view
+        return source_view(self, query)
+
     def impact(self, query):
         from impact_view import impact_view
         return impact_view(self, query)
@@ -525,6 +529,8 @@ def handler_for(workspace):
                     body = workspace.overrides(query)
                 elif parsed.path == root + "advisor":
                     body = workspace.advisor(query)
+                elif parsed.path == root + "sources":
+                    body = workspace.sources(query)
                 elif parsed.path == root + "impact":
                     body = workspace.impact(query)
                 elif parsed.path == root + "advanced":
