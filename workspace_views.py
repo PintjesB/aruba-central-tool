@@ -296,7 +296,7 @@ def usage_detail(usage):
 
 
 def engineering_view(workspace, query):
-    from advanced_review import advanced_analysis
+    from advanced_review import advanced_analysis, library_usage, preferred_duplicate
     from central_tool import field_differences
     loaded, empty = load(workspace, query, "Engineering review", "advanced")
     if empty:
@@ -313,14 +313,18 @@ def engineering_view(workspace, query):
         matches = record.get("matching_library_profiles", [])
         devices = sorted({p["device"] for p in ports})
         settings = record["portable_settings"]
+        match_usage = library_usage(bundle, "sw-port-profiles", [m["identity"] for m in matches], data["references"])
+        preferred = preferred_duplicate(match_usage) if len(match_usage) > 1 else next(iter(match_usage), None)
         summary = property_table(settings)
         mapping = table(("Device", "Port", "Description"), [tr(e(p["device"]), e(p["port"]), e(p.get("description") or "")) for p in ports])
         visibility = [tr(e(m["identity"]), e(v["device"]), status(v["status"])) for m in matches for v in m["visibility"]]
         details = ('<h3>Shared settings</h3>' + summary + '<h3>Ports to review</h3>' + mapping
                    + ('<h3>Matching Library profiles</h3>' + table(("Profile", "Device", "Visibility"), visibility) if visibility else '<h3>Placement</h3><p>Review creation of a reusable switch port profile.</p>')
+                   + ('<h3>Existing profile usage</h3>' + table(("Profile", "Assignments", "Shared devices", "Referencing objects", "Unknown device reads"), [tr(e(identity), *usage_cells(u)) for identity, u in match_usage.items()]) if match_usage else "")
+                   + '<h3>Recommended next step</h3><p>' + e("Review existing profile " + preferred if preferred else "Compare matching profiles and select a canonical name" if matches else "Review creating a reusable port profile") + '. Preserve each port mapping and description.</p>'
                    + '<h3>Validation required</h3>' + list_items(record.get("blockers", [])) + raw(record))
         rows.append(tr(f'<strong>Port group {i}</strong><small>{e(persona_label(record["persona"]))}</small>',
-                       str(len(ports)), str(len(devices)), e(", ".join(m["identity"] for m in matches) or "New profile candidate"),
+                       str(len(ports)), str(len(devices)), e(preferred or ", ".join(m["identity"] for m in matches) or "New profile candidate") + (f'<small>{len(matches)} matching profiles</small>' if len(matches) > 1 else ""),
                        badge("Unsupported fields" if record["unsupported_fields"] else "Review port mapping", "warn" if record["unsupported_fields"] else "info"),
                        inspect(f"Port group {i}", details)))
     panel("ports", "Port consolidation", "Repeated settings grouped by exact body. Physical mapping and descriptions are preserved.",
@@ -344,9 +348,9 @@ def engineering_view(workspace, query):
         rows.append(tr(f'<strong>{e(title_profile(r["identity"], r["effective"]))}</strong><small>{e(module_label(r["module"]))}</small>',
                        e(r["winning_scope"]), e(r["higher_scope"]), str(len({v["scope"] for v in members})),
                        badge("Identical settings" if same else "Different settings", "neutral"),
-                       inspect(r["identity"], details)))
+                       e("Review lower-scope redundancy" if same else "Retain if intentional"), inspect(r["identity"], details)))
     panel("shadow", "Scope precedence", "Shows which configuration takes precedence over a higher-scope definition. This is normal inheritance, not necessarily a problem. Identical definitions may warrant reviewing the lower-scope copy; do not delete the higher-scope profile.",
-          ("Profile", "Applied from", "Higher-scope definition", "Devices", "Settings compared", ""), rows, len(rows))
+          ("Profile", "Applied from", "Higher-scope definition", "Devices", "Settings compared", "Suggested next step", ""), rows, len(rows))
     rows = []
     for r in data["library_duplicates"]:
         keep = r["suggested_keep"]
@@ -370,9 +374,9 @@ def engineering_view(workspace, query):
                                 ("resolved", "Observed references", [r for r in data["references"] if r["status"] == "observed"])):
         rows = [tr(e(r["device"]), f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
                    f'{e(module_label(r["target_module"]))}<small>{e(r["target"] if r["target"] is not None else "Unknown")}</small>',
-                   status(r["status"]), inspect("Reference evidence", property_table(r))) for r in records]
+                   status(r["status"]), e("Keep reference; verify before profile removal" if r["status"] == "observed" else "Verify target profile and scope" if r["status"] == "not_observed" else "Collect or interpret missing reference evidence"), inspect("Reference evidence", property_table(r))) for r in records]
         panel(key, label, "Observed references are not a complete dependency graph. Not observed does not prove a broken dependency.",
-              ("Device", "Source", "Target", "State", ""), rows, len(rows))
+              ("Device", "Source", "Target", "State", "Suggested next step", ""), rows, len(rows))
     tabs = '<div class="tabs" data-tabs="engineering">' + "".join(f'<button type="button" data-tab="{k}" aria-selected="false">{e(label)} <span>{n}</span></button>' for k, label, n, _ in panels) + '</div>'
     return page("Engineering review", intro("Engineering review", "Review reusable ports, scope precedence, Library duplication and references.", picker)
                 + tabs + "".join(p[3] for p in panels), workspace.nav(name))
