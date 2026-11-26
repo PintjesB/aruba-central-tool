@@ -107,6 +107,18 @@ class BrowserLayoutTests(unittest.TestCase):
                         self.assertEqual(view.locator("[aria-current=page]").count(), 1)
                         self.assertEqual(view.locator("#snapshot-slot .snapshot-picker").count(), 1)
                         self.assertLessEqual(view.evaluate("document.documentElement.scrollWidth"), 1282)
+                        if screen in ("overview", "overrides", "advisor"):
+                            # Synthetic fixture only. Captured for visual design review.
+                            import os
+                            preview_dir = os.environ.get("CENTRAL_UI_PREVIEW_DIR")
+                            if preview_dir:
+                                Path(preview_dir).mkdir(parents=True, exist_ok=True)
+                                view.screenshot(path=str(Path(preview_dir) / (screen + ".png")))
+                                if screen in ("overview", "overrides"):
+                                    import base64
+                                    encoded = base64.b64encode(view.screenshot(type="jpeg", quality=50)).decode()
+                                    for offset in range(0, len(encoded), 4000):
+                                        print("UI_PREVIEW_" + screen + ":" + encoded[offset:offset + 4000], flush=True)
                         if screen == "overview":
                             self.assertEqual(view.locator(".opportunity-row").count(), 3)
                             self.assertIn("finding=remove_override", view.locator(".opportunity-row").first.get_attribute("href"))
