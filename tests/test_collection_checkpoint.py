@@ -49,6 +49,26 @@ class CheckpointTests(unittest.TestCase):
             comparable({}, {"collection_checkpoint": {"mixed_capture_times": True}}, True)
 
 
+    def test_phase_checkpoint_retries_incomplete_and_binds_selector(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "checkpoint.db"
+            cp = ScopeCheckpoint(path, "manifest")
+            qualified = lambda v: v.get("collection_count_verified") is True
+            selector = ["module", {"scope-id": "1", "effective": "true"}]
+            incomplete = {"status": "partial_response", "collection_count_verified": False}
+            complete = {"status": "response_received", "collection_count_verified": True, "raw": {"profiles": []}}
+            self.assertEqual(cp.observe("raw_catalog", selector, lambda: incomplete, qualified), incomplete)
+            self.assertEqual(cp.observe("raw_catalog", selector, lambda: complete, qualified), complete)
+            resumed = ScopeCheckpoint(path, "manifest", resume=True)
+            def unexpected():
+                self.fail("Qualified observation should be reused")
+            self.assertEqual(resumed.observe("raw_catalog", selector, unexpected, qualified), complete)
+            self.assertEqual(resumed.evidence()["additional_observations_reused"], {"raw_catalog": 1})
+            self.assertTrue(resumed.evidence()["mixed_capture_times"])
+            self.assertEqual(resumed.observe("raw_catalog", ["different"], lambda: incomplete, qualified), incomplete)
+            self.assertEqual(resumed.observe("library", selector, lambda: incomplete, qualified), incomplete)
+            self.assertEqual(resumed.evidence()["additional_observations_saved"], {"raw_catalog": 1})
+
     def test_workspace_lists_only_valid_checkpoints(self):
         from collection_checkpoint import available_checkpoints
         from config_app import Workspace

@@ -1817,7 +1817,7 @@ def read_raw_profile_collection(client, module, params):
     return incomplete("page_limit_reached")
 
 
-def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, workers=1, progress=None, *, scopes_by_persona=None, deep_catalog=False):
+def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, workers=1, progress=None, *, scopes_by_persona=None, deep_catalog=False, checkpoint=None):
     """Inspect observed source scopes for modules without an explicit adapter.
 
     These are raw read-only diagnostics, not qualified local/effective views.
@@ -1872,7 +1872,8 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
 
     def capture(module, params):
         try:
-            return read_raw_profile_collection(client, module, params)
+            read = lambda: read_raw_profile_collection(client, module, params)
+            return checkpoint.observe("raw_catalog", [module, params], read, lambda v: v.get("collection_count_verified") is True) if checkpoint else read()
         except APIError as exc:
             if exc.status in (401, 429):
                 raise
@@ -1965,13 +1966,14 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                                                    "Inspecting discovered modules")))
 
 
-def library_inventory(client, modules, assignment_view=None, scope_map_view=None, workers=1, progress=None):
+def library_inventory(client, modules, assignment_view=None, scope_map_view=None, workers=1, progress=None, *, checkpoint=None):
     """Read tenant-wide shared profiles once per module and preserve assignment evidence."""
     applicable = sorted(m for m in modules if not CONFIG_MODULES[m][2])
     def read(module):
         identity, _, _ = CONFIG_MODULES[module]
         params = {} if module == "auth-profiles" else {"view-type": "LIBRARY", "detailed": "true"}
-        view = read_module_view(client, module, identity, params)
+        read = lambda: read_module_view(client, module, identity, params)
+        view = checkpoint.observe("library", [module, identity, params], read, lambda v: v.get("status") == "list_parsed" and v.get("count_confirmed") is True) if checkpoint else read()
         print(f"  Library {module}: {view['status']}; profiles={len(view['profiles'])}", flush=True)
         return module, view
     audit_progress(progress, "Library", 0, len(applicable), "Reading shared profiles")
@@ -2144,7 +2146,7 @@ def keyed_profile_read(client, module, identity_key, identity, params, collectio
                            if isinstance(collection_profile, dict) else None}
 
 
-def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKERS, progress=None):
+def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKERS, progress=None, *, checkpoint=None):
     """Deep survey of observed Library definitions and saved local identities.
 
     Effective reads are paired with each local identity. Do not query guessed
@@ -2179,7 +2181,9 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
             "effective": "true" if kind == "effective" else "false", "detailed": "true"}
         if kind == "local":
             params["object-type"] = "LOCAL"
-        return task[:5], keyed_profile_read(client, module, contracts[module], identity, params, profile)
+        read = lambda: keyed_profile_read(client, module, contracts[module], identity, params, profile)
+        evidence = checkpoint.observe("keyed_details", [*task[:5], contracts[module], params, profile], read, lambda v: v.get("status") == "identity_observed") if checkpoint else read()
+        return task[:5], evidence
     print(f"Keyed profile details: {len(tasks)} observed profile reads; additional evidence only", flush=True)
     audit_progress(progress, "Profile details", 0, len(tasks), "Reading individual configuration profiles")
     observations = {}
@@ -3060,11 +3064,11 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     # function. Always survey the entire explicitly supported Library catalog.
     applicable_modules = set(CONFIG_MODULES)
     print("Reading tenant Library and assignments", flush=True)
-    library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress)
+    library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress, checkpoint=checkpoint)
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress,
-                                           scopes_by_persona=scopes_by_persona, deep_catalog=deep_catalog)
+                                           scopes_by_persona=scopes_by_persona, deep_catalog=deep_catalog, checkpoint=checkpoint)
     health = capture_configuration_health(client, records, workers, progress)
-    keyed_details = capture_keyed_profile_details(client, results, library, workers, progress) if deep_catalog else None
+    keyed_details = capture_keyed_profile_details(client, results, library, workers, progress, checkpoint=checkpoint) if deep_catalog else None
     details = capture_vlan_instance_details(client, results, workers, progress)
     operational = capture_configuration_operational_vlans(client, results, workers, progress)
     cli = capture_switch_vlan_cli(client, results, details, workers, progress)
