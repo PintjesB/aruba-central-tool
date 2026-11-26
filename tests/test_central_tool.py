@@ -288,6 +288,32 @@ class Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             select_snapshot(result)
 
+    def test_audit_reviews_every_discovered_persona_and_reports_unqualified(self):
+        from unittest.mock import patch
+        from central_tool import audit
+        class Client:
+            base = "test"
+        source = {"kind": "multi_persona_scan", "region": "test", "inventory": [
+            {"identity": {"persona": "ACCESS_SWITCH"}, "vlan_scan_supported_persona": True},
+            {"identity": {"persona": "CORE_SWITCH"}, "vlan_scan_supported_persona": True},
+            {"identity": {"persona": "CAMPUS_AP"}, "vlan_scan_supported_persona": False}],
+            "snapshots": {p: {"persona": p, "region": "test"} for p in ("ACCESS_SWITCH", "CORE_SWITCH")}}
+        with patch("central_tool.scan_all", return_value=source) as scan, \
+             patch("central_tool.discover_dependencies", return_value={}) as probe, \
+             patch("central_tool.report", return_value={}), \
+             patch("central_tool.dependency_review", return_value={"safe_to_apply": False}) as review, \
+             patch("central_tool.print_review_summary"), patch("central_tool.print_dependency_summary"):
+            result = audit(Client())
+            self.assertEqual(set(result["results"]), {"ACCESS_SWITCH", "CORE_SWITCH"})
+            self.assertEqual(result["unqualified_personas"], {"CAMPUS_AP": 1})
+            self.assertFalse(result["safe_to_apply"])
+            self.assertEqual(probe.call_count, 2)
+            self.assertEqual(review.call_count, 2)
+            self.assertEqual(scan.call_count, 1)
+            scan.return_value = {**source, "region": "other"}
+            with self.assertRaises(ValueError):
+                audit(Client())
+
     def test_dependencies_probe_distinguishes_empty_from_permission(self):
         from central_tool import discover_dependencies
         class Probe:

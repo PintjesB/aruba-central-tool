@@ -34,6 +34,10 @@ Use `python central_tool.py inventory --region-file region.txt --output inventor
 
 Use `python central_tool.py dependencies snapshot.json --output dependencies.json` with credentials to probe the dependency modules of a saved scan. Empty responses, permission failures and rejected requests are distinct; none proves a feature is unsupported. Then run `python central_tool.py report snapshot.json --dependencies dependencies.json --output report.json` offline. Raw inventory and snapshots stay private.
 
+## Unified tenant audit
+
+Run `python central_tool.py audit --region-file region.txt --output audit.json` to discover inventory, scan all qualified switch personas, probe dependencies and generate per-persona reviews in one read-only operation. The audit collects fresh configuration and dependencies in the same run to avoid combining stale or different-tenant snapshots. The output bundles the inventory, configuration snapshots, dependency evidence and reports. Unqualified device functions remain explicitly listed, and the bundle is never an executable migration plan.
+
 ## Safety boundary
 
 No configuration mutation API calls exist yet. Only OAuth token issuance uses POST. Candidate findings are not executable plans. The API is v1alpha1 and real tenant response shapes, group access, annotation semantics, and Classic/New configuration authority must be validated before enabling writes. Scope IDs are strings, not floating-point numbers.

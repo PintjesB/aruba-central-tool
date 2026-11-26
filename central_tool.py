@@ -915,6 +915,35 @@ def write_private(path, data):
         file.write(payload)
 
 
+def audit(client):
+    """Discover and review every qualified persona in one read-only operation."""
+    source = scan_all(client)
+    if source.get("kind") != "multi_persona_scan" or source.get("region") != client.base:
+        raise ValueError("Expected a multi-persona snapshot from the connected region")
+    results = {}
+    for persona, snapshot in sorted(source["snapshots"].items()):
+        if snapshot.get("persona") != persona or snapshot.get("region") != client.base:
+            raise ValueError("Snapshot persona or region mismatch")
+        print(f"Discovering dependencies: {persona}", flush=True)
+        dependencies = discover_dependencies(client, snapshot)
+        review = dependency_review(snapshot, dependencies, report(snapshot))
+        print(f"Review: {persona}", flush=True)
+        print_review_summary(review)
+        print_dependency_summary(review)
+        results[persona] = {"snapshot": snapshot, "dependencies": dependencies, "report": review}
+    unqualified = Counter(r["identity"]["persona"] for r in source["inventory"]
+                          if not r["vlan_scan_supported_persona"])
+    print("Audit coverage:")
+    print(f"  Inventory entries: {len(source['inventory'])}")
+    print(f"  Reviewed switch personas: {len(results)}")
+    print(f"  Inventory entries without a qualified configuration adapter: {sum(unqualified.values())}")
+    print("  Migration authorized: no")
+    return {"schema": 1, "kind": "tenant_audit", "region": client.base,
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "inventory": source["inventory"], "unqualified_personas": dict(unqualified),
+            "results": results, "safe_to_apply": False}
+
+
 def select_snapshot(data, persona=None):
     if data.get("kind") != "multi_persona_scan":
         if persona and data.get("persona") != persona:
@@ -938,6 +967,9 @@ def main():
     all_scan = commands.add_parser("scan-all", help="Automatically scan all discovered switch personas")
     all_scan.add_argument("--output", required=True, type=Path)
     all_scan.add_argument("--region-file", type=Path)
+    audit_cmd = commands.add_parser("audit", help="Discover, scan, probe dependencies and review all supported switch personas")
+    audit_cmd.add_argument("--output", required=True, type=Path)
+    audit_cmd.add_argument("--region-file", type=Path)
     inv = commands.add_parser("inventory", help="Discover every device and its known compatibility")
     inv.add_argument("--output", required=True, type=Path)
     inv.add_argument("--region-file", type=Path)
@@ -954,9 +986,9 @@ def main():
     try:
         if args.output.exists():
             raise ValueError("Output already exists")
-        if args.command in ("scan", "scan-all", "inventory", "dependencies"):
+        if args.command in ("scan", "scan-all", "audit", "inventory", "dependencies"):
             source = json.loads(args.snapshot.read_text(encoding="utf-8")) if args.command == "dependencies" else None
-            if source is not None and source.get("kind") == "multi_persona_scan":
+            if args.command == "dependencies" and source is not None and source.get("kind") == "multi_persona_scan":
                 source = select_snapshot(source, args.persona)
             region_file = getattr(args, "region_file", None)
             preferred = source["region"] if source else os.getenv("CENTRAL_BASE_URL")
@@ -974,6 +1006,8 @@ def main():
                 data = scan(client, args.persona)
             elif args.command == "scan-all":
                 data = scan_all(client)
+            elif args.command == "audit":
+                data = audit(client)
             elif args.command == "inventory":
                 records = inventory_capabilities(inventory(client))
                 data = {"region": region, "devices": records}
