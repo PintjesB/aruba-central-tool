@@ -244,7 +244,7 @@ class Workspace:
 
     def nav(self):
         root = "/" + self.token + "/"
-        return f'<a href="{root}">Snapshots</a><a href="{root}coverage">Module coverage</a><a href="{root}library">Library</a><a href="{root}scopes">Scopes</a><a href="{root}compare">Compare devices</a>'
+        return f'<a href="{root}">Snapshots</a><a href="{root}advisor">Consolidation advisor</a><a href="{root}coverage">Module coverage</a><a href="{root}library">Library</a><a href="{root}scopes">Scopes</a><a href="{root}compare">Compare devices</a>'
 
     def home(self):
         root = "/" + self.token + "/"
@@ -271,7 +271,8 @@ class Workspace:
         snapshot_link = ""
         if status["snapshot"]:
             href = root + "report?" + urlencode({"snapshot": status["snapshot"]})
-            snapshot_link = f'<p><a href="{e(href)}">Open new configuration snapshot</a></p>'
+            advisor = root + "advisor?" + urlencode({"snapshot": status["snapshot"]})
+            snapshot_link = f'<p><a href="{e(advisor)}">Review consolidation recommendations</a> · <a href="{e(href)}">Open new configuration snapshot</a></p>'
         progress_html = (
             f'<div class="audit-state" id="audit-state" data-state="{e(state)}" data-status-url="{root}status">'
             f'<h3 id="audit-title" role="status">{e(title)}</h3>'
@@ -322,10 +323,121 @@ if(panel.dataset.state==='running')poll();
                     f'<p><a href="{root}">Reload status</a></p></section><section><h2>Saved snapshots ({len(files)})</h2>'
                     '<table><thead><tr><th>Capture file</th><th>Action</th></tr></thead><tbody>' +
                     "".join(f'<tr><td>{e(p.name)}</td><td><a href="{root}report?{e(urlencode({"snapshot": p.name}))}">Open explorer</a>'
+                            f' · <a href="{root}advisor?{e(urlencode({"snapshot": p.name}))}">Consolidation advisor</a>'
                             f' · <a href="{root}coverage?{e(urlencode({"snapshot": p.name}))}">Module coverage</a>'
                             f' · <a href="{root}scopes?{e(urlencode({"snapshot": p.name}))}">Browse scopes</a>' 
                             f' · <a href="{root}compare?{e(urlencode({"snapshot": p.name}))}">Compare devices</a></td></tr>'
                             for p in files) + '</tbody></table></section>' + script, self.nav())
+
+    def advisor(self, query):
+        from central_tool import refresh_configuration_review
+        from consolidation import LABELS, profile_recommendations
+        from collections import Counter
+        root = "/" + self.token + "/"
+        files = audit_files(self.directory)
+        if not files:
+            return page("Consolidation advisor", "<p>No snapshots available.</p>", self.nav())
+        name = query.get("snapshot", files[0].name)
+        bundle = refresh_configuration_review(read_audit(self.directory, name))
+        findings = profile_recommendations(bundle)
+        counts = Counter(f["action"] for f in findings)
+        cards = "".join(
+            f'<button type="button" class="advisor-card" data-action="{e(k)}"><strong>{counts[k]}</strong><span>{e(v)}</span></button>'
+            for k, v in LABELS.items())
+        modules = sorted({f["module"] for f in findings})
+        people = sorted({f["persona"] for f in findings})
+        rows = []
+        for f in findings:
+            sources = ", ".join(s["name"] for s in f["sources"]) or "Library"
+            observed = f["observed_devices"]
+            coverage = " / ".join(f"{len(observed.get(k, []))} {k}" for k in
+                                  ("matching", "different", "absent", "unknown")) if observed else "Not assessed"
+            details = {"source_profiles": f["sources"], "local": f["local"], "reference": f["reference"],
+                       "differences": f["differences"], "observed_devices": observed}
+            rows.append(
+                f'<tr data-action="{e(f["action"])}" data-module="{e(f["module"])}" data-persona="{e(f["persona"])}">'
+                f'<td><input type="checkbox" class="choose" aria-label="Select recommendation" data-plan="{e(json.dumps(f, ensure_ascii=False))}"></td>'
+                f'<td><strong>{e(LABELS[f["action"]])}</strong><br><small>{e(f["persona"])}</small></td>'
+                f'<td>{e(f["module"])}<br><strong>{e(f["identity"])}</strong></td>'
+                f'<td>{len(f["sources"])} local scopes<br>{e(sources)}</td>'
+                f'<td>{e(f["target"])}</td><td>{e(coverage)}</td>'
+                '<td><span class="pill">Review required</span>'
+                '<details><summary>Evidence and steps</summary>'
+                + '<ol>' + "".join(f'<li>{e(step)}</li>' for step in f["steps"]) + '</ol>'
+                + '<ul>' + "".join(f'<li>{e(b)}</li>' for b in f["blockers"]) + '</ul>'
+                + f'<pre>{e(json.dumps(details, indent=2, ensure_ascii=False))}</pre></details></td></tr>')
+        controls = (
+            f'<form method="get" action="{root}advisor"><label>Snapshot<select name="snapshot">'
+            + options([(p.name, p.name) for p in files], name)
+            + '</select></label><button>Open</button></form>'
+            '<div class="advisor-cards">' + cards + '</div>'
+            '<div class="advisor-filters"><label>Action<select id="action">'
+            + options([("", "All recommendations")] + list(LABELS.items()))
+            + '</select></label><label>Module<select id="module">'
+            + options([("", "All modules")] + [(m, m) for m in modules])
+            + '</select></label><label>Device function<select id="persona">'
+            + options([("", "All functions")] + [(p, p) for p in people])
+            + '</select></label><label>Search<input id="search" type="search" placeholder="Profile or device"></label>'
+            '<button type="button" id="clear">Clear filters</button></div>')
+        plan = (
+            '<section><h2>Selected change preview</h2><p id="selected" aria-live="polite">0 selected</p>'
+            '<p>Review-only. These steps are not executable API operations. Unknown inheritance, destination scope, '
+            'dependencies and rollback must be resolved before any write.</p>'
+            '<button id="select-visible" type="button">Select visible</button>'
+            '<button id="clear-selection" type="button">Clear selection</button>'
+            '<button id="export-plan" type="button" disabled>Export private preview JSON</button>'
+            '<pre id="preview">Select recommendations to inspect the proposed workflow.</pre></section>')
+        script = """
+<style>
+.advisor-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:12px 0}
+.advisor-card{display:grid;text-align:left;gap:5px;padding:14px;margin:0;border-top:3px solid #1683dc;cursor:pointer}
+.advisor-card strong{font-size:25px}.advisor-card span{font-size:12px}
+.advisor-filters{display:flex;flex-wrap:wrap;align-items:center}.advisor-table{overflow:auto}
+.advisor-table td{min-width:90px}.advisor-table td:first-child{min-width:30px}.advisor-table details pre{max-width:450px;max-height:320px;overflow:auto}
+.advisor-table tr[hidden]{display:none}.advisor-table summary{cursor:pointer;color:#1683dc;margin:8px 0}
+#preview{max-height:500px;overflow:auto;background:var(--bg);padding:12px}
+</style>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const rows=Array.from(document.querySelectorAll('.advisor-table tbody tr'));
+const checks=rows.map(r=>r.querySelector('.choose'));
+const keys=['action','module','persona'];
+function filter(){
+ const q=$('search').value.trim().toLowerCase();
+ for(const row of rows)row.hidden=!keys.every(k=>!$(k).value||row.dataset[k]===$(k).value)||!row.textContent.toLowerCase().includes(q);
+ $('visible-count').textContent=rows.filter(r=>!r.hidden).length+' of '+rows.length+' recommendations';
+}
+function selection(){
+ const chosen=checks.filter(c=>c.checked).map(c=>JSON.parse(c.dataset.plan));
+ $('selected').textContent=chosen.length+' selected (including any hidden by filters)';
+ $('export-plan').disabled=!chosen.length;
+ $('preview').textContent=chosen.length?chosen.map(f=>f.module+' / '+f.identity+' — '+f.action+'\\nTarget: '+f.target+'\\n'+f.steps.map((s,i)=>(i+1)+'. '+s).join('\\n')+'\\nBlocked: '+f.blockers.join(' ')).join('\\n\\n'):'Select recommendations to inspect the proposed workflow.';
+ return chosen;
+}
+for(const k of keys)$(k).addEventListener('change',filter);
+$('search').addEventListener('input',filter);
+$('clear').addEventListener('click',()=>{for(const k of keys)$(k).value='';$('search').value='';filter();});
+for(const b of document.querySelectorAll('.advisor-card'))b.addEventListener('click',()=>{$('action').value=b.dataset.action;filter();});
+for(const c of checks)c.addEventListener('change',selection);
+$('select-visible').addEventListener('click',()=>{for(const r of rows)if(!r.hidden)r.querySelector('.choose').checked=true;selection();});
+$('clear-selection').addEventListener('click',()=>{for(const c of checks)c.checked=false;selection();});
+$('export-plan').addEventListener('click',()=>{
+ const content=JSON.stringify({schema:1,kind:'consolidation_preview',safe_to_apply:false,snapshot:$('snapshot-label').dataset.snapshot,recommendations:selection()},null,2);
+ const url=URL.createObjectURL(new Blob([content],{type:'application/json'}));
+ const a=document.createElement('a');a.href=url;a.download='consolidation-preview.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+filter();selection();
+</script>"""
+        return page("Consolidation advisor",
+                    f'<section><h2>Consolidation advisor</h2><p id="snapshot-label" data-snapshot="{e(name)}">Captured: {e(bundle.get("captured_at", "unknown"))}</p>'
+                    '<p>Qualified reusable profiles only. Repeated profiles are grouped by exact identity and body. '
+                    'Device counts are observed effective configuration, not traffic usage or a verified blast radius. '
+                    'Device-specific system settings and physical/routed topology are excluded from generic promotion.</p>'
+                    + controls + '<p id="visible-count" aria-live="polite"></p>'
+                    '<div class="advisor-table"><table><thead><tr><th>Select</th><th>Recommendation</th><th>Profile</th>'
+                    '<th>Local scopes</th><th>Proposed placement</th><th>Observed devices</th><th>Review</th></tr></thead><tbody>'
+                    + "".join(rows) + '</tbody></table></div></section>' + plan + script, self.nav())
 
     def library(self, query):
         root = "/" + self.token + "/"
@@ -576,6 +688,8 @@ def handler_for(workspace):
                     body = workspace.home()
                 elif parsed.path == root + "report":
                     body = workspace.report(query)
+                elif parsed.path == root + "advisor":
+                    body = workspace.advisor(query)
                 elif parsed.path == root + "library":
                     body = workspace.library(query)
                 elif parsed.path == root + "unadapted":
