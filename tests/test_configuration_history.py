@@ -1,0 +1,79 @@
+import unittest
+from configuration_history import configuration_drift, reference_compliance, view_changes
+
+
+def view(name="Office", confirmed=True):
+    return {"status": "list_parsed", "count_confirmed": confirmed,
+            "profiles": {"20": {"vlan": 20, "name": name}}}
+
+
+def snapshot(name="Office"):
+    scopes = [{"id": "1", "kind": "global", "name": "Global"},
+              {"id": "2", "kind": "site", "name": "Site"},
+              {"id": "3", "kind": "device", "name": "Reference",
+               "metadata": {"siteId": "2", "serial": "A"}},
+              {"id": "4", "kind": "device", "name": "Target",
+               "metadata": {"siteId": "2", "serial": "B"}},
+              {"id": "5", "kind": "device", "name": "Unknown",
+               "metadata": {"serial": "C"}}]
+    records = [{"scope": sid, "scope_kind": next(s["kind"] for s in scopes if s["id"] == sid),
+                "local_view": view(value), "effective_view": view(value)}
+               for sid, value in (("1", "Office"), ("3", "Office"), ("4", name))]
+    return {"schema": 1, "kind": "configuration_audit", "region": "https://de1.example",
+            "inventory": [{"inventory": {"serial": s}} for s in ("A", "B", "C")],
+            "results": {"ACCESS_SWITCH": {"scopes": scopes,
+                        "modules": {"layer2-vlan": {"scope_results": records}}}},
+            "library": {"modules": {"layer2-vlan": view(name)}}}
+
+
+class HistoryTests(unittest.TestCase):
+    def test_drift_separates_saved_effective_and_library(self):
+        a, b = snapshot(), snapshot("Changed")
+        with self.assertRaises(ValueError):
+            configuration_drift(a, b)
+        result = configuration_drift(a, b, confirmed=True)
+        self.assertEqual(result["counts"], {"changed": 3})
+        self.assertEqual({r["view"] for r in result["records"]}, {"local", "effective", "library"})
+        self.assertFalse(result["identity_checks"]["same_tenant_verified"])
+        self.assertFalse(result["safe_to_apply"])
+        b["inventory"] = [{"inventory": {"serial": "Other"}}]
+        with self.assertRaises(ValueError):
+            configuration_drift(a, b, confirmed=True)
+
+    def test_missing_collection_count_is_not_a_removal(self):
+        a = view()
+        b = {"status": "list_parsed", "profiles": {}}
+        self.assertEqual(view_changes(a, b)[0]["status"], "presence_unverified")
+        b["count_confirmed"] = True
+        self.assertEqual(view_changes(a, b)[0]["status"], "removed")
+        self.assertEqual(view_changes(a, {"status": "request_rejected"})[0]["status"], "unavailable")
+        self.assertEqual(view_changes(view(confirmed=False), view())[0]["status"], "coverage_unverified")
+
+    def test_reference_standard_scopes_and_missing_membership(self):
+        bundle = snapshot("Changed")
+        result = reference_compliance(bundle, "ACCESS_SWITCH", "layer2-vlan", "3", "2")
+        self.assertEqual(result["target_count"], 1)
+        self.assertEqual(result["unknown_membership"], 1)
+        self.assertEqual({r["device"]: r["status"] for r in result["findings"]},
+                         {"Target": "differences_observed", "Unknown": "membership_unverified"})
+        result = reference_compliance(snapshot(), "ACCESS_SWITCH", "layer2-vlan", "3", "4")
+        self.assertEqual(result["findings"][0]["status"], "matches_reference")
+
+    def test_browser_routes_render_and_show_explicit_selection(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from config_app import Workspace
+        with tempfile.TemporaryDirectory() as directory:
+            for name, data in (("config-audit-old.json", snapshot()),
+                               ("config-audit-new.json", snapshot("Changed"))):
+                (Path(directory) / name).write_text(json.dumps(data))
+            w = Workspace(directory)
+            html = w.drift({"snapshot": "config-audit-new.json", "previous": "config-audit-old.json", "confirmed": "yes"})
+            self.assertIn("Change worklist", html)
+            self.assertIn("Common device serials", html)
+            html = w.standards({"snapshot": "config-audit-new.json", "persona": "ACCESS_SWITCH",
+                                "module": "layer2-vlan", "reference": "3", "target": "2"})
+            self.assertIn("Reference standard results", html)
+            self.assertIn("Differences observed", html)
+            self.assertIn("Membership unverified", html)
