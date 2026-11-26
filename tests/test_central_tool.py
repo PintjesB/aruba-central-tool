@@ -227,6 +227,36 @@ class Tests(unittest.TestCase):
         self.assertIn("[other-field]", result)
         self.assertIn("name: value_difference", result)
 
+    def test_default_aware_assessment_does_not_assume_multicast_or_l3_equivalence(self):
+        from central_tool import assess_vlan_reference
+        local = {"vlan": 10}
+        shared = {"vlan": 10, "enable": True, "voice-enable": False,
+                  "dhcpv4-snooping": {"enable": False}}
+        self.assertEqual(assess_vlan_reference(local, shared)["classification"],
+                         "documented_defaults_only")
+        for reference in ({"vlan": 10, "igmp": {"snooping": False}},
+                          {"vlan": 10, "mld": {"snooping": True}},
+                          {"vlan": 10, "is-l3-vlan": None},
+                          {"vlan": 10, "name": "private"},
+                          {"vlan": 10, "enable": False},
+                          {"vlan": 10, "dhcpv4-snooping": {"enable": True}}):
+            with self.subTest(reference=reference):
+                self.assertEqual(assess_vlan_reference(local, reference)["classification"],
+                                 "requires_validation")
+        self.assertEqual(assess_vlan_reference({"vlan": 10, "name": "A"},
+                         {"vlan": 10, "name": "B"})["classification"], "explicit_difference")
+        self.assertEqual(assess_vlan_reference({"vlan": 10, "voice-enable-alias": "x"},
+                         {"vlan": 10, "voice-enable-alias": "x", "voice-enable": False})["classification"],
+                         "requires_validation")
+
+    def test_review_does_not_propose_global_scope_for_library_only_vlan(self):
+        a = {"vlan": 10}
+        b = {"vlan": 10, "enable": True}
+        s = scope("2", "device", [a], [a])
+        review = review_local_profiles([s], {}, {"10": b})[0]
+        self.assertEqual(review["proposed_review"], "review_library_reuse_at_existing_scope")
+        self.assertEqual(review["status"], "review_only")
+
     def test_single_local_profiles_are_reviewed(self):
         base = {"vlan": 10, "name": "Corp"}
         extra = {"vlan": 30, "name": "CCTV"}
