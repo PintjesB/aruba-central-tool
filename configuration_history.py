@@ -31,7 +31,7 @@ def snapshot_identity_checks(before, after):
     return {"common_serial_count": len(sa & sb), "same_tenant_verified": False}
 
 
-def view_changes(before, after):
+def view_changes(before, after, *, include_source=True):
     """Compare positive bodies, and require verified counts for absence claims."""
     before, after = before or {}, after or {}
     if before.get("status") != "list_parsed" or after.get("status") != "list_parsed":
@@ -55,7 +55,7 @@ def view_changes(before, after):
         def source(row):
             ann = row.get("@")
             return {k: ann[k] for k in source_fields if k in ann} if isinstance(ann, dict) else {}
-        annotations = field_differences(source(old), source(new))
+        annotations = field_differences(source(old), source(new)) if include_source else []
         if fields or annotations:
             changes.append({"identity": identity, "status": "changed" if fields else "source_changed",
                             "before": x, "after": y, "fields": fields, "source_fields": annotations})
@@ -127,31 +127,47 @@ def configuration_drift(before, after, *, confirmed=False):
             "counts": dict(Counter(r["status"] for r in records)), "complete": False, "safe_to_apply": False}
 
 
-def reference_compliance(bundle, persona, module, reference, target_scope):
+def reference_compliance(bundle, persona, module, reference, target_scope, *, baseline=None, confirmed=False):
     """Compare a selected standard against explicitly selected device recipients.
 
     This is an exact observed-body check, not a claim of operational compliance.
     Unknown reads and count-unverified absence never become violations.
     """
     entry = bundle["results"][persona]
+    historical = baseline is not None and baseline is not bundle
+    if historical:
+        if not confirmed:
+            raise ValueError("Confirm the baseline and current snapshots belong to the same tenant")
+        snapshot_identity_checks(baseline, bundle)
+    baseline_entry = (baseline if historical else bundle)["results"].get(persona, {})
     scopes = {s["id"]: s for s in entry["scopes"]}
-    devices = {sid for sid, s in scopes.items() if s["kind"] == "device"}
-    if reference not in devices or target_scope not in scopes or module not in STANDARD_MODULES or module not in entry["modules"]:
+    baseline_devices = {s["id"]: s for s in baseline_entry.get("scopes", []) if s["kind"] == "device"}
+    if (reference not in baseline_devices or target_scope not in scopes or module not in STANDARD_MODULES
+            or module not in entry["modules"] or module not in baseline_entry.get("modules", {})):
         raise ValueError("Invalid reference, module or target scope")
     members = scope_memberships(entry["scopes"])
     kind = scopes[target_scope]["kind"]
     targets = {target_scope} if kind == "device" else {sid for sid, m in members.items() if m.get(kind) == target_scope}
     unknown = set() if kind == "device" else {sid for sid, m in members.items() if m.get(kind) is None}
-    targets.discard(reference)
-    unknown.discard(reference)
+    if not historical:
+        targets.discard(reference)
+        unknown.discard(reference)
     views = {v["scope"]: v.get("effective_view", {}) for v in entry["modules"][module]["scope_results"]}
-    expected = views.get(reference, {})
+    baseline_views = {v["scope"]: v.get("effective_view", {}) for v in baseline_entry["modules"][module]["scope_results"]}
+    expected = baseline_views.get(reference, {})
     if expected.get("status") != "list_parsed" or not expected.get("profiles"):
         raise ValueError("Reference device has no interpretable nonempty module view")
     findings = []
     for sid in sorted(targets):
         actual = views.get(sid, {})
-        changes = view_changes(expected, actual)
+        changes = view_changes(expected, actual, include_source=False)
+        # A missing field or null value is not enough to establish that the
+        # actual setting differs. Preserve it as a gap requiring verification.
+        for change in changes:
+            if change["status"] == "changed" and all(
+                    d["kind"] in ("missing_local", "missing_reference", "null_vs_value")
+                    for d in change.get("fields", [])):
+                change["status"] = "field_values_unavailable"
         if not changes:
             state = "matches_reference"
         elif any(r["status"] in ("added", "removed", "changed") for r in changes):
@@ -163,5 +179,7 @@ def reference_compliance(bundle, persona, module, reference, target_scope):
     for sid in sorted(unknown):
         findings.append({"scope": sid, "device": scopes[sid].get("name") or sid,
                          "status": "membership_unverified", "differences": []})
-    return {"findings": findings, "reference_count_confirmed": expected.get("count_confirmed") is True,
+    return {"findings": findings, "historical_baseline": historical,
+            "reference_scope": reference, "reference_name": baseline_devices[reference].get("name") or reference,
+            "reference_count_confirmed": expected.get("count_confirmed") is True,
             "target_count": len(targets), "unknown_membership": len(unknown), "safe_to_apply": False}
