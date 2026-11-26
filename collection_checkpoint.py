@@ -42,6 +42,8 @@ class ScopeCheckpoint:
         self.manifest = manifest
         self.pairs = 0
         self.reused = 0
+        self.extra_reused = {}
+        self.extra_saved = {}
         if self.path.is_symlink():
             raise ValueError("Checkpoint must not be a symlink")
         if self.path.exists():
@@ -67,6 +69,8 @@ class ScopeCheckpoint:
                     raise ValueError("Checkpoint expired; start a fresh audit")
                 self.created = data["created_at"]
                 self.pairs = db.execute("SELECT COUNT(*) FROM pairs").fetchone()[0]
+            db.execute("CREATE TABLE IF NOT EXISTS observations (key TEXT PRIMARY KEY, phase TEXT NOT NULL, payload TEXT NOT NULL)")
+            self.extra_saved = dict(db.execute("SELECT phase, COUNT(*) FROM observations GROUP BY phase"))
 
     def _connect(self):
         from contextlib import contextmanager
@@ -107,10 +111,33 @@ class ScopeCheckpoint:
                                 (key, json.dumps(row, allow_nan=False)))
             self.pairs += cursor.rowcount
 
+    def observe(self, phase, selector, read, qualified):
+        """Resume one independently qualified configuration observation.
+
+        The caller supplies a selector including all relevant inputs and the
+        phase-specific qualification predicate. No unsuccessful read is reused.
+        """
+        key = fingerprint([phase, selector])
+        with self.lock, self._connect() as db:
+            record = db.execute("SELECT payload FROM observations WHERE key = ?", (key,)).fetchone()
+            if record:
+                payload = json.loads(record[0])["evidence"]
+                if qualified(payload):
+                    self.extra_reused[phase] = self.extra_reused.get(phase, 0) + 1
+                    return payload
+        payload = read()
+        if qualified(payload):
+            with self.lock, self._connect() as db:
+                cursor = db.execute("INSERT OR IGNORE INTO observations VALUES (?, ?, ?)",
+                                    (key, phase, json.dumps({"captured_at": self.now().isoformat(), "evidence": payload}, allow_nan=False)))
+                self.extra_saved[phase] = self.extra_saved.get(phase, 0) + cursor.rowcount
+        return payload
+
     def evidence(self):
         return {"enabled": True, "started_at": self.created, "qualified_pairs_saved": self.pairs,
-                "reused_pairs": self.reused, "mixed_capture_times": self.reused > 0,
-                "scope_pairs_only": True, "max_age_hours": 24}
+                "reused_pairs": self.reused, "mixed_capture_times": self.reused > 0 or any(self.extra_reused.values()),
+                "scope_pairs_only": False, "additional_observations_saved": dict(self.extra_saved),
+                "additional_observations_reused": dict(self.extra_reused), "max_age_hours": 24}
 
 def mark_complete(path):
     """Seal the checkpoint only after the completed snapshot is published."""
@@ -125,7 +152,6 @@ def mark_complete(path):
             db.execute("UPDATE manifest SET payload = ?", (json.dumps(data),))
     finally:
         db.close()
-
 
 def available_checkpoints(directory, now=None):
     """List only locally created, unsealed, nonexpired checkpoint filenames."""
