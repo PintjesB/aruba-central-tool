@@ -243,6 +243,42 @@ class BrowserLayoutTests(unittest.TestCase):
                             self.assertIn("Resolve overlapping proposals", view.locator("#preview").inner_text())
                             self.assertTrue(view.locator("#export-plan").is_disabled())
                             view.keyboard.press("Escape")
+                            # Distinct selected proposals connected by observed
+                            # effective dependencies are ordered prerequisite first.
+                            view.locator("#clear-selection").click()
+                            view.evaluate("""() => {
+                                const checks=[...document.querySelectorAll('.choose:not(:disabled)')];
+                                const a=checks[0], b=checks[1];
+                                const plan=JSON.parse(a.dataset.plan);
+                                const base={...plan, action:'reuse_library', fallbacks:[], sources:[]};
+                                const dep=(source,target)=>({persona:plan.persona,source_module:plan.module,
+                                    source,target_module:plan.module,target,status:'observed',
+                                    source_view:'effective',device:'Test device'});
+                                a.dataset.plan=JSON.stringify({...base,id:'consumer',identity:'consumer',
+                                    dependency_review:{dependencies:[dep('consumer','prerequisite')]}});
+                                b.dataset.plan=JSON.stringify({...base,id:'prerequisite',identity:'prerequisite',
+                                    dependency_review:{dependencies:[]}});
+                                a.checked=b.checked=true;a.dispatchEvent(new Event('change'));
+                            }""")
+                            view.locator("#open-preview").click()
+                            self.assertIn("prerequisite", view.locator("#preview").inner_text())
+                            phases = view.locator("#preview section > ol > li")
+                            self.assertTrue(phases.nth(0).inner_text().index("prerequisite") < phases.nth(0).inner_text().index("consumer"))
+                            self.assertTrue(phases.nth(2).inner_text().index("consumer") < phases.nth(2).inner_text().index("prerequisite"))
+                            self.assertTrue(view.locator("#export-plan").is_enabled())
+                            view.keyboard.press("Escape")
+                            view.evaluate("""() => {
+                                const checks=[...document.querySelectorAll('.choose:not(:disabled)')];
+                                const b=checks[1], plan=JSON.parse(b.dataset.plan);
+                                plan.dependency_review.dependencies=[{persona:plan.persona,source_module:plan.module,
+                                    source:'prerequisite',target_module:plan.module,target:'consumer',
+                                    status:'observed',source_view:'effective',device:'Test device'}];
+                                b.dataset.plan=JSON.stringify(plan);b.dispatchEvent(new Event('change'));
+                            }""")
+                            view.locator("#open-preview").click()
+                            self.assertIn("Dependency cycle or blocked order", view.locator("#preview").inner_text())
+                            self.assertTrue(view.locator("#export-plan").is_disabled())
+                            view.keyboard.press("Escape")
                         self.assertEqual(errors, [])
                         view.set_viewport_size({"width": 390, "height": 844})
                         self.assertLessEqual(view.evaluate("document.documentElement.scrollWidth"), 392)
