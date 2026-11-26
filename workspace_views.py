@@ -788,6 +788,8 @@ def engineering_view(workspace, query):
                 earlier = item.get("earlier_position", item.get("earlier_index"))
                 later = item.get("later_position", item.get("later_index"))
                 detail += '<h4>' + e(pretty(item["status"])) + ' · ' + e(str(earlier)) + ' / ' + e(str(later)) + '</h4>'
+                if "coverage" in item:
+                    detail += '<p>' + e(pretty(item["coverage"])) + ' · ' + e(item["earlier_network"]) + ' / ' + e(item["later_network"]) + ' · counter setting: ' + e(pretty(item["counter_setting"])) + '</p>'
                 detail += '<p>Earlier rule</p>' + property_table(item["earlier"]) + '<p>Later rule</p>' + property_table(item["later"])
             if finding["truncated"]:
                 detail += '<p class="note">Comparison limit reached; additional relationships may exist.</p>'
@@ -795,7 +797,7 @@ def engineering_view(workspace, query):
                            str(len(finding["locations"])), str(finding["rules"]), str(finding["unsupported_rules"]),
                            str(len(observations)), badge(pretty(finding["status"])),
                            inspect(finding["identity"], detail, "Review rules")))
-    panel("rules", "Policy rule review", "Inspect duplicate conditions, differing actions and broader earlier matches within captured ordered policies. Role ACLs receive exact structural duplicate review only. Unsupported matches and missing order remain unqualified; do not treat these as proven unreachable rules.",
+    panel("rules", "Policy rule review", "Inspect duplicate conditions, differing actions and broader earlier matches within captured ordered policies. Role ACLs also compare literal IPv4 and IPv6 destinations within the same explicit source role and VRF. Unsupported matches and missing order remain unqualified; do not treat these as proven unreachable rules.",
           ("Module", "Policy", "Function", "Locations", "Rules", "Unsupported", "Observations", "Evidence", ""), rows, counts["rules"])
     if selected == "rules":
         from policy_sequence_review import policy_sequence_reviews
