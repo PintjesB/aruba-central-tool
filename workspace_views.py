@@ -284,14 +284,11 @@ def advisor_view(workspace, query):
                     and f["identity"] == identity_filter and any(s["scope"] == scope_filter for s in f["sources"])]
     short = {key: value[0] for key, value in ACTION_GUIDE.items()}
     counts = Counter(f["action"] for f in findings)
-    group_counts = [("opportunities", "Consolidation opportunities", sum(counts[k] for k in OPPORTUNITIES)),
-                    ("review", "Settings to review", counts["conflict"] + counts["default_review"]),
-                    ("optional", "Optional Library review", counts["create_library"] + counts["unassigned_library"]),
-                    ("", "All findings", len(findings))]
-    tabs = '<div class="tabs" id="action-tabs" aria-label="Recommendation type">' + "".join(
-        f'<button type="button" data-action="{e(key)}" aria-pressed="false">{e(label)} <span>{count}</span></button>'
-        for key, label, count in group_counts) + "</div>"
-    category_help = '<p id="category-help" class="note" aria-live="polite">Start with identical Global or Library profiles and repeated local definitions. All changes still require verification.</p>'
+    recommendation_options = [
+        ("opportunities", f"Consolidation opportunities ({sum(counts[k] for k in OPPORTUNITIES)})"),
+        ("review", f"Settings to review ({counts['conflict'] + counts['default_review']})"),
+        ("optional", f"Optional Library review ({counts['create_library'] + counts['unassigned_library']})"),
+        ("", f"All findings ({len(findings)})")] + [(k, f"{v[0]} ({counts[k]})") for k, v in ACTION_GUIDE.items()]
     rows = []
     for f in findings:
         action = f["action"]
@@ -331,15 +328,16 @@ def advisor_view(workspace, query):
         if not comparison:
             comparison = '<h3>Configuration comparison</h3>' + diff_table(f["differences"], "Local", reference_label)
         details = (
-            f'<h3>Why this appears</h3><p>{e(ACTION_GUIDE[action][1])}</p>'
-            f'<h3>What to do</h3><p>{e(ACTION_GUIDE[action][2])}</p>'
-            + comparison + (vlan_instance_context(bundle, f["persona"], sources, f["identity"]) + operational_vlan_context(bundle, f["persona"], sources, f["identity"]) if f["module"] == "layer2-vlan" else "") +
-            '<h3>Local scopes</h3>' + source_table +
-            ('<h3>Observed device configuration</h3>' + table(("Device", "Profile state"), device_rows) if device_rows else "") +
-            ('<h3>Higher-scope configuration</h3>' + table(("Scope", "Type", "Effective body"), scope_rows) if scope_rows else "") +
-            ('<h3>Destination impact</h3>' + table(("Destination", "Type", "Intended", "Additional", "Unknown", "Current"), placement_rows) if placement_rows else "") +
-            '<h3>Proposed workflow</h3>' + list_items(f["steps"], ordered=True) +
-            '<h3>Validation required</h3>' + list_items(f["blockers"]) + raw(f))
+            f'<div class="review-decision"><div><strong>{e(ACTION_GUIDE[action][2])}</strong><p>{e(ACTION_GUIDE[action][1])}</p></div></div>'
+            + comparison
+            + ('<h3>Destination impact</h3>' + table(("Destination", "Type", "Intended", "Additional", "Unknown", "Current"), placement_rows) if placement_rows else "")
+            + '<h3>Proposed workflow</h3>' + list_items(f["steps"], ordered=True)
+            + '<h3>Validation required</h3>' + list_items(f["blockers"])
+            + '<details><summary>Affected scopes and devices</summary>' + source_table
+            + ('<h3>Observed device configuration</h3>' + table(("Device", "Profile state"), device_rows) if device_rows else "")
+            + ('<h3>Higher-scope configuration</h3>' + table(("Scope", "Type", "Effective body"), scope_rows) if scope_rows else "") + '</details>'
+            + '<details><summary>Source evidence</summary>'
+            + (vlan_instance_context(bundle, f["persona"], sources, f["identity"]) + operational_vlan_context(bundle, f["persona"], sources, f["identity"]) if f["module"] == "layer2-vlan" else "") + raw(f) + '</details>')
         matching = len(observed.get("matching", []))
         unknown = len(observed.get("unknown", []))
         device_summary = f'<strong>{matching} / {sum(len(v) for v in observed.values())}</strong>' + (f'<small>{unknown} not comparable</small>' if unknown else "") if observed else '<span class="muted">Not assessed</span>'
@@ -351,26 +349,25 @@ def advisor_view(workspace, query):
             inspect(profile, details, "Review"),
             attrs=f' data-action="{e(action)}" data-module="{e(f["module"])}" data-persona="{e(f["persona"])}" data-search="{e(profile+" "+str([s["name"] for s in sources]))}"'))
     filters = (
-        '<div class="toolbar advisor-filters">'
+        '<div class="filter-bar advisor-filters">'
+        + select("finding-type", recommendation_options, "opportunities", "Recommendation")
         + select("module", [("", "All modules")] + [(m, module_label(m)) for m in sorted({f["module"] for f in findings})], label="Module")
         + select("persona", [("", "All functions")] + [(p, persona_label(p)) for p in sorted({f["persona"] for f in findings})], label="Device function")
-        + select("finding-type", [("", "All types")] + [(k, v[0]) for k, v in ACTION_GUIDE.items()], label="Finding type")
         + '<label class="searchbox">Search<input id="search" type="search" placeholder="Profile or scope"></label>'
         '<button id="clear" type="button" class="quiet">Reset</button></div>')
     listing = '<div id="advisor-table">' + table(("Select", "Profile", "Why flagged", "Local copies", "Suggested next step", "Devices with identical settings", ""), rows) + '</div>'
     bar = ('<div class="selection-bar"><div><strong id="selected" aria-live="polite">0 selected</strong>'
            '<small>Preview only · no Central writes</small></div><div class="selection-actions">'
-           '<button id="select-visible" type="button">Select filtered</button><button id="clear-selection" type="button">Clear</button>'
+           '<button id="select-visible" type="button">Select all filtered</button><button id="clear-selection" type="button">Clear</button>'
            '<button id="open-preview" type="button" class="primary" disabled>Review selected</button></div></div>')
-    dialog = ('<dialog id="plan-dialog" class="inspector"><div class="inspector-head"><strong>Selected change preview</strong>'
+    dialog = ('<dialog id="plan-dialog" class="inspector" aria-labelledby="plan-title"><div class="inspector-head"><h2 id="plan-title">Selected change preview</h2>'
               '<button id="close-preview" type="button">Close</button></div><div class="plan-content">'
               '<p class="note">These steps are not executable API operations. All writes require separate qualification and approval.</p>'
               '<div id="preview"></div><button id="export-plan" type="button" class="primary" disabled>Export private preview JSON</button>'
               '</div></dialog>')
     return page("Consolidation advisor", intro("Consolidation", "Choose a task, inspect the evidence, and prepare a change preview.", picker)
-                + f'<p><a href="{url(root, "overrides", snapshot=name)}">Compare device overrides with Global →</a></p>'
                 + '<section><div id="snapshot-label" hidden data-snapshot="' + e(name) + '"></div>'
-                + tabs + category_help + filters + '<div class="table-toolbar"><span id="visible-count" class="muted" aria-live="polite"></span>'
+                + filters + '<div class="table-toolbar"><span id="visible-count" class="muted" aria-live="polite"></span>'
                 '<div><button id="advisor-prev" type="button">Previous</button> <span id="advisor-page" class="muted"></span> '
                 '<button id="advisor-next" type="button">Next</button></div></div>'
                 + listing + '<p id="advisor-empty" class="empty" hidden>No matching recommendations.</p></section>'
@@ -382,28 +379,27 @@ ADVISOR_CSS = """
 #advisor-table td:nth-child(2){min-width:145px}#advisor-table td:nth-child(5){max-width:290px;min-width:160px}
 #advisor-table td:nth-child(5) select{width:100%;font-size:12px}
 #advisor-table th:first-child{font-size:0;width:38px}.selection-bar{position:sticky;bottom:12px;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:14px 18px;background:var(--surface);border:1px solid var(--line);box-shadow:0 5px 24px #0002;border-radius:10px}
-.selection-bar small{display:block}.selection-actions{display:flex;gap:8px;flex-wrap:wrap}.plan-content{padding:22px}.plan-item{padding:14px 0;border-bottom:1px solid var(--line)}.plan-item h3{margin:0 0 5px}.plan-item p{margin:4px 0}.tabs button[aria-pressed=true]{border-bottom-color:var(--accent);color:var(--accent);font-weight:700}
+.selection-bar small{display:block}.selection-actions{display:flex;gap:8px;flex-wrap:wrap}.plan-content{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:22px}.plan-item{padding:14px 0;border-bottom:1px solid var(--line)}.plan-item h3{margin:0 0 5px}.plan-item p{margin:4px 0}.tabs button[aria-pressed=true]{border-bottom-color:var(--accent);color:var(--accent);font-weight:700}
 """
 ADVISOR_JS = r"""
 (()=>{
 'use strict';
 const $=id=>document.getElementById(id), rows=Array.from($('advisor-table').querySelectorAll('tbody > tr'));
-const checks=rows.map(r=>r.querySelector('.choose')), actions=Array.from($('action-tabs').querySelectorAll('[data-action]'));
+const checks=rows.map(r=>r.querySelector('.choose'));
 const categories={opportunities:['remove_override','promote_local','reuse_library'],review:['conflict','default_review'],optional:['create_library','unassigned_library']};
-const explanations={opportunities:'Start here: exact matches and repeated local profiles. Verify inheritance and destination impact before changing anything.',review:'These differences need interpretation. They are not necessarily errors or redundant settings.',optional:'Housekeeping only. Keep local profiles and Library definitions unless reuse or cleanup is justified.','':'All captured findings, including optional housekeeping and differences.'};
-let action='opportunities', page=0, filtered=[];const size=30;
+let page=0, filtered=[];const size=30;
 function filter(reset=true){
  if(reset)page=0;
  const q=$('search').value.toLowerCase().trim();
- filtered=rows.filter(r=>(!action||categories[action].includes(r.dataset.action))&&(!$('finding-type').value||r.dataset.action===$('finding-type').value)&&(!$('module').value||r.dataset.module===$('module').value)&&(!$('persona').value||r.dataset.persona===$('persona').value)&&((r.dataset.search+' '+r.textContent).toLowerCase().includes(q)));
+ const action=$('finding-type').value;
+ filtered=rows.filter(r=>(!action||(categories[action]?categories[action].includes(r.dataset.action):r.dataset.action===action))&&(!$('module').value||r.dataset.module===$('module').value)&&(!$('persona').value||r.dataset.persona===$('persona').value)&&((r.dataset.search+' '+r.textContent).toLowerCase().includes(q)));
  const pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.min(page,pages-1);
  const visible=new Set(filtered.slice(page*size,(page+1)*size));
  for(const r of rows)r.hidden=!visible.has(r);
  $('visible-count').textContent=filtered.length+' of '+rows.length+' recommendations';
  $('advisor-page').textContent=(page+1)+' / '+pages;$('advisor-prev').disabled=page===0;$('advisor-next').disabled=page+1>=pages;
  $('advisor-empty').hidden=filtered.length>0;
- $('category-help').textContent=explanations[action];
- for(const b of actions)b.setAttribute('aria-pressed',String(b.dataset.action===action));
+ $('advisor-prev').parentElement.hidden=pages<=1;
 }
 function selection(){
  const chosen=checks.filter(c=>c.checked&&!c.disabled).map(c=>{
@@ -418,6 +414,7 @@ function selection(){
   return f;
  });
  $('selected').textContent=chosen.length+' selected';
+ $('clear-selection').disabled=!chosen.length;
  $('open-preview').disabled=!chosen.length;
  $('export-plan').disabled=!chosen.length||chosen.some(f=>f.action==='promote_local'&&!f.selected_destination);
  return chosen;
@@ -434,16 +431,15 @@ function preview(){
  }
  if(chosen.some(f=>f.action==='promote_local'&&!f.selected_destination))$('preview').append(el('p','Select a destination for each consolidation recommendation before exporting.'));
 }
-for(const b of actions)b.addEventListener('click',()=>{action=b.dataset.action;$('finding-type').value='';filter();});
 for(const k of ['module','persona','finding-type'])$(k).addEventListener('change',()=>filter());
 $('search').addEventListener('input',()=>filter());
-$('clear').addEventListener('click',()=>{action='opportunities';$('finding-type').value='';$('module').value='';$('persona').value='';$('search').value='';filter();});
+$('clear').addEventListener('click',()=>{$('finding-type').value='opportunities';$('module').value='';$('persona').value='';$('search').value='';filter();});
 $('advisor-prev').addEventListener('click',()=>{page--;filter(false);});$('advisor-next').addEventListener('click',()=>{page++;filter(false);});
 for(const c of checks)c.addEventListener('change',selection);
 for(const field of document.querySelectorAll('.destination'))field.addEventListener('change',selection);
 $('select-visible').addEventListener('click',()=>{for(const r of filtered){const check=r.querySelector('.choose');if(!check.disabled)check.checked=true;}selection();});
 $('clear-selection').addEventListener('click',()=>{for(const c of checks)c.checked=false;selection();});
-$('open-preview').addEventListener('click',()=>{preview();$('plan-dialog').showModal();});
+$('open-preview').addEventListener('click',()=>{preview();$('plan-dialog').showModal();$('plan-dialog').querySelector('.plan-content').scrollTop=0;});
 $('close-preview').addEventListener('click',()=>$('plan-dialog').close());
 $('export-plan').addEventListener('click',()=>{
  const chosen=selection();if($('export-plan').disabled)return;
