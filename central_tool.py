@@ -3072,6 +3072,10 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress, checkpoint=checkpoint)
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress,
                                            scopes_by_persona=scopes_by_persona, deep_catalog=deep_catalog, checkpoint=checkpoint)
+    from nac_review import read_mac_registrations
+    audit_progress(progress, "NAC registrations", 0, 0, "Reading Central NAC MAC registrations")
+    nac_registrations = read_mac_registrations(client, progress)
+    print(f"NAC MAC registration coverage: {nac_registrations['status']}; observed={len(nac_registrations['rows'])}", flush=True)
     health = capture_configuration_health(client, records, workers, progress)
     keyed_details = capture_keyed_profile_details(client, results, library, workers, progress, checkpoint=checkpoint) if deep_catalog else None
     details = capture_vlan_instance_details(client, results, workers, progress)
@@ -3084,7 +3088,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             "results": results, "unqualified_personas": unqualified, "library": library,
             "profile_type_discovery": profile_types, "unadapted_profiles": unadapted,
             "operational_vlans": operational, "vlan_instance_details": details, "switch_vlan_cli": cli,
-            "configuration_health": health,
+            "configuration_health": health, "nac_registrations": nac_registrations,
             "keyed_profile_details": keyed_details,
             "api_read_coverage": client.report(),
             "collection_checkpoint": checkpoint.evidence() if checkpoint else {"enabled": False, "mixed_capture_times": False},
