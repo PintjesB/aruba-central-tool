@@ -110,6 +110,29 @@ class WorkspaceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 credential_refresh("id", "secret", "https://example.com")
 
+    def test_library_comparison_joins_exact_identities_and_qualified_local_bodies(self):
+        from config_app import library_profile_comparison
+        data = self.fixture()
+        data["library"] = {"modules": {"layer2-vlan": {"status": "list_parsed", "profiles": {
+            "10": {"vlan": 10, "name": "A", "@": {"source": "shared"}},
+            "20": {"vlan": 20, "name": "Other"}}}},
+            "assignments": {"rows": [
+                {"profile-type": "layer2-vlan", "profile-instance": 10, "scope-id": "a"},
+                {"profile-type": "roles", "profile-instance": "10", "scope-id": "a"}]}}
+        scopes = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]
+        scopes[0]["review"] = {"qualified": True, "profiles": [
+            {"identity": "10", "local": {"vlan": 10, "name": "A"}}]}
+        scopes[1]["review"] = {"qualified": True, "profiles": [
+            {"identity": "10", "local": {"vlan": 10, "name": "B"}}]}
+        result = library_profile_comparison(data, "layer2-vlan")
+        self.assertEqual(len(result["10"]["assignments"]), 1)
+        self.assertEqual({v["classification"] for v in result["10"]["local_variants"]},
+                         {"exact_match", "different_body"})
+        self.assertFalse(result["20"]["assignment_completeness_verified"])
+        self.assertEqual(result["20"]["assignments"], [])
+        scopes[1]["review"]["qualified"] = False
+        self.assertEqual(len(library_profile_comparison(data, "layer2-vlan")["10"]["local_variants"]), 1)
+
     def test_refresh_single_flight_and_saved_capture(self):
         with tempfile.TemporaryDirectory() as directory:
             release = threading.Event()

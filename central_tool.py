@@ -1317,6 +1317,59 @@ def discover_profile_types(assignments, scope_maps):
             "unresolved_records": unresolved, "complete": False}
 
 
+def inspect_unadapted_profiles(client, discovery, assignments, scope_maps):
+    """Inspect observed source scopes for modules without an explicit adapter.
+
+    These are raw read-only diagnostics, not qualified local/effective views.
+    Module and scope selectors come only from observed resource inventories.
+    """
+    unknown = set(discovery["unknown_adapter_modules"])
+    targets = defaultdict(set)
+    for view, assignment in ((assignments, True), (scope_maps, False)):
+        for row in view.get("rows", []):
+            resource = row.get("profile-type") if assignment else row.get("resource")
+            persona = row.get("device-function") if assignment else row.get("persona")
+            sid = row.get("scope-id")
+            if isinstance(resource, str) and not assignment:
+                resource, _, instance = resource.partition("/")
+            else:
+                instance = row.get("profile-instance")
+            if (not isinstance(resource, str) or resource not in unknown
+                    or not re.fullmatch(r"[a-z][a-z0-9-]{0,127}", resource)
+                    or not isinstance(persona, str) or persona not in NETWORK_PERSONAS | {"HYBRID_NAC"}
+                    or type(sid) not in (int, str) or not re.fullmatch(r"[0-9]+", str(sid))
+                    or type(instance) not in (int, str)):
+                continue
+            targets[(resource, persona, str(sid))].add(str(instance))
+
+    def capture(module, params):
+        try:
+            raw = client.get(ALPHA + "/" + module, **params)
+            return {"status": "response_received" if raw else "empty_response", "raw": raw}
+        except APIError as exc:
+            if exc.status not in (400, 403, 404, 405, 406, 410, 412, 422):
+                raise
+            return {"status": "request_rejected", "http_error": exc.status}
+
+    result = {}
+    for module in sorted(unknown):
+        evidence = []
+        for (m, persona, sid), instances in sorted(targets.items()):
+            if m != module:
+                continue
+            base = {"view-type": "LOCAL", "scope-id": sid, "device-function": persona, "detailed": "true"}
+            committed = capture(module, {**base, "effective": "false"})
+            effective = capture(module, {**base, "effective": "true"})
+            evidence.append({"persona": persona, "scope": sid,
+                             "observed_instances": sorted(instances), "committed": committed,
+                             "effective": effective})
+        result[module] = {"status": "unqualified_adapter", "source_views": evidence,
+                          "library": capture(module, {"view-type": "LIBRARY", "detailed": "true"}),
+                          "safe_to_apply": False}
+        print(f"  Unadapted profile type: source views={len(evidence)}", flush=True)
+    return result
+
+
 def library_inventory(client, modules, assignment_view=None, scope_map_view=None):
     """Read tenant-wide shared profiles once per module and preserve assignment evidence."""
     results = {}
@@ -1458,12 +1511,13 @@ def configuration_audit(client, selected_persona=None):
     applicable_modules.add("auth-profiles")
     print("Reading tenant Library and assignments", flush=True)
     library = library_inventory(client, applicable_modules, assignments, scope_maps)
+    unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps)
     print(f"Configuration audit coverage: personas reviewed={len(results)}; "
           f"personas without adapter={len(unqualified)}; migration authorized=no")
     return {"schema": 1, "kind": "configuration_audit", "region": client.base,
             "captured_at": datetime.now(timezone.utc).isoformat(), "inventory": records,
             "results": results, "unqualified_personas": unqualified, "library": library,
-            "profile_type_discovery": profile_types,
+            "profile_type_discovery": profile_types, "unadapted_profiles": unadapted,
             "catalog_exhaustive": False, "safe_to_apply": False}
 
 

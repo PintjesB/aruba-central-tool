@@ -72,6 +72,10 @@ New captures retry ambiguous committed local responses with an unfiltered annota
 
 The extended catalog adds DNS, NTP, SNMP, SNMP traps, logging, system information, MAC authentication, QoS queues, multicast membership, DHCP pools and gateway system/STP profiles, plus authentication servers. Applicability is a candidate adapter until live views qualify. Configuration assignments and the vendor SDK's read-only scope-maps evidence are captured once per audit to discover profile types and explicitly observed device functions. Missing or rejected scope-map responses remain unknown; observed modules without an identity adapter are reported separately, never queried using guessed identifiers. This catalog is not exhaustive. See the [PyCentral scope-map implementation](https://github.com/aruba/pycentral/blob/v2/pycentral/scopes/scope_maps.py) and [HPE configuration API reference](https://developer.arubanetworks.com/new-central-config/reference/).
 
+### Unadapted profile evidence and Library comparison
+
+When the observed assignment or scope-map inventories identify a module without a dedicated adapter, the audit attempts read-only Library and annotated committed/effective queries at the observed source scopes. Scope IDs, function selectors and module names are validated and repeated source queries are deduplicated. Raw evidence is available under Module coverage, explicitly unqualified and excluded from migration candidates. The Library browser also joins exact observed assignment identities and compares qualified local bodies of matching identities; absent assignments do not prove a profile is unused. All values remain in private local snapshots.
+
 ## Safety boundary
 
 No configuration mutation API calls exist yet. Only OAuth token issuance uses POST. Candidate findings are not executable plans. The API is v1alpha1 and real tenant response shapes, group access, annotation semantics, and Classic/New configuration authority must be validated before enabling writes. Scope IDs are strings, not floating-point numbers.
