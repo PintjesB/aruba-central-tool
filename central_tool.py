@@ -915,9 +915,9 @@ def write_private(path, data):
         file.write(payload)
 
 
-def audit(client, source=None):
+def audit(client):
     """Discover and review every qualified persona in one read-only operation."""
-    source = scan_all(client) if source is None else source
+    source = scan_all(client)
     if source.get("kind") != "multi_persona_scan" or source.get("region") != client.base:
         raise ValueError("Expected a multi-persona snapshot from the connected region")
     results = {}
@@ -970,7 +970,6 @@ def main():
     audit_cmd = commands.add_parser("audit", help="Discover, scan, probe dependencies and review all supported switch personas")
     audit_cmd.add_argument("--output", required=True, type=Path)
     audit_cmd.add_argument("--region-file", type=Path)
-    audit_cmd.add_argument("--snapshot", type=Path, help="Reuse an existing scan-all snapshot instead of repeating VLAN reads")
     inv = commands.add_parser("inventory", help="Discover every device and its known compatibility")
     inv.add_argument("--output", required=True, type=Path)
     inv.add_argument("--region-file", type=Path)
@@ -988,8 +987,7 @@ def main():
         if args.output.exists():
             raise ValueError("Output already exists")
         if args.command in ("scan", "scan-all", "audit", "inventory", "dependencies"):
-            source = (json.loads(args.snapshot.read_text(encoding="utf-8"))
-                      if args.command in ("dependencies", "audit") and args.snapshot else None)
+            source = json.loads(args.snapshot.read_text(encoding="utf-8")) if args.command == "dependencies" else None
             if args.command == "dependencies" and source is not None and source.get("kind") == "multi_persona_scan":
                 source = select_snapshot(source, args.persona)
             region_file = getattr(args, "region_file", None)
@@ -1009,7 +1007,7 @@ def main():
             elif args.command == "scan-all":
                 data = scan_all(client)
             elif args.command == "audit":
-                data = audit(client, source)
+                data = audit(client)
             elif args.command == "inventory":
                 records = inventory_capabilities(inventory(client))
                 data = {"region": region, "devices": records}
