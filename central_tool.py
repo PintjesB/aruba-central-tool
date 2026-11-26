@@ -524,6 +524,145 @@ def review_local_profiles(scopes, baseline, library):
     return results
 
 
+def dependency_items(modules, module):
+    """Require a successful unambiguous list envelope; empty objects are not lists."""
+    payload = modules.get(module)
+    if not isinstance(payload, dict) or "http_error" in payload:
+        raise ValueError("Dependency module missing or failed")
+    lists = [value for key, value in payload.items()
+             if key != "metadata" and isinstance(value, list)]
+    if len(lists) != 1 or not all(isinstance(item, dict) for item in lists[0]):
+        raise ValueError("Unrecognized dependency list envelope")
+    return lists[0]
+
+
+def svi_vlan_id(item):
+    """Recognize only explicit SVI identifiers; do not infer from IPs or port names."""
+    identifiers = set()
+    for key in ("id", "vlan", "vlan-id"):
+        if key not in item:
+            continue
+        value = item[key]
+        if type(value) not in (int, str):
+            raise ValueError("Invalid SVI identity")
+        match = re.fullmatch(r"(?:vlan\s*)?([0-9]+)", str(value), re.IGNORECASE)
+        if not match or not 1 <= int(match.group(1)) <= 4094:
+            raise ValueError("Unrecognized SVI identity")
+        identifiers.add(str(int(match.group(1))))
+    if len(identifiers) != 1:
+        raise ValueError("Missing or conflicting SVI identity")
+    return identifiers.pop()
+
+
+def dependency_review(snapshot, dependencies, data):
+    """Join existing read-only snapshots; this is a review, not a migration plan."""
+    if (dependencies.get("region") != snapshot["region"]
+            or dependencies.get("persona") != snapshot["persona"]):
+        raise ValueError("Dependency snapshot region or persona mismatch")
+    devices = [scope for scope in snapshot["scopes"] if scope["kind"] == "device"]
+    entries = dependencies["devices"]
+    by_id = {entry["scope_id"]: entry["modules"] for entry in entries}
+    if len(by_id) != len(entries) or set(by_id) != {scope["id"] for scope in devices}:
+        raise ValueError("Dependency snapshot device coverage mismatch")
+    device_reviews = []
+    protected = {}
+    known_default = {}
+    for scope in devices:
+        sid = scope["id"]
+        modules = by_id[sid]
+        inventory = scope.get("metadata", {})
+        model = str(inventory.get("model", ""))
+        firmware = str(inventory.get("firmwareVersion", ""))
+        known_default[sid] = model == "6100" and bool(re.match(r"^(?:PL\.)?10\.16(?:\.|$)", firmware))
+        indicators = {vid for vid, profile in vlan_map(scope["effective"]).items()
+                      if profile.get("is-l3-vlan") is True}
+        svi_ids = set()
+        issues = []
+        counts = {}
+        shapes = {}
+        for module in ("vlan-interfaces", "ethernet-interfaces", "sw-port-profiles"):
+            try:
+                items = dependency_items(modules, module)
+                counts[module] = len(items)
+                # Keep schema paths only in the private output; no values in terminal.
+                shapes[module] = sorted({key for item in items for key in item if key != "@"})
+                if module == "vlan-interfaces":
+                    svi_ids = {svi_vlan_id(item) for item in items}
+                    if len(svi_ids) != len(items):
+                        raise ValueError("Duplicate SVI identity")
+            except ValueError:
+                issues.append(module + "_unresolved")
+        protected[sid] = indicators | svi_ids
+        if indicators != svi_ids:
+            issues.append("svi_indicator_mismatch")
+        multicast = modules.get("mgmd-global")
+        if multicast == {}:
+            multicast_state = "empty_configuration_not_operational_state"
+        elif isinstance(multicast, dict) and "http_error" not in multicast:
+            multicast_state = "configuration_present_not_operational_state"
+        else:
+            multicast_state = "unresolved"
+            issues.append("mgmd-global_unresolved")
+        device_reviews.append({"scope": sid, "model": model, "firmware": firmware,
+                               "counts": counts, "module_fields": shapes,
+                               "protected_vlan_ids": sorted(protected[sid], key=int),
+                               "svi_ids": sorted(svi_ids, key=int),
+                               "svi_indicators": sorted(indicators, key=int),
+                               "multicast_state": multicast_state, "issues": issues})
+    for row in data["local_profile_review"]:
+        sid, vid = row["scope"], row["vlan"]
+        blockers = []
+        if row["proposed_review"] == "retain_default":
+            blockers.append("default_profile")
+        if sid not in protected:
+            blockers.append("non_device_scope_dependency_coverage_unverified")
+        else:
+            if vid in protected[sid]:
+                blockers.append("preserve_svi")
+            if any(d["issues"] for d in device_reviews if d["scope"] == sid):
+                blockers.append("dependency_schema_or_identity_unresolved")
+        reference = row["global_assessment"]
+        if reference["classification"] == "no_reference_profile":
+            reference = row["library_assessment"]
+        for difference in reference["differences"]:
+            path = tuple(difference["path"])
+            if difference["assessment"] == "verify_multicast_default":
+                value = difference.get("reference_value")
+                if (known_default.get(sid) and difference["kind"] == "missing_local"
+                        and ((path in (("igmp",), ("mld",)) and value == {"snooping": False})
+                             or (path in (("igmp", "snooping"), ("mld", "snooping")) and value is False))):
+                    blockers.append("potential_aoscx_10_16_multicast_behavior_change")
+                else:
+                    blockers.append("multicast_operational_state_unverified")
+            elif difference["assessment"] not in ("documented_default_candidate",):
+                blockers.append(difference["assessment"])
+        # A port-profile or Ethernet list is evidence of retrieval, not a complete
+        # reference graph (LAGs, NAC and role-based VLAN assignments may also matter).
+        blockers.append("full_vlan_reference_graph_unverified")
+        blockers.append("operational_equivalence_unverified")
+        row["dependency_blockers"] = sorted(set(blockers))
+        row["migration_eligible"] = False
+    data["dependency_review"] = {"devices": device_reviews, "safe_to_apply": False,
+                                 "operational_state_verified": False}
+    return data
+
+
+def print_dependency_summary(data):
+    review = data["dependency_review"]
+    print("Dependency review (read-only):")
+    for index, device in enumerate(review["devices"], 1):
+        print(f"  Device {index}: SVI identities={len(device['svi_ids'])}, "
+              f"L3 indicators={len(device['svi_indicators'])}, "
+              f"protected VLANs={len(device['protected_vlan_ids'])}")
+        for issue in device["issues"]:
+            print(f"    {issue}")
+    print("Migration blockers (profile counts):")
+    counts = Counter(reason for row in data["local_profile_review"] for reason in row["dependency_blockers"])
+    for reason, count in sorted(counts.items()):
+        print(f"  {reason}: {count}")
+    print("Migration eligible: 0")
+
+
 def print_review_summary(data):
     """Print only aggregate counts and ordinal device labels, no customer identifiers."""
     candidates = data["local_profile_review"]
@@ -676,6 +815,7 @@ def main():
     analysis = commands.add_parser("report")
     analysis.add_argument("snapshot", type=Path)
     analysis.add_argument("--output", required=True, type=Path)
+    analysis.add_argument("--dependencies", type=Path, help="Existing read-only dependency snapshot")
     args = parser.parse_args()
     try:
         if args.output.exists():
@@ -692,10 +832,16 @@ def main():
             print(f"API region: {region}", flush=True)
             data = scan(client, args.persona)
         else:
-            data = report(json.loads(args.snapshot.read_text(encoding="utf-8")))
+            snapshot = json.loads(args.snapshot.read_text(encoding="utf-8"))
+            data = report(snapshot)
+            if args.dependencies:
+                dependencies = json.loads(args.dependencies.read_text(encoding="utf-8"))
+                data = dependency_review(snapshot, dependencies, data)
         write_private(args.output, data)
         if args.command == "report":
             print_review_summary(data)
+            if "dependency_review" in data:
+                print_dependency_summary(data)
         print("Completed read-only operation; output stored locally.")
     except (ValueError, OSError, KeyError, RuntimeError) as exc:
         # Do not log API payloads, URLs containing query data, or secrets.

@@ -257,6 +257,38 @@ class Tests(unittest.TestCase):
         self.assertEqual(review["proposed_review"], "review_library_reuse_at_existing_scope")
         self.assertEqual(review["status"], "review_only")
 
+    def test_dependency_review_protects_svi_and_multicast(self):
+        from central_tool import dependency_review
+        local = {"vlan": 10, "is-l3-vlan": True}
+        shared = {"vlan": 10, "igmp": {"snooping": False}}
+        device = scope("2", "device", [local], [local])
+        device["metadata"] = {"model": "6100", "firmwareVersion": "PL.10.16.1006"}
+        snapshot = {"schema": 1, "captured_at": "example", "region": "example",
+                    "persona": "ACCESS_SWITCH", "library": [shared], "excluded_devices": [],
+                    "scopes": [scope("1", "global", [shared]), device]}
+        deps = {"region": "example", "persona": "ACCESS_SWITCH", "devices": [
+            {"scope_id": "2", "modules": {
+                "vlan-interfaces": {"interface": [{"id": "vlan10"}]},
+                "ethernet-interfaces": {"interface": [{"name": "1/1/1"}]},
+                "sw-port-profiles": {"profile": [{"name": "test"}]}, "mgmd-global": {}}}]}
+        result = dependency_review(snapshot, deps, report(snapshot))
+        row = result["local_profile_review"][0]
+        self.assertIn("preserve_svi", row["dependency_blockers"])
+        self.assertIn("potential_aoscx_10_16_multicast_behavior_change", row["dependency_blockers"])
+        self.assertFalse(row["migration_eligible"])
+        self.assertEqual(result["dependency_review"]["devices"][0]["svi_ids"], ["10"])
+        self.assertEqual(result["dependency_review"]["devices"][0]["issues"], [])
+        deps["devices"] = []
+        with self.assertRaisesRegex(ValueError, "coverage mismatch"):
+            dependency_review(snapshot, deps, report(snapshot))
+
+    def test_svi_identity_does_not_guess(self):
+        from central_tool import svi_vlan_id
+        self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
+        for item in ({"id": "1/1/10"}, {"name": "vlan10"}, {"id": 10, "vlan": 20}):
+            with self.subTest(item=item), self.assertRaises(ValueError):
+                svi_vlan_id(item)
+
     def test_single_local_profiles_are_reviewed(self):
         base = {"vlan": 10, "name": "Corp"}
         extra = {"vlan": 30, "name": "CCTV"}
