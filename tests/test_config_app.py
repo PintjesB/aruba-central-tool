@@ -167,6 +167,29 @@ class WorkspaceTests(unittest.TestCase):
         scopes[1]["review"]["qualified"] = False
         self.assertEqual(len(library_profile_comparison(data, "layer2-vlan")["10"]["local_variants"]), 1)
 
+    def test_customer_boundary_rejects_unrelated_inventory(self):
+        from config_app import verify_workspace_identity, WorkspaceIdentityError
+        def capture(serial, region="region", global_id="1"):
+            return {"schema": 1, "kind": "configuration_audit", "region": region,
+                    "inventory": [{"inventory": {"serial": serial}}],
+                    "results": {"ACCESS_SWITCH": {"scopes": [{"kind": "global", "id": global_id}]}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            verify_workspace_identity(directory, capture("A"))
+            (directory / "config-audit-first.json").write_text(json.dumps(capture("A")))
+            verify_workspace_identity(directory, capture("A"))
+            for other in (capture("B"), capture("A", "other-region"), capture("A", global_id="2")):
+                with self.assertRaises(WorkspaceIdentityError):
+                    verify_workspace_identity(directory, other)
+            workspace = Workspace(directory)
+            self.assertTrue(workspace.start_refresh(lambda progress=None: capture("B")))
+            deadline = time.monotonic() + 3
+            while workspace.state == "running" and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertEqual(workspace.status()["state"], "failed")
+            self.assertIn("separate customer directory", workspace.status()["message"])
+            self.assertEqual(len(audit_files(directory)), 1)
+
     def test_refresh_failure_is_sanitized(self):
         from central_tool import APIError
         def fail(progress=None):

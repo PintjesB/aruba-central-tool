@@ -2943,7 +2943,7 @@ def configuration_operational_vlan(bundle, persona, sid, vid):
             "may_be_truncated": len(lists[0]) >= 1000}
 
 
-def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None, deep_catalog=False, checkpoint_path=None, resume=False):
+def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None, deep_catalog=False, checkpoint_path=None, resume=False, identity_guard=None):
     """Inventory-driven read-only audit with bounded parallel scope reads."""
     from api_coverage import ReadCoverage
     client = ReadCoverage(client)
@@ -2994,6 +2994,9 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
         if scopes is None:
             scopes, _ = discover_scopes(client, persona, devices)
         plans.append((persona, modules, scopes))
+    if identity_guard is not None:
+        identity_guard({"region": client.base, "inventory": records,
+                        "results": {persona: {"scopes": scopes} for persona, _, scopes in plans}})
     checkpoint = None
     if checkpoint_path is not None:
         from collection_checkpoint import ScopeCheckpoint, qualification_manifest
@@ -3446,7 +3449,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "app":
-            from config_app import serve
+            from config_app import serve, verify_workspace_identity
             refresh = None
             if args.enable_refresh:
                 preferred = os.getenv("CENTRAL_BASE_URL")
@@ -3457,7 +3460,8 @@ def main():
                 def refresh(progress=None):
                     audit_progress(progress, "Connection", 0, 0, "Authenticating and detecting region")
                     detect_region(client, preferred)
-                    return configuration_audit(client, progress=progress, deep_catalog=args.deep_catalog)
+                    return configuration_audit(client, progress=progress, deep_catalog=args.deep_catalog,
+                                               identity_guard=lambda incoming: verify_workspace_identity(args.directory, incoming))
             serve(args.directory, refresh=refresh, open_browser=not args.no_browser)
             return 0
         if args.output.exists():
