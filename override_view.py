@@ -6,9 +6,9 @@ from workspace_ui import e, page, intro, badge, raw, table, tr, inspect, diff_ta
 from workspace_views import load, url, select, title_profile, vlan_explanation, operational_vlan_context, vlan_instance_context, scope_filter_form, device_options, module_options
 
 RESULTS = {
-    "identical": "Identical to Global",
-    "effective_match": "Observed settings match Global",
-    "partial_match": "No observed differences",
+    "identical": "Redundant override",
+    "effective_match": "Effective settings match Global",
+    "partial_match": "Likely redundant",
     "omitted": "Insufficient comparable settings",
     "protected": "Protected default VLAN",
     "different": "Different from Global",
@@ -17,9 +17,9 @@ RESULTS = {
     "source_uncertain": "Local source or effective settings disagree",
 }
 NEXT_STEP = {
-    "identical": "Review possible override removal",
-    "effective_match": "Review removal only after verifying saved definition and inheritance",
-    "partial_match": "Review as a potential redundant override; unavailable settings still block verified removal",
+    "identical": "Remove the redundant local copy if inheritance preserves these settings",
+    "effective_match": "Potentially redundant: verify saved definition and inheritance before removal",
+    "partial_match": "Known settings match Global; verify unavailable settings before removal",
     "omitted": "No sufficient observed settings to assess redundancy",
     "protected": "Retain VLAN 1; inspect default settings only",
     "different": "Keep local unless the difference is unnecessary",
@@ -121,11 +121,25 @@ def device_override_rows(bundle, persona):
                     chain.append({"name": names[ancestor], "state": text, "kind": kind})
                 ann = row.get("annotations", {})
                 direct = ann.get("aruba-annotation:object_type") == "LOCAL" and ann.get("aruba-annotation:inherited") is False
+                # Redundancy relative to Global is independent of write support.
+                # Higher-scope differences and missing evidence affect removal,
+                # not whether the captured device-local body matches Global.
+                higher_exception = any(v.get("kind") != "global" and v["state"].startswith("Observed differences") for v in chain)
+                inheritance_unknown = any(v["state"] in ("Membership unknown", "Cannot compare")
+                                          or "unavailable" in v["state"] or v["state"].startswith(("Insufficient evidence", "Conflicting observations"))
+                                          for v in chain)
+                if higher_exception:
+                    removal = "higher_scope_differs"
+                elif state != "identical" or counts["unavailable"] or not direct or inheritance_unknown:
+                    removal = "verification_required"
+                else:
+                    removal = "review_removal"
                 findings.append({"device": sid, "device_name": names[sid], "module": module,
                                  "identity": identity, "result": state, "profile": row, "chain": chain,
                                  "direct_confirmed": direct, "evidence": evidence, "assessment": assessment,
                                  "candidate": state == "identical" and module in REUSABLE and direct,
-                                 "review_candidate": state in ("identical", "effective_match", "partial_match") and module in REUSABLE,
+                                 "review_candidate": state in ("identical", "effective_match", "partial_match"),
+                                 "removal": removal,
                                  "safe_to_apply": False})
     return findings, incomplete
 
@@ -144,7 +158,7 @@ def overrides_view(workspace, query):
     entry = bundle["results"][persona]
     devices = [(s["id"], s.get("name") or s["id"]) for s in entry["scopes"] if s["kind"] == "device"]
     modules = sorted(m for m, data in entry["modules"].items() if not data.get("device_scope_only"))
-    device, module, result = query.get("device", ""), query.get("module", ""), query.get("result", "")
+    device, module, result = query.get("device", ""), query.get("module", ""), query.get("result", "cleanup")
     if (device and device not in dict(devices)) or (module and module not in modules) or (result and result not in RESULTS and result != "cleanup"):
         raise ValueError("Unknown comparison filter")
     findings, incomplete = device_override_rows(bundle, persona)
@@ -155,9 +169,9 @@ def overrides_view(workspace, query):
         ("device", "Device", device, device_options),
         ("module", "Configuration", module, lambda entry: module_options(entry, "All modules", comparable=True))),
         submit="Compare with Global", extra_fields=(("result", "Result", result,
-            [("", "All results"), ("cleanup", "Potential cleanup")] + list(RESULTS.items())),))
+            [("cleanup", "Redundant and likely redundant"), ("", "All local definitions")] + list(RESULTS.items())),))
     short_action = {
-        "identical": "Review removal",
+        "identical": "Remove redundant local copy",
         "effective_match": "Verify inheritance",
         "partial_match": "Potential cleanup; verify gaps",
         "omitted": "Not enough evidence",
@@ -180,8 +194,13 @@ def overrides_view(workspace, query):
             label = "VLAN " + label
         state = f["result"]
         next_step = NEXT_STEP[state]
-        if state == "identical" and not f["candidate"]:
-            next_step = "Verify direct source and module support; do not remove yet"
+        if f["review_candidate"]:
+            if f["removal"] == "higher_scope_differs":
+                next_step = "Keep for now: removing the local copy may expose a different higher-scope definition"
+            elif f["removal"] == "verification_required":
+                next_step += ". Removal still requires source, field and inheritance verification"
+            else:
+                next_step = "Remove the redundant local copy after checking the inherited source and dependencies"
         comparison = diff_table(p["global_differences"], "Device local", "Global")
         if f["module"] == "layer2-vlan" and p["global_reference"] is not None:
             comparison = vlan_explanation(p["local"], p["global_reference"], p["effective"], f["evidence"]) or comparison
@@ -204,7 +223,11 @@ def overrides_view(workspace, query):
                   + '<details><summary>Source evidence</summary>' + extra + raw(p) + '</details>')
         if f["candidate"]:
             detail += f'<p><a href="{url(root, "advisor", snapshot=name, finding="remove_override", module=f["module"], persona=persona, scope=f["device"], identity=f["identity"])}">Open matching consolidation preview</a></p>'
-        action_label = "Verify source first" if state == "identical" and not f["candidate"] else short_action[state]
+        action_label = short_action[state]
+        if f["review_candidate"]:
+            action_label = {"higher_scope_differs": "Keep: higher scope differs",
+                            "verification_required": "Verify before removal",
+                            "review_removal": "Remove redundant copy (review)"}[f["removal"]]
         counts_for_row = f["assessment"]["counts"]
         evidence_line = ""
         if p["global_reference"] is not None:
@@ -218,8 +241,8 @@ def overrides_view(workspace, query):
                        inspect(label, detail, "Compare settings")))
     result_summary = '<div class="result-summary" aria-label="Comparison results">' + "".join(
         f'<span><strong>{counts[key]}</strong> {e(label)}</span>' for key, label in (
-            ("identical", "identical saved bodies"), ("effective_match", "observed matches"),
-            ("partial_match", "no observed differences"), ("different", "different"), ("omitted", "insufficient evidence"), ("no_global", "no Global profile"),
+            ("identical", "redundant overrides"), ("effective_match", "effective matches"),
+            ("partial_match", "likely redundant"), ("different", "different"), ("omitted", "insufficient evidence"), ("no_global", "no Global profile"),
             ("protected", "protected"), ("global_unknown", "Global unavailable"),
             ("source_uncertain", "source conflict")) if counts[key]) + '</div>'
     from central_tool import vlan_evidence_summary
@@ -231,10 +254,10 @@ def overrides_view(workspace, query):
                             ("remaining_fields", "Unresolved field occurrences"))] +
         [tr(e(field), e(", ".join(f"{key}: {value}" for key, value in outcomes.items())))
          for field, outcomes in sorted(diagnostics["feature_cli"].items())]) + '</details>'
-    body = (intro("Device overrides", "Find saved device-level configuration and compare it directly with Global.", picker)
+    body = (intro("Device overrides", "Find unnecessary device-local copies of Global configuration. Review genuine exceptions separately.", picker)
             + '<section class="worklist"><div class="worklist-controls">' + filters + '</div>'
             + '<div class="worklist-summary"><h2>Device-local configuration</h2>' + result_summary + '</div>'
-            + '<p class="filter-hint">Potential cleanup is based on observed matching settings. Unavailable fields and inheritance remain verification requirements before removal.</p>'
+            + '<p class="filter-hint">Redundant means the saved local definition matches Global. Likely redundant means known settings match. Removal readiness is assessed separately.</p>'
             + table(("Device", "Profile / configuration", "Assessment", ""), rows, search=True, style="override-table")
             + f'<p class="filter-hint">{len(missing)} device/module reads unavailable. VLAN 1 is protected; device-only interfaces are excluded. Review only.</p></section>'
             + report)
