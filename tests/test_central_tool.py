@@ -195,6 +195,38 @@ class Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Central("https://de1.api.central.arubanetworks.com.evil.example", token="fake")
 
+    def test_exact_field_diff_distinguishes_missing_null_and_false(self):
+        from central_tool import field_differences
+        left = {"vlan": 10, "enable": False, "igmp": {"snooping": True}, "is-l3-vlan": None}
+        right = {"vlan": 10, "enable": 0, "igmp": {"snooping": False}, "voice-enable": False}
+        differences = {tuple(d["path"]): d for d in field_differences(left, right)}
+        self.assertEqual(differences[("enable",)]["kind"], "type_difference")
+        self.assertEqual(differences[("igmp", "snooping")]["kind"], "value_difference")
+        self.assertEqual(differences[("is-l3-vlan",)]["kind"], "missing_reference")
+        self.assertIsNone(differences[("is-l3-vlan",)]["local_value"])
+        self.assertEqual(differences[("voice-enable",)]["kind"], "missing_local")
+        self.assertNotIn("local_value", differences[("voice-enable",)])
+        self.assertEqual(field_differences({"a": None}, {"a": False})[0]["kind"], "null_vs_value")
+        self.assertEqual(field_differences({"a": 1, "b": 2}, {"b": 2, "a": 1}), [])
+        self.assertTrue(field_differences([1, 2], [2, 1]))
+
+    def test_summary_contains_no_customer_values_or_unknown_keys(self):
+        import contextlib
+        import io
+        from central_tool import field_differences, print_review_summary
+        diff = field_differences({"name": "private-name", "private-key": "secret-value"},
+                                 {"name": "other-private-name", "private-key": "other-secret-value"})
+        data = {"local_profile_review": [{"recommendation": "resolve_library_conflict",
+                 "library_differences": diff}], "scope_comparisons": [], "excluded_device_count": 0}
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            print_review_summary(data)
+        result = output.getvalue()
+        for private in ("private-name", "private-key", "secret-value"):
+            self.assertNotIn(private, result)
+        self.assertIn("[other-field]", result)
+        self.assertIn("name: value_difference", result)
+
     def test_single_local_profiles_are_reviewed(self):
         base = {"vlan": 10, "name": "Corp"}
         extra = {"vlan": 30, "name": "CCTV"}
