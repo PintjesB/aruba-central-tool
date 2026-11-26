@@ -352,6 +352,27 @@ class Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "coverage mismatch"):
             dependency_review(snapshot, deps, report(snapshot))
 
+    def test_reference_candidates_keep_unresolved_and_ignore_annotations(self):
+        from central_tool import reference_candidates
+        payload = {"interfaces": [{"switchport": {"native-vlan": 10, "allowed-vlans": ["20-22", 40]},
+                                   "unknown-vlan-field": 99, "name": "1/1/10",
+                                   "@": {"vlan": 123}, "metadata": {"vlan": 100}},
+                                  {"switchport": {"allowed-vlans": "all"}},
+                                  {"switchport": {"allowed-vlans": []}}]}
+        result = reference_candidates(payload)
+        self.assertEqual([r["vlan_ids"] for r in result["references"]], [["10"], ["20", "21", "22", "40"]])
+        self.assertEqual(len(result["unresolved_paths"]), 3)
+
+    def test_operational_probe_uses_known_inventory_identity_only(self):
+        from central_tool import probe_operational_vlans, operational_vlan_summary
+        fake = Fake([{"items": [{"id": 10, "igmp": True}]}])
+        self.assertEqual(probe_operational_vlans(fake, {"serialNumber": "../bad"})["status"], "identity_unresolved")
+        self.assertEqual(fake.calls, [])
+        result = probe_operational_vlans(fake, {"serialNumber": "ABC123"})
+        self.assertEqual(fake.calls[0][0], "/network-monitoring/v1/switches/ABC123/vlans")
+        self.assertEqual(operational_vlan_summary(result)["rows"], 1)
+        self.assertEqual(operational_vlan_summary(result)["status"], "schema_observed")
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
