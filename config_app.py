@@ -116,7 +116,13 @@ class Workspace:
                 from central_tool import write_private
                 bundle = self.refresh()
                 stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
-                write_private(self.directory / f"config-audit-{stamp}.json", bundle)
+                target = self.directory / f"config-audit-{stamp}.json"
+                temporary = target.with_suffix(".partial")
+                try:
+                    write_private(temporary, bundle)
+                    os.replace(temporary, target)
+                finally:
+                    temporary.unlink(missing_ok=True)
                 state = "complete"
             except Exception:
                 # No exception payloads or credentials in browser output.
@@ -128,7 +134,7 @@ class Workspace:
 
     def nav(self):
         root = "/" + self.token + "/"
-        return f'<a href="{root}">Snapshots</a><a href="{root}compare">Compare devices</a>'
+        return f'<a href="{root}">Snapshots</a><a href="{root}scopes">Scopes</a><a href="{root}compare">Compare devices</a>'
 
     def home(self):
         root = "/" + self.token + "/"
@@ -146,15 +152,53 @@ class Workspace:
                     f'<p><a href="{root}">Reload status</a></p></section><section><h2>Saved snapshots ({len(files)})</h2>'
                     '<table><thead><tr><th>Capture file</th><th>Action</th></tr></thead><tbody>' +
                     "".join(f'<tr><td>{e(p.name)}</td><td><a href="{root}report?{e(urlencode({"snapshot": p.name}))}">Open explorer</a>'
+                            f' · <a href="{root}scopes?{e(urlencode({"snapshot": p.name}))}">Browse scopes</a>' 
                             f' · <a href="{root}compare?{e(urlencode({"snapshot": p.name}))}">Compare devices</a></td></tr>'
                             for p in files) + '</tbody></table></section>', self.nav())
 
     def report(self, query):
         from central_tool import configuration_html, refresh_configuration_review
         bundle = refresh_configuration_review(read_audit(self.directory, query["snapshot"]))
-        html = configuration_html(bundle)
+        if "scope" in query:
+            from central_tool import config_review_rows, configuration_view_shape
+            from config_dashboard import render_dashboard
+            records = [r for r in config_review_rows(bundle) if r[0] == query.get("persona") and r[3]["scope"] == query["scope"]]
+            if not records:
+                raise ValueError("Unknown scope")
+            html = render_dashboard(bundle, records, configuration_view_shape)
+            html = html.replace("<main>", f"<main><p>Scope view: {e(records[0][2])}. Counts and repeat groups are limited to this scope.</p>", 1)
+        else:
+            html = configuration_html(bundle)
         # Static report remains standalone; add a local navigation link only here.
         return html.replace("<main>", f'<main><p><a href="/{self.token}/">Back to workspace</a></p>', 1)
+
+    def scopes(self, query):
+        from central_tool import refresh_configuration_review
+        root = "/" + self.token + "/"
+        files = audit_files(self.directory)
+        if not files:
+            return page("Scopes", "<p>No snapshots available.</p>", self.nav())
+        name = query.get("snapshot", files[0].name)
+        bundle = refresh_configuration_review(read_audit(self.directory, name))
+        select = (f'<form method="get" action="{root}scopes"><label>Snapshot<select name="snapshot">'
+                  + options([(p.name, p.name) for p in files], name)
+                  + '</select></label><button>Open</button></form>')
+        sections = []
+        order = {"global": 0, "collection": 1, "site": 2, "group": 3, "device": 4}
+        for persona, entry in sorted(bundle["results"].items()):
+            rows = []
+            for scope in sorted(entry["scopes"], key=lambda s: (order.get(s["kind"], 99), s.get("name") or "", s["id"])):
+                sid = scope["id"]
+                views = [s for m in entry["modules"].values() for s in m["scope_results"] if s["scope"] == sid]
+                qualified = sum(s["review"]["qualified"] for s in views)
+                href = root + "report?" + urlencode({"snapshot": name, "persona": persona, "scope": sid})
+                rows.append(f'<tr><td>{e(scope["kind"])}</td><td>{e(scope.get("name") or sid)}</td>'
+                            f'<td>{qualified}/{len(views)}</td><td><a href="{e(href)}">Inspect scope</a></td></tr>')
+            sections.append(f'<section><h2>{e(persona)}</h2><table><thead><tr><th>Scope type</th>'
+                            '<th>Name</th><th>Qualified modules</th><th>Action</th></tr></thead><tbody>'
+                            + "".join(rows) + '</tbody></table></section>')
+        return page("Scopes", '<p>Scope inventory grouped by device function and level. '
+                    'Parent relationships are not inferred from the order.</p>' + select + "".join(sections), self.nav())
 
     def comparison(self, query):
         from central_tool import refresh_configuration_review
@@ -228,12 +272,14 @@ def handler_for(workspace):
             if not self.valid_host() or not parsed.path.startswith(root):
                 self.reply("Not found", 404)
                 return
-            query = {k: v[-1] for k, v in parse_qs(parsed.query, max_num_fields=12).items()}
             try:
+                query = {k: v[-1] for k, v in parse_qs(parsed.query, max_num_fields=12).items()}
                 if parsed.path == root:
                     body = workspace.home()
                 elif parsed.path == root + "report":
                     body = workspace.report(query)
+                elif parsed.path == root + "scopes":
+                    body = workspace.scopes(query)
                 elif parsed.path == root + "compare":
                     body = workspace.comparison(query)
                 else:
