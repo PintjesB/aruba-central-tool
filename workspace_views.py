@@ -674,18 +674,30 @@ def library_view(workspace, query):
         if module and key != module:
             continue
         link = url(root, "library", snapshot=name, module=key)
-        rows.append(tr(f'<a href="{link}">{e(module_label(key))}</a>', str(len(view["profiles"])), status(view["status"])))
+        rows.append(tr(f'<a href="{link}">{e(module_label(key))}</a>',
+                       str(len(view["profiles"])) if view["status"] == "list_parsed" else "Unavailable",
+                       status(view["status"])))
     body = intro("Library", "Shared profiles and their observed assignments.", picker)
     if not module:
         body += f'<p><a class="button" href="{url(root, "advanced", snapshot=name, workflow="duplicates")}">Review duplicate Library profiles</a></p>'
     if not module:
-        body += '<section><h2>Profile collections</h2>' + table(("Module", "Profiles", "State"), rows, search=True) + '</section>'
+        for key, evidence in sorted((bundle.get("unadapted_profiles") or {}).items()):
+            read = evidence.get("library", {})
+            link = url(root, "unadapted", snapshot=name, module=key)
+            rows.append(tr(f'<a href="{link}">{e(module_label(key))}</a><small>Additional collection</small>',
+                           "Unavailable", status(read.get("status", "not_collected"))))
+        body += '<section><h2>Profile collections</h2>' + table(("Module", "Parsed profiles", "State"), rows, search=True) + '</section>'
     else:
         body += (f'<div class="collection-nav"><a href="{url(root, "library", snapshot=name)}">← All collections</a>'
                  + f'<form class="auto-select" method="get" action="{root}library"><input type="hidden" name="snapshot" value="{e(name)}">'
                  + select("module", [(k, module_label(k)) for k in sorted(modules)], module, "Collection")
                  + '<noscript><button type="submit">Open</button></noscript></form></div>')
         view = modules[module]
+        if view["status"] != "list_parsed":
+            body += ('<section><h2>' + e(module_label(module)) + '</h2><p>Profile count unavailable. '
+                     'The collection could not be interpreted; this does not mean no profiles exist.</p>'
+                     + badge(pretty(view["status"]), "warn") + raw(view, "Captured response") + '</section>')
+            return page("Library", body, workspace.nav(name))
         comparison = library_profile_comparison(bundle, module)
         usage = library_usage(bundle, module, view["profiles"], advanced_analysis(bundle)["references"])
         rows = []
