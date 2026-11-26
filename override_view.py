@@ -113,9 +113,19 @@ def overrides_view(workspace, query):
     counts = Counter(f["result"] for f in scoped)
     filters = scope_filter_form(root, "overrides", name, bundle, persona, (
         ("device", "Device", device, device_options),
-        ("module", "Configuration", module, lambda entry: module_options(entry, "All comparable modules", comparable=True))),
+        ("module", "Configuration", module, lambda entry: module_options(entry, "All modules", comparable=True))),
         submit="Compare with Global", extra_fields=(("result", "Result", result,
             [("", "All results")] + list(RESULTS.items())),))
+    short_action = {
+        "identical": "Review removal",
+        "effective_match": "Verify inheritance",
+        "omitted": "Retain pending verification",
+        "protected": "Retain protected VLAN",
+        "different": "Retain unless unnecessary",
+        "no_global": "Review local definition",
+        "global_unknown": "Validate Global",
+        "source_uncertain": "Validate source",
+    }
     rows = []
     for f in sorted(scoped, key=lambda f: (list(RESULTS).index(f["result"]), f["device_name"], f["module"], f["identity"])):
         if result and f["result"] != result:
@@ -147,9 +157,12 @@ def overrides_view(workspace, query):
                   + '<details><summary>Source evidence</summary>' + extra + raw(p) + '</details>')
         if f["candidate"]:
             detail += f'<p><a href="{url(root, "advisor", snapshot=name, finding="remove_override", module=f["module"], persona=persona, scope=f["device"], identity=f["identity"])}">Open matching consolidation preview</a></p>'
-        rows.append(tr(f'<strong>{e(f["device_name"])}</strong>', e(module_label(f["module"])), e(label),
-                       badge(RESULTS[state], "good" if state == "identical" else "warn" if state == "different" else "neutral"),
-                       e(next_step), inspect(label, detail, "Compare settings")))
+        action_label = "Verify source first" if state == "identical" and not f["candidate"] else short_action[state]
+        rows.append(tr(f'<strong>{e(f["device_name"])}</strong>',
+                       f'<strong>{e(label)}</strong><small>{e(module_label(f["module"]))}</small>',
+                       badge(RESULTS[state], "good" if state == "identical" else "warn" if state == "different" else "neutral")
+                       + f'<small title="{e(next_step)}">{e(action_label)}</small>',
+                       inspect(label, detail, "Compare settings")))
     result_summary = '<div class="result-summary" aria-label="Comparison results">' + "".join(
         f'<span><strong>{counts[key]}</strong> {e(label)}</span>' for key, label in (
             ("identical", "identical saved bodies"), ("effective_match", "observed matches"),
@@ -166,9 +179,9 @@ def overrides_view(workspace, query):
         [tr(e(field), e(", ".join(f"{key}: {value}" for key, value in outcomes.items())))
          for field, outcomes in sorted(diagnostics["feature_cli"].items())]) + '</details>'
     body = (intro("Device overrides", "Find saved device-level configuration and compare it directly with Global.", picker)
-            + '<section class="filter-section">' + filters + '</section>'
-            + '<section><div class="section-head"><h2>Device-local configuration</h2></div>' + result_summary
-            + table(("Device", "Configuration", "Profile", "Compared with Global", "Suggested next step", ""), rows, search=True)
+            + '<section class="worklist"><div class="worklist-controls">' + filters + '</div>'
+            + '<div class="worklist-summary"><h2>Device-local configuration</h2>' + result_summary + '</div>'
+            + table(("Device", "Profile / configuration", "Assessment", ""), rows, search=True, style="override-table")
             + f'<p class="filter-hint">{len(missing)} device/module reads unavailable. VLAN 1 is protected; device-only interfaces are excluded. Review only.</p></section>'
             + report)
     return page("Device overrides", body, workspace.nav(name))
