@@ -810,6 +810,7 @@ def library_view(workspace, query):
                        str(len(view["profiles"])) if view["status"] == "list_parsed" else "Unavailable",
                        status(view["status"])))
     body = intro("Library", "Shared profiles and their observed assignments.", picker)
+    body += f'<p><a class="button" href="{url(root, "assignments", snapshot=name, module=module)}">Review Library assignments</a></p>'
     if not module:
         body += f'<p><a class="button" href="{url(root, "advanced", snapshot=name, workflow="duplicates")}">Review duplicate Library profiles</a></p>'
     if not module:
@@ -844,6 +845,7 @@ def library_view(workspace, query):
             if differing:
                 detail += '<details><summary>Local configuration differences</summary>' + "".join(
                     f'<h3>{e(v["scope_name"])}</h3>' + diff_table(v["differences"], "Local", "Library") for v in differing) + '</details>'
+            detail += f'<p><a href="{url(root, "assignments", snapshot=name, module=module, identity=identity)}">Review assignments and recipients</a></p>'
             detail += f'<p><a href="{url(root, "impact", snapshot=name, module=module, identity=identity)}">Trace all observed references to this name</a></p>'
             detail += keyed_profile_evidence(bundle, "Library", "", module, identity)
             detail += '<details><summary>Observed assignments and usage</summary>' + usage_detail(usage[identity]) + '</details>' + raw({"profile": profile, **review})
