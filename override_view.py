@@ -153,10 +153,18 @@ def overrides_view(workspace, query):
     for key in ("identical", "effective_match", "omitted", "different", "no_global", "protected"):
         href = url(root, "overrides", snapshot=name, persona=persona, device=device, module=module, result=key)
         cards.append(f'<a class="workflow-card" href="{href}"><strong>{counts[key]} · {e(RESULTS[key])}</strong><span>Show these profiles →</span></a>')
+    from central_tool import vlan_evidence_summary
+    diagnostics = vlan_evidence_summary(bundle)
+    report = '<details><summary>VLAN evidence collection results (entire snapshot)</summary>' + table(
+        ("Source", "Read outcomes"), [tr(e(label), e(", ".join(f"{key}: {value}" for key, value in diagnostics[key].items()) or "No observations"))
+         for key, label in (("individual_vlan_reads", "Individual VLAN API"), ("switch_cli", "Switch show vlan"),
+                            ("monitoring", "Switch monitoring"), ("recovered_values", "Recovered field values"),
+                            ("remaining_fields", "Unresolved field occurrences"))]) + '</details>'
     body = (intro("Device overrides", "Find saved device-level configuration and compare it directly with Global.", picker)
             + '<section>' + filters + '</section><div class="workflow-grid">' + "".join(cards) + '</div>'
             + '<section><h2>Device-local configuration</h2><p class="muted">One row per saved local profile, excluding other Central defaults. VLAN 1 is shown for inspection only. Device-only interfaces are excluded because there is no comparable Global profile.</p>'
             + table(("Device", "Configuration", "Profile", "Compared with Global", "Suggested next step", ""), rows, search=True)
+            + report
             + f'<p class="note">{len(missing)} device/module reads could not be interpreted. '
               'An empty result is not proof that a device has no overrides. '
               'Removal is not enabled in the production browser.</p></section>')
