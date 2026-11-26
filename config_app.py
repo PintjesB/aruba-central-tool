@@ -244,7 +244,7 @@ class Workspace:
 
     def nav(self):
         root = "/" + self.token + "/"
-        return f'<a href="{root}">Snapshots</a><a href="{root}advisor">Consolidation advisor</a><a href="{root}coverage">Module coverage</a><a href="{root}library">Library</a><a href="{root}scopes">Scopes</a><a href="{root}compare">Compare devices</a>'
+        return f'<a href="{root}">Snapshots</a><a href="{root}advisor">Consolidation advisor</a><a href="{root}advanced">Engineering review</a><a href="{root}coverage">Module coverage</a><a href="{root}library">Library</a><a href="{root}scopes">Scopes</a><a href="{root}compare">Compare devices</a>'
 
     def home(self):
         root = "/" + self.token + "/"
@@ -459,6 +459,57 @@ filter();selection();
                     '<div class="advisor-table"><table><thead><tr><th>Select</th><th>Recommendation</th><th>Profile</th>'
                     '<th>Local scopes</th><th>Proposed placement</th><th>Observed devices</th><th>Review</th></tr></thead><tbody>'
                     + "".join(rows) + '</tbody></table></div></section>' + plan + script, self.nav())
+
+    def advanced(self, query):
+        from central_tool import refresh_configuration_review
+        from advanced_review import advanced_analysis
+        root = "/" + self.token + "/"
+        files = audit_files(self.directory)
+        if not files:
+            return page("Engineering review", "<p>No snapshots available.</p>", self.nav())
+        name = query.get("snapshot", files[0].name)
+        data = advanced_analysis(refresh_configuration_review(read_audit(self.directory, name)))
+        sections = []
+        for key, label, hint in (
+            ("port_groups", "Repeated switch port settings", "Identical captured settings excluding port identity and description. Preserve mapping, descriptions and topology. Unsupported fields block conversion."),
+            ("shadowed", "Higher-scope profiles shadowed by direct device configuration", "Only observed direct device winners and known member scopes; this is not permission to delete a shared profile."),
+            ("library_duplicates", "Library identity-independent body matches", "Only identity field excluded. Different names may have different references or semantic meaning."),
+            ("references", "Dependency and reference evidence", "Not observed is not confirmed broken. Unqualified target views and aliases remain unresolved."),
+            ("coverage", "Effective view coverage", "Missing or rejected responses do not establish absence.")):
+            records = data[key]
+            rows = []
+            for record in records:
+                if key == "port_groups":
+                    title = f'{record["persona"]}: {len(record["ports"])} ports'
+                elif key == "shadowed":
+                    title = f'{record["device"]}: {record["module"]}/{record["identity"]} shadows {record["higher_scope"]}'
+                elif key == "library_duplicates":
+                    title = f'{record["module"]}: {", ".join(record["identities"])}'
+                elif key == "references":
+                    title = f'{record["device"]}: {record["source_module"]}/{record["source"]} → {record["target_module"]}/{record["target"]} ({record["status"]})'
+                else:
+                    title = f'{record["persona"]}: {record["module"]} / {record["scope"]} ({record["status"]})'
+                rows.append(f'<details data-status="{e(record.get("status", ""))}"><summary>{e(title)}</summary><pre>{e(json.dumps(record, indent=2, ensure_ascii=False))}</pre></details>')
+            sections.append(f'<section class="engineering"><h2>{e(label)} ({len(records)})</h2><p>{e(hint)}</p>'
+                            + "".join(rows) + '</section>')
+        selector = (f'<form method="get" action="{root}advanced"><label>Snapshot<select name="snapshot">'
+                    + options([(p.name,p.name) for p in files], name)
+                    + '</select></label><button>Open</button></form>')
+        script = """<script>
+const search=document.getElementById('engineering-search');
+const unresolved=document.getElementById('unresolved-only');
+function filter(){
+ for(const row of document.querySelectorAll('.engineering details')){
+  row.hidden=!row.textContent.toLowerCase().includes(search.value.toLowerCase())||
+    (unresolved.checked&&row.dataset.status==='observed');
+ }
+}
+search.addEventListener('input',filter);unresolved.addEventListener('change',filter);filter();
+</script><style>.engineering summary{cursor:pointer;margin:8px 0}.engineering pre{max-height:350px;overflow:auto}.engineering details[hidden]{display:none}</style>"""
+        return page("Engineering review", '<p>Read-only engineering evidence. Reference coverage is not exhaustive; no changes are authorized.</p>'
+                    + selector + '<label>Search<input id="engineering-search" type="search"></label>'
+                    '<label><input type="checkbox" id="unresolved-only"> Hide resolved references</label>'
+                    + "".join(sections) + script, self.nav())
 
     def library(self, query):
         root = "/" + self.token + "/"
@@ -711,6 +762,8 @@ def handler_for(workspace):
                     body = workspace.report(query)
                 elif parsed.path == root + "advisor":
                     body = workspace.advisor(query)
+                elif parsed.path == root + "advanced":
+                    body = workspace.advanced(query)
                 elif parsed.path == root + "library":
                     body = workspace.library(query)
                 elif parsed.path == root + "unadapted":
