@@ -797,6 +797,26 @@ def engineering_view(workspace, query):
                            inspect(finding["identity"], detail, "Review rules")))
     panel("rules", "Policy rule review", "Inspect duplicate conditions, differing actions and broader earlier matches within captured ordered policies. Role ACLs receive exact structural duplicate review only. Unsupported matches and missing order remain unqualified; do not treat these as proven unreachable rules.",
           ("Module", "Policy", "Function", "Locations", "Rules", "Unsupported", "Observations", "Evidence", ""), rows, counts["rules"])
+    if selected == "rules":
+        from policy_sequence_review import policy_sequence_reviews
+        sequence_rows = []
+        for report in policy_sequence_reviews(bundle):
+            detail = '<p>Observed policy-group order. Cross-policy matches are candidates only; role applicability and resultant device policy remain unverified.</p>'
+            detail += table(("Position", "Referenced policy", "Visibility"), [
+                tr(str(ref["position"]), e(ref["name"]), badge(pretty(ref["status"]))) for ref in report["references"]])
+            for finding in report["findings"]:
+                detail += '<h4>' + e(finding["earlier_policy"]) + ' → ' + e(finding["later_policy"]) + '</h4><p>' + e("Same action body" if finding["same_action"] else "Different action bodies") + '</p>'
+                detail += '<p>Earlier rule</p>' + property_table(finding["earlier_rule"]) + '<p>Later rule</p>' + property_table(finding["later_rule"])
+            if report["truncated"]:
+                detail += '<p class="note">Comparison limit reached; more relationships may exist.</p>'
+            if report["status"] != "order_observed":
+                detail += raw(report["entries"], "Unqualified entries")
+            sequence_rows.append(tr(e(report["name"]), e(persona_label(report["persona"])), badge(pretty(report["status"])),
+                                    str(len(report["entries"])), str(sum(v["status"] != "rules_observed" for v in report["references"])),
+                                    str(len(report["findings"])), inspect("Policy sequence", detail, "Review order")))
+        section = '<section><h2>Policy group evaluation order</h2><p>Compare only policy bodies visible in the same captured scope and function. Missing policy definitions or ambiguous order are not interpreted.</p>' + table(("Scope", "Function", "Sequence evidence", "Entries", "Unqualified targets", "Cross-policy candidates", ""), sequence_rows, search=True) + '</section>'
+        key, label, count, content = panels[-1]
+        panels[-1] = (key, label, count, content + section)
     rows = []
     if selected == "duplicates":
         for r in data["library_duplicates"]:
