@@ -667,7 +667,7 @@ def engineering_view(workspace, query):
         choose_keep = '<label>Profile to retain<select data-keep>' + '<option value="">Choose a profile</option>' + "".join(f'<option value="{e(identity)}"{" selected" if identity == keep else ""}>{e(identity)}</option>' for identity in usage) + '</select></label>'
         from advanced_review import duplicate_migration_preview
         preview_data = {identity: {"assignments": usage_cells(u)[0], "shared_devices": len(u["shared_devices"]), "referencing_objects": u["reference_count"], "unknown_reads": len(u["unknown_devices"])} for identity, u in usage.items()}
-        migration_plans = {identity: duplicate_migration_preview(r["module"], usage, identity) for identity in usage}
+        migration_plans = {identity: duplicate_migration_preview(r["module"], usage, identity, bundle=bundle) for identity in usage}
         unresolved = r["unresolved_reference_count"]
         detail = ('<div class="review-decision"><div><strong>Choose the canonical Library profile</strong><p>Use observed references and assignments to estimate migration work. No profile is proven safe to delete.</p></div></div>'
                   + table(("Profile", "Assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Suggestion"), comparison)
@@ -744,7 +744,10 @@ function update(panel){
  records('Assignment review',['From','To','Scope ID','Function','Action'],plan.assignments.map(a=>[a.from,a.to,a.scope,a.persona,a.action.replaceAll('_',' ')]));
  records('Saved references to review',['From','To','Scope','Module','Profile','Field'],plan.saved_references.map(r=>[r.from,r.to,r.device,r.source_module,r.source,r.path.join('.')]));
  records('Effective reference impact',['From','Device','Module','Profile','Field'],plan.effective_references.map(r=>[r.from,r.device,r.source_module,r.source,r.path.join('.')]));
- const note=document.createElement('p');note.textContent=plan.target_conflicts.length+' devices have a differing retained-name definition; '+plan.target_unknown_reads.length+' device reads are unavailable. Review before migration.';target.append(note);
+ const visibility={matching_shared:'Matching shared profile',matching_source_unverified:'Matching settings; source unverified',different_definition:'Conflicting retained-name definition',count_confirmed_absence:'Confirmed absent from captured view',unverified:'Visibility unverified'};
+ records('Affected device visibility',['Device','Function','Retained profile','Membership','Why affected'],plan.recipient_review.map(r=>[r.name,r.persona,visibility[r.target_visibility]||r.target_visibility,r.uncertain_membership?'Uncertain':'Observed',r.observations.map(o=>o.from+': '+o.reason).join('; ')]));
+ records('Unresolved recipient observations',['Function','Scope','Source profile','Reason'],plan.unresolved_recipient_observations.map(r=>[r.persona,r.scope,r.from,r.reason]));
+ const note=document.createElement('p');note.textContent='Review retained-profile visibility on every listed recipient before changing assignments or references. Matching settings alone do not prove the Library source; unresolved recipients prevent complete impact assessment.';target.append(note);
  const button=document.createElement('button');button.type='button';button.textContent='Export private migration preview JSON';
  button.addEventListener('click',()=>{const u=URL.createObjectURL(new Blob([JSON.stringify({schema:1,kind:'library_migration_preview',...plan},null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=u;a.download='library-migration-preview.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);});target.append(button);
 }
