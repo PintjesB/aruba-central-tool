@@ -4,6 +4,7 @@ import os
 import re
 import secrets
 import threading
+import time
 import webbrowser
 from datetime import datetime, timezone
 from html import escape
@@ -13,7 +14,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 
 CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
-       "base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+       "base-uri 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'")
 
 
 def e(value):
@@ -50,7 +51,7 @@ h1{font-size:23px;margin:0 0 10px}h2{font-size:18px}section{background:var(--sur
 table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
 button,select,input{font:inherit;padding:8px 12px;margin:4px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:inherit}
 a{color:#1674c8}@media(prefers-color-scheme:dark){a{color:#8dc2ff}}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
-label{display:inline-block;margin:6px}small{opacity:.8}.pill{padding:4px 8px;border-radius:6px;background:#fff0d7;color:#804a0b}
+progress{width:100%;height:18px;accent-color:#1683dc}.audit-state{border-left:4px solid #1683dc;padding:12px 16px;background:var(--bg);border-radius:7px}.audit-state[data-state=complete]{border-color:#249761}.audit-state[data-state=failed]{border-color:#cc5246}.audit-state h3{margin:0 0 6px}.audit-state p{margin:6px 0}label{display:inline-block;margin:6px}small{opacity:.8}.pill{padding:4px 8px;border-radius:6px;background:#fff0d7;color:#804a0b}
 </style></head><body><header><h1>Central Configuration Workspace</h1>""" + nav + "</header><main>" + content + "</main></body></html>"
 
 
@@ -74,16 +75,17 @@ def module_coverage(bundle):
 
 def credential_refresh(client_id, client_secret, region):
     """One-shot credentials captured in a worker closure, not a workspace or file."""
-    from central_tool import Central, EU_REGIONS, detect_region, configuration_audit
+    from central_tool import Central, EU_REGIONS, detect_region, configuration_audit, audit_progress
     if region and region not in EU_REGIONS:
         raise ValueError("Choose an official EU region")
     if not client_id.strip() or not client_secret or len(client_id) > 1024 or len(client_secret) > 4096:
         raise ValueError("Invalid credentials")
     client = Central(region or EU_REGIONS[0], None, client_id, client_secret)
-    def run():
+    def run(progress=None):
         try:
+            audit_progress(progress, "Connection", 0, 0, "Authenticating and detecting region")
             detect_region(client, region or None)
-            return configuration_audit(client)
+            return configuration_audit(client, progress=progress)
         finally:
             client.client_id = None
             client.client_secret = None
@@ -171,6 +173,28 @@ class Workspace:
         self.refresh = refresh
         self.lock = threading.Lock()
         self.state = "idle"
+        self.phase = ""
+        self.detail = ""
+        self.done = 0
+        self.total = 0
+        self.started = None
+        self.finished = None
+        self.snapshot = None
+
+    def update_progress(self, phase, done, total, detail):
+        with self.lock:
+            self.phase = phase
+            self.done = done
+            self.total = total
+            self.detail = detail
+
+    def status(self):
+        with self.lock:
+            elapsed = (self.finished or time.monotonic()) - self.started if self.started is not None else 0
+            return {"state": "failed" if self.state.startswith("failed") else self.state,
+                    "message": self.state, "phase": self.phase, "detail": self.detail,
+                    "done": self.done, "total": self.total, "elapsed": int(elapsed),
+                    "snapshot": self.snapshot}
 
     def start_refresh(self, one_shot=None):
         with self.lock:
@@ -178,10 +202,17 @@ class Workspace:
             if refresh is None or self.state == "running":
                 return False
             self.state = "running"
+            self.phase = "Connection"
+            self.detail = "Starting read-only audit"
+            self.done = self.total = 0
+            self.started = time.monotonic()
+            self.finished = None
+            self.snapshot = None
         def run():
             try:
                 from central_tool import write_private
-                bundle = refresh()
+                bundle = refresh(progress=self.update_progress)
+                self.update_progress("Saving snapshot", 0, 0, "Publishing the completed audit")
                 stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
                 target = self.directory / f"config-audit-{stamp}.json"
                 temporary = target.with_suffix(".partial")
@@ -191,7 +222,9 @@ class Workspace:
                 finally:
                     temporary.unlink(missing_ok=True)
                 state = "complete"
+                snapshot = target.name
             except Exception as exc:
+                snapshot = None
                 # Expose only a known HTTP status, never arbitrary exception data.
                 from central_tool import APIError
                 if isinstance(exc, APIError):
@@ -201,6 +234,11 @@ class Workspace:
                     state = "failed; check local configuration and API access"
             with self.lock:
                 self.state = state
+                self.finished = time.monotonic()
+                self.snapshot = snapshot
+                self.phase = "Complete" if state == "complete" else "Failed"
+                self.detail = "Snapshot saved" if state == "complete" else state
+                self.done = self.total = 0
         threading.Thread(target=run, daemon=True).start()
         return True
 
@@ -211,8 +249,8 @@ class Workspace:
     def home(self):
         root = "/" + self.token + "/"
         files = audit_files(self.directory)
-        with self.lock:
-            state = self.state
+        status = self.status()
+        state = status["state"]
         from central_tool import EU_REGIONS
         disabled = " disabled" if state == "running" else ""
         hidden = f'<input type="hidden" name="csrf" value="{e(self.csrf)}">'
@@ -228,16 +266,66 @@ class Workspace:
             refresh += (f'<form method="post" action="{root}refresh">' + hidden + '<button type="submit"'
                        + (" disabled" if state == "running" else "")
                        + ">Refresh using environment credentials</button></form>")
+        title = {"idle": "Ready to connect", "running": "Audit in progress",
+                 "complete": "Audit complete", "failed": "Audit failed"}[state]
+        snapshot_link = ""
+        if status["snapshot"]:
+            href = root + "report?" + urlencode({"snapshot": status["snapshot"]})
+            snapshot_link = f'<p><a href="{e(href)}">Open new configuration snapshot</a></p>'
+        progress_html = (
+            f'<div class="audit-state" id="audit-state" data-state="{e(state)}" data-status-url="{root}status">'
+            f'<h3 id="audit-title" role="status">{e(title)}</h3>'
+            f'<p id="audit-detail">{e(status["phase"])} {e(status["detail"])}</p>'
+            f'<progress id="audit-progress" max="{max(1, status["total"])}"'
+            + (f' value="{status["done"]}"' if status["total"] else "")
+            + ("" if state == "running" else " hidden")
+            + f'></progress><p id="audit-count">{status["done"]}/{status["total"]} · {status["elapsed"]}s</p>'
+            + snapshot_link + '</div>')
+        script = """
+<script>
+const panel=document.getElementById('audit-state');
+const title=document.getElementById('audit-title');
+const detail=document.getElementById('audit-detail');
+const bar=document.getElementById('audit-progress');
+const count=document.getElementById('audit-count');
+for(const form of document.querySelectorAll('form[method=post]')){
+  form.addEventListener('submit',()=>{
+    title.textContent='Connecting to Central…';
+    detail.textContent='Starting audit. Please keep the local application open.';
+    panel.dataset.state='running';
+    bar.hidden=false;bar.removeAttribute('value');
+    for(const button of document.querySelectorAll('form[method=post] button'))button.disabled=true;
+  });
+}
+async function poll(){
+  try {
+    const response=await fetch(panel.dataset.statusUrl,{cache:'no-store',credentials:'same-origin'});
+    if(!response.ok)throw Error('Status unavailable');
+    const state=await response.json();
+    if(state.state!=='running'){location.reload();return;}
+    title.textContent='Audit in progress';
+    detail.textContent=[state.phase,state.detail].filter(Boolean).join(' · ');
+    bar.hidden=false;
+    if(state.total>0){bar.max=state.total;bar.value=state.done;}
+    else{bar.removeAttribute('value');}
+    count.textContent=(state.total>0?state.done+'/'+state.total+' · ':'')+state.elapsed+'s elapsed';
+  } catch(error) {
+    detail.textContent='Unable to reach the local status endpoint. Retrying…';
+  }
+  setTimeout(poll,1000);
+}
+if(panel.dataset.state==='running')poll();
+</script>"""
         return page("Snapshots", '<p>Private local workspace. Select a saved configuration capture. '
                     'Use a separate directory for each customer; tenant identity is not independently verified.</p>'
-                    f'<section><h2>Audit refresh</h2><p>Status: {e(state)}</p>{refresh}'
+                    f'<section><h2>Audit refresh</h2>{progress_html}{refresh}'
                     f'<p><a href="{root}">Reload status</a></p></section><section><h2>Saved snapshots ({len(files)})</h2>'
                     '<table><thead><tr><th>Capture file</th><th>Action</th></tr></thead><tbody>' +
                     "".join(f'<tr><td>{e(p.name)}</td><td><a href="{root}report?{e(urlencode({"snapshot": p.name}))}">Open explorer</a>'
                             f' · <a href="{root}coverage?{e(urlencode({"snapshot": p.name}))}">Module coverage</a>'
                             f' · <a href="{root}scopes?{e(urlencode({"snapshot": p.name}))}">Browse scopes</a>' 
                             f' · <a href="{root}compare?{e(urlencode({"snapshot": p.name}))}">Compare devices</a></td></tr>'
-                            for p in files) + '</tbody></table></section>', self.nav())
+                            for p in files) + '</tbody></table></section>' + script, self.nav())
 
     def library(self, query):
         root = "/" + self.token + "/"
@@ -459,10 +547,10 @@ def handler_for(workspace):
         def valid_host(self):
             return self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
 
-        def reply(self, body, status=200):
+        def reply(self, body, status=200, content_type="text/html; charset=utf-8"):
             data = body.encode("utf-8")
             self.send_response(status)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Security-Policy", CSP)
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
@@ -481,6 +569,9 @@ def handler_for(workspace):
                 return
             try:
                 query = {k: v[-1] for k, v in parse_qs(parsed.query, max_num_fields=12).items()}
+                if parsed.path == root + "status":
+                    self.reply(json.dumps(workspace.status()), content_type="application/json; charset=utf-8")
+                    return
                 if parsed.path == root:
                     body = workspace.home()
                 elif parsed.path == root + "report":
