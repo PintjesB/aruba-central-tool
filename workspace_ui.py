@@ -154,7 +154,7 @@ def navigation(root, snapshot=None):
     suffix = "?" + urlencode({"snapshot": snapshot}) if snapshot else ""
     links = []
     for group, items in (
-        ("Workspace", (("", "Overview", "⌂"), ("advisor", "Consolidation", "◈"),
+        ("Workspace", (("", "Overview", "⌂"), ("overrides", "Device overrides", "⇅"), ("advisor", "Consolidation", "◈"),
                        ("advanced", "Engineering", "▤"))),
         ("Explore", (("report", "Configuration", "▦"), ("scopes", "Inventory", "▥"),
                      ("library", "Library", "▣"), ("compare", "Compare", "⇄"))),
