@@ -864,6 +864,31 @@ def coverage_view(workspace, query):
         if pending:
             body += '<p>Profile collections not captured: ' + e(", ".join(sorted(pending))) + '</p>'
         body += f'<p><a href="{e(catalog["source"])}" target="_blank" rel="noopener noreferrer">HPE published API catalog</a> · Revision {e(catalog["source_updated_at"])}</p></section>'
+    ledger = bundle.get("api_read_coverage")
+    if ledger:
+        operations = ledger.get("operations", [])
+        received = sum(bool(r["received"]) for r in operations)
+        attempted = sum(bool(r["attempted"]) for r in operations)
+        body += '<section><h2>Documented API operation coverage</h2>' + metrics([
+            ("Documented GET paths", len(operations), "Includes supplemental release notes"),
+            ("Paths attempted", f"{attempted}/{len(operations)}", "Logical GET calls, not retries"),
+            ("Paths with responses", f"{received}/{len(operations)}", "Not proof of complete data"),
+            ("Paths not attempted", len(operations) - attempted, "Includes intentionally excluded endpoints"),
+        ])
+        body += '<p class="note">Search by endpoint or category to identify collection gaps. Path parameters and query values are not recorded. A received response may still be empty, partial or uninterpretable. Not attempted includes endpoints outside the collection scope.</p>'
+        labels = {"not_attempted": "Not attempted", "no_response": "No successful response",
+                  "mixed_outcomes": "Mixed outcomes", "response_received": "Response received"}
+        operation_rows = []
+        for row in sorted(operations, key=lambda r: ({"no_response": 0, "mixed_outcomes": 1, "not_attempted": 2,
+                                                      "response_received": 3}.get(r["status"], 4), r["path"])):
+            outcomes = ", ".join(f"{pretty(k)}: {v}" for k, v in sorted(row["outcomes"].items()))
+            operation_rows.append(tr(e(", ".join(row["groups"])), e(row["path"]),
+                                     e(labels.get(row["status"], row["status"])),
+                                     str(row["attempted"]), str(row["received"]), e(outcomes or "None")))
+        body += table(("Category", "GET path", "Read result", "Attempts", "Responses", "Outcomes"), operation_rows, search=True)
+        body += '<p>Other or ambiguous GET paths: ' + str(sum(ledger.get("unmatched_get_outcomes", {}).values())) + ' calls. These are not attributed to a documented path.</p></section>'
+    else:
+        body += '<section><h2>Documented API operation coverage</h2><p class="muted">Not recorded in this snapshot. Collect a fresh audit.</p></section>'
     rows = [tr(e(persona_label(r["persona"])), e(module_label(r["module"])), f'{r["qualified"]}/{r["total"]}', status(r["status"]),
                f'<a href="{url(root, "report", snapshot=name, persona=r["persona"], module=r["module"], view="diagnostics")}">View evidence</a>')
             for r in sorted(records, key=lambda r: ({"unqualified": 0, "partial": 1, "qualified": 2}[r["status"]], r["persona"], r["module"]))]
