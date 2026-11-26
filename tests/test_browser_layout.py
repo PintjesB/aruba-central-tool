@@ -123,6 +123,8 @@ class BrowserLayoutTests(unittest.TestCase):
                 view.get_by_role("button", name="Plan consolidation").click()
                 view.locator("[data-keep]").select_option("Access-A")
                 self.assertIn("Access-B", view.locator("[data-migration-summary]").inner_text())
+                self.assertIn("Affected device visibility", view.locator("[data-migration-summary]").inner_text())
+                self.assertIn("Unresolved recipient observations", view.locator("[data-migration-summary]").inner_text())
                 self.assertNotIn("Access-A:", view.locator("[data-migration-summary]").inner_text())
             finally:
                 browser.close()
