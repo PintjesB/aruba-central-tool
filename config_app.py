@@ -470,6 +470,10 @@ if(panel.dataset.state==='running')poll();
         from remediation_view import remediation_view
         return remediation_view(self, query)
 
+    def trends(self, query):
+        from trends_view import trends_view
+        return trends_view(self, query)
+
     def standards(self, query):
         from history_view import standards_view
         return standards_view(self, query)
@@ -539,6 +543,8 @@ def handler_for(workspace):
                     body = workspace.drift(query)
                 elif parsed.path == root + "remediation":
                     body = workspace.remediation(query)
+                elif parsed.path == root + "trends":
+                    body = workspace.trends(query)
                 elif parsed.path == root + "standards":
                     body = workspace.standards(query)
                 else:
