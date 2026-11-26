@@ -355,6 +355,47 @@ def vlan_map(profiles):
     return result
 
 
+MISSING = object()
+# Only these known schema field names may appear in the shareable summary.
+PUBLIC_VLAN_FIELDS = {"vlan", "name", "enable", "is-l3-vlan", "voice-enable",
+                      "igmp", "mld", "snooping", "dhcpv4-snooping", "dhcpv6-snooping",
+                      "description", "@"}
+
+
+def field_differences(left, right, path=()):
+    """Exact structured diff. Missing, null, false and zero remain distinct."""
+    if isinstance(left, dict) and isinstance(right, dict):
+        result = []
+        for key in sorted(left.keys() | right.keys()):
+            result.extend(field_differences(left.get(key, MISSING), right.get(key, MISSING),
+                                            path + (key,)))
+        return result
+    if left is not MISSING and right is not MISSING and canonical(left) == canonical(right):
+        return []
+    if left is MISSING:
+        kind = "missing_local"
+    elif right is MISSING:
+        kind = "missing_reference"
+    elif left is None or right is None:
+        kind = "null_vs_value"
+    elif type(left) is not type(right):
+        kind = "type_difference"
+    else:
+        kind = "value_difference"
+    result = {"path": list(path), "kind": kind,
+              "local_type": "missing" if left is MISSING else type(left).__name__,
+              "reference_type": "missing" if right is MISSING else type(right).__name__}
+    if left is not MISSING:
+        result["local_value"] = left
+    if right is not MISSING:
+        result["reference_value"] = right
+    return [result]
+
+
+def safe_difference_path(path):
+    return ".".join(part if part in PUBLIC_VLAN_FIELDS else "[other-field]" for part in path) or "[root]"
+
+
 def review_local_profiles(scopes, baseline, library):
     """Review each local definition, including singletons, without proposing writes."""
     device_maps = {s["id"]: vlan_map(s["effective"]) for s in scopes if s["kind"] == "device"}
@@ -400,6 +441,9 @@ def review_local_profiles(scopes, baseline, library):
                 "global_coverage": ("all_scanned_devices_match" if device_maps and len(matching) == len(device_maps)
                                     else "not_all_scanned_devices_match"),
                 "annotations": annotation,
+                "library_differences": field_differences(body, library[vid]) if vid in library else None,
+                "global_differences": field_differences(body, baseline[vid]) if vid in baseline else None,
+                "effective_differences": field_differences(body, effective[vid]) if vid in effective else None,
                 "recommendation": recommendation, "status": "review_only"
             })
     return results
@@ -411,6 +455,32 @@ def print_review_summary(data):
     print("Local profile review (read-only):")
     for name, count in sorted(Counter(row["recommendation"] for row in candidates).items()):
         print(f"  {name}: {count}")
+    for reference in ("library", "global", "effective"):
+        field_counts = Counter()
+        kind_counts = Counter()
+        for candidate in candidates:
+            differences = candidate.get(reference + "_differences")
+            if differences is None:
+                kind_counts["no_reference_profile"] += 1
+                continue
+            if not differences:
+                kind_counts["exact_match"] += 1
+                continue
+            kinds = {d["kind"] for d in differences}
+            category = ("includes_value_or_type_difference"
+                        if kinds & {"value_difference", "type_difference", "null_vs_value"}
+                        else "missing_fields_only")
+            kind_counts[category] += 1
+            for d in differences:
+                field_counts[(safe_difference_path(d["path"]), d["kind"],
+                              d["local_type"], d["reference_type"])] += 1
+        print(f"Local vs {reference} (profiles):")
+        for kind, count in sorted(kind_counts.items()):
+            print(f"  {kind}: {count}")
+        if field_counts:
+            print("  Difference fields (counts, no values):")
+            for (path, kind, local_type, ref_type), count in sorted(field_counts.items()):
+                print(f"    {path}: {kind} ({local_type} vs {ref_type}) x{count}")
     print("Device deviations from Global:")
     for index, scope in enumerate((s for s in data["scope_comparisons"] if s["kind"] == "device"), 1):
         print(f"  Device {index}: local={len(scope['local_vlan_ids'])}, "
