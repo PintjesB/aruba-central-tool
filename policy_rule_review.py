@@ -56,7 +56,12 @@ def rule_review(module, body, limit=2000):
                     break
             else:
                 seen[key] = i
-        result["status"] = "structural_acl_review"
+        from role_acl_review import acl_prefix_review
+        semantic = acl_prefix_review(body, limit=max(0, limit - len(result["findings"])))
+        result["findings"].extend(semantic.pop("findings"))
+        semantic["truncated"] |= result["truncated"]
+        result.update(semantic)
+        result["status"] = "literal_acl_prefix_review" if result["order_verified"] else "structural_acl_review"
         return result
     security = body.get("security-policy")
     if (body.get("type") != "POLICY_TYPE_SECURITY" or not isinstance(security, dict)
