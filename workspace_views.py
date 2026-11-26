@@ -806,6 +806,36 @@ def coverage_view(workspace, query):
                      ("Qualified modules", f"{counts['qualified']}/{len(records)}", "All requested scopes interpretable"),
                      ("Observed types without adapter", len(unknown), "Raw evidence only"),
                      ("Library collections attempted", len(library.get("modules", {})) + len(additional), "Includes additional raw reads")])
+    health = bundle.get("configuration_health")
+    if health:
+        from central_tool import health_serial
+        summary = {health_serial(row): row for row in health.get("devices", []) if health_serial(row)}
+        issues = health.get("active_issues", {})
+        inventory = {health_serial(record.get("inventory")): record["inventory"]
+                     for record in bundle.get("inventory", []) if health_serial(record.get("inventory"))}
+        def field(row, key):
+            value = row.get(key)
+            return e(value) if isinstance(value, (str, int, float, bool)) else "Unavailable"
+        health_rows = []
+        for serial in sorted(set(summary) | set(issues) | set(inventory)):
+            row = summary.get(serial, {})
+            issue = issues.get(serial, {})
+            label = row.get("name") or inventory.get(serial, {}).get("deviceName") or serial
+            health_rows.append(tr(e(label), e(serial), field(row, "configStatus"),
+                field(row, "activeIssues"), field(row, "topPriorityIssue"), field(row, "recommendedAction"),
+                status(issue.get("status", "not_collected")),
+                inspect(label, raw(row, "Configuration health summary") + raw(issue, "Active issue response"), "Inspect")))
+        body += '<section><h2>Configuration deployment health</h2>' + metrics([
+            ("Device summaries", len(summary), "Count confirmed" if health.get("count_confirmed") else "Count unverified"),
+            ("Active issue responses", f"{sum(v.get('status') == 'response_received' for v in issues.values())}/{len(issues)}", "All observed device identifiers"),
+            ("Inventory without health summary", len(health.get("inventory_serials_missing_from_summary", [])), "Missing is not healthy"),
+            ("Inventory without serial", health.get("inventory_entries_without_serial", "Unavailable"), "Cannot identify device"),
+        ]) + '<p>Summary collection: ' + status(health.get("summary_status", "not_collected")) + '</p>'
+        body += '<p class="note">Configuration status and issue counts are reported by Central. Missing data does not establish successful deployment. Issue responses have not been semantically qualified.</p>'
+        body += table(("Device", "Serial", "Configuration status", "Active issues", "Top issue", "Recommended action", "Issue read", ""), health_rows, search=True)
+        body += raw(health.get("summary_pages", []), "Original health summary responses") + '</section>'
+    else:
+        body += '<section><h2>Configuration deployment health</h2><p class="muted">Not collected in this snapshot. Refresh to retrieve Central health evidence.</p></section>'
     assignments = library.get("assignments") or {}
     scope_maps = library.get("scope_maps") or {}
     outcomes = assignments.get("scope_read_outcomes") or {}
