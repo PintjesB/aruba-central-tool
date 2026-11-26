@@ -5,7 +5,7 @@ import os
 import re
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError
@@ -170,7 +170,7 @@ def inventory(client):
 
 
 def vlan_rows(client, **params):
-    """Library uses nested pagination; scoped views use unpaginated reads."""
+    """Retrieve full VLAN views and independently check the Library total."""
     try:
         if params.get("view-type") != "LIBRARY":
             payload = client.get(VLAN, **params)
@@ -182,35 +182,29 @@ def vlan_rows(client, **params):
                 raise ValueError("Incomplete scoped VLAN response")
             return batch
 
-        result, seen = [], set()
-        offset, total = 0, None
-        for _ in range(10000):
-            try:
-                payload = client.get(VLAN, **params, limit=10, offset=offset)
-            except APIError as exc:
-                raise APIError(f"{VLAN} (limit=10, offset={offset})", exc.status) from None
-            batch = rows(payload, ("l2-vlan",))
-            metadata = payload.get("metadata")
-            if not isinstance(metadata, dict):
-                raise ValueError("Missing VLAN Library pagination metadata")
-            page_total, count, next_offset = (metadata.get(k) for k in ("total", "count", "offset"))
-            if (any(type(v) is not int or v < 0 for v in (page_total, count, next_offset))
-                    or count != len(batch) or count > 10 or next_offset != offset + count
-                    or next_offset > page_total or (total is not None and page_total != total)):
-                raise ValueError("Inconsistent VLAN Library pagination metadata")
-            total = page_total
-            if batch:
-                signature = canonical(batch)
-                if signature in seen:
-                    raise ValueError("Repeated VLAN Library page")
-                seen.add(signature)
-                result.extend(batch)
-            if next_offset == total:
-                return result
-            if not count:
-                raise ValueError("VLAN Library pagination stopped before total")
-            offset = next_offset
-        raise ValueError("VLAN Library pagination safety limit reached")
+        # The live unpaginated Library view returned all 29 profiles.
+        # Cross-check against the independently reported paginated total and
+        # first-page contents; do not depend on undocumented terminal offsets.
+        first = client.get(VLAN, **params, limit=10, offset=0)
+        metadata = first.get("metadata") if isinstance(first, dict) else None
+        if not isinstance(metadata, dict):
+            raise ValueError("Missing VLAN Library pagination metadata")
+        total = metadata.get("total")
+        count = metadata.get("count")
+        if (type(total) is not int or type(count) is not int
+                or not 0 <= count <= min(total, 10)):
+            raise ValueError("Invalid VLAN Library total or count")
+        page = rows(first, ("l2-vlan",))
+        if len(page) != count or count != min(total, 10):
+            raise ValueError("Inconsistent first VLAN Library page count")
+        full = rows(client.get(VLAN, **params), ("l2-vlan",))
+        if len(full) != total:
+            raise ValueError(f"VLAN Library count mismatch: expected {total}, received {len(full)}")
+        full_counts = Counter(canonical(item) for item in full)
+        page_counts = Counter(canonical(item) for item in page)
+        if page_counts - full_counts:
+            raise ValueError("VLAN Library first page differs from full response")
+        return full
     except (APIError, ValueError) as exc:
         safe = {k: v for k, v in params.items() if k != "scope-id"}
         raise RuntimeError(f"{exc}; VLAN query: {canonical(safe)}") from None
