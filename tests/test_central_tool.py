@@ -1,5 +1,5 @@
 import unittest
-from central_tool import APIError, Central, EmptyCommittedLocal, EU_REGIONS, check_empty_local, detect_region, inventory, offset_rows, report, scoped_vlan_rows, vlan_map, vlan_rows
+from central_tool import APIError, Central, EmptyCommittedLocal, EU_REGIONS, check_empty_local, detect_region, inventory, offset_rows, report, review_local_profiles, scoped_vlan_rows, vlan_map, vlan_rows
 
 
 class Fake:
@@ -194,6 +194,33 @@ class Tests(unittest.TestCase):
     def test_untrusted_host_fails(self):
         with self.assertRaises(ValueError):
             Central("https://de1.api.central.arubanetworks.com.evil.example", token="fake")
+
+    def test_single_local_profiles_are_reviewed(self):
+        base = {"vlan": 10, "name": "Corp"}
+        extra = {"vlan": 30, "name": "CCTV"}
+        conflict = {"vlan": 40, "name": "Different"}
+        scopes = [scope("1", "global", [base]),
+                  scope("2", "device", [base, extra, conflict], [base, extra, conflict]),
+                  scope("3", "device", [base])]
+        results = review_local_profiles(scopes, {"10": base},
+                    {"30": extra, "40": {"vlan": 40, "name": "Other"}})
+        by_vlan = {r["vlan"]: r for r in results}
+        self.assertEqual(by_vlan["10"]["recommendation"], "review_restore_global_inheritance")
+        self.assertEqual(by_vlan["10"]["global_coverage"], "all_scanned_devices_match")
+        self.assertEqual(by_vlan["30"]["recommendation"], "review_reuse_library_profile")
+        self.assertEqual(by_vlan["30"]["missing_devices"], ["3"])
+        self.assertEqual(by_vlan["30"]["global_coverage"], "not_all_scanned_devices_match")
+        self.assertEqual(by_vlan["40"]["recommendation"], "resolve_library_conflict")
+        self.assertTrue(all(r["status"] == "review_only" for r in results))
+
+    def test_local_effective_mismatch_and_defaults_are_not_promoted(self):
+        local = {"vlan": 10, "name": "Local"}
+        actual = {"vlan": 10, "name": "Effective"}
+        s = scope("2", "device", [actual], [local])
+        self.assertEqual(review_local_profiles([s], {}, {})[0]["recommendation"],
+                         "inspect_local_effective_difference")
+        s["annotated"] = [{**actual, "@": {"aruba-annotation:is_default": True}}]
+        self.assertEqual(review_local_profiles([s], {}, {})[0]["recommendation"], "retain_default")
 
     def test_report_distinguishes_coverage_and_conflicts(self):
         base = {"vlan": 10, "name": "Corp"}
