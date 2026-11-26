@@ -668,6 +668,19 @@ class Tests(unittest.TestCase):
             self.assertEqual(keyed_profile_read(fake, "dns", "name", selector, {}, None)["status"], "invalid_selector")
         self.assertEqual(len(fake.calls), 1)
 
+    def test_keyed_ethernet_numeric_interface_is_encoded_as_one_segment(self):
+        from central_tool import keyed_profile_read, ALPHA
+        fake = Fake([{"ethernet-interface": {"name": "1/1/24", "enable": True}}])
+        result = keyed_profile_read(fake, "ethernet-interfaces", "name", "1/1/24",
+                                    {"scope-id": "1"}, {"name": "1/1/24"})
+        self.assertEqual(result["status"], "identity_observed")
+        self.assertEqual(fake.calls[0][0], ALPHA + "/ethernet-interfaces/1%2F1%2F24")
+        for selector in ("../1/24", "1/../24", "1/1/24/extra", "1%2F1%2F24", "a/b/c", "/1/1"):
+            self.assertEqual(keyed_profile_read(fake, "ethernet-interfaces", "name", selector, {}, None)["status"],
+                             "invalid_selector")
+        self.assertEqual(keyed_profile_read(fake, "dns", "name", "1/1/24", {}, None)["status"], "invalid_selector")
+        self.assertEqual(len(fake.calls), 1)
+
     def test_configuration_audit_uses_persona_catalog(self):
         from central_tool import configuration_audit
         from unittest.mock import patch
