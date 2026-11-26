@@ -3,8 +3,20 @@ import unittest
 import shutil
 import importlib.util
 
-from workspace_ui import page, table, tr, inspect, raw
+from workspace_ui import page, table, tr, inspect, raw, setting_value, diff_table
 from workspace_views import vlan_explanation
+
+
+class SettingDisplayTests(unittest.TestCase):
+    def test_values_preserve_types_and_escape_central_data(self):
+        html = setting_value({"description": "<script>alert(1)</script>", "flags": [False, None, "", {}, []]})
+        self.assertIn("&lt;script&gt;", html)
+        self.assertNotIn("<script>", html)
+        for label in ("False", "Null", "Empty string", "Empty object", "Empty list"):
+            self.assertIn(label, html)
+        self.assertIn("value-object", html)
+        self.assertIn("value-list", html)
+        self.assertIn("Not returned", diff_table([{"path": ["flag"], "reference_value": False}]))
 
 
 @unittest.skipUnless(importlib.util.find_spec("playwright"), "Optional browser test requires Playwright")
@@ -114,11 +126,6 @@ class BrowserLayoutTests(unittest.TestCase):
                             if preview_dir:
                                 Path(preview_dir).mkdir(parents=True, exist_ok=True)
                                 view.screenshot(path=str(Path(preview_dir) / (screen + ".png")))
-                                if screen in ("overview", "overrides"):
-                                    import base64
-                                    encoded = base64.b64encode(view.screenshot(type="jpeg", quality=50)).decode()
-                                    for offset in range(0, len(encoded), 4000):
-                                        print("UI_PREVIEW_" + screen + ":" + encoded[offset:offset + 4000], flush=True)
                         if screen == "overview":
                             self.assertEqual(view.locator(".opportunity-row").count(), 3)
                             self.assertIn("finding=remove_override", view.locator(".opportunity-row").first.get_attribute("href"))
