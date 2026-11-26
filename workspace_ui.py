@@ -610,6 +610,7 @@ function openPalette(){
 commandButton.addEventListener('click',openPalette);
 query.addEventListener('input',renderCommands);
 query.addEventListener('keydown',event=>{
+ if(event.key==='Escape'){event.preventDefault();event.stopPropagation();palette.close();return;}
  if(event.key==='ArrowDown'||event.key==='ArrowUp'){
   event.preventDefault();if(matching.length){selected=(selected+(event.key==='ArrowDown'?1:-1)+matching.length)%matching.length;highlight();}
  }else if(event.key==='Enter'&&matching[selected]){
