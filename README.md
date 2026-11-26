@@ -84,7 +84,11 @@ See [ROADMAP.md](ROADMAP.md) for the configuration consolidation workflows, Libr
 
 The local workspace shows authentication/discovery, scoped configuration, Library, additional profile types and snapshot publication progress. It polls only the loopback server once per second while an audit is running, refreshes the snapshot list on completion, and displays sanitized failures. Progress counts describe the current phase, not an estimated overall completion time.
 
-Scoped reads, Library collections and additional profile types use at most four concurrent read workers. OAuth token renewal is serialized; HTTP 429 retries share a cooldown across workers. Scope review occurs after capture so the Global baseline is available independently of request completion order. No modules or applicable scopes are skipped for speed. Actual latency and throughput depend on Central and its rate limits; validate against a live capture.
+Scoped reads across modules within a persona, Library collections and additional profile types use at most twelve concurrent read workers. OAuth token renewal is serialized; HTTP 429 retries share a cooldown across workers. Scope review occurs after capture so the Global baseline is available independently of request completion order. No modules or applicable scopes are skipped for speed. Actual latency and throughput depend on Central and its rate limits; validate against a live capture.
+
+### Consolidation advisor
+
+Open Consolidation advisor for any saved configuration audit. It groups qualified reusable local bodies and recommends review of Global-matching overrides, exact repeated locals, existing Library reuse, conflicting definitions, VLAN default differences and possible Library placement. It also flags profiles with no observed assignments when assignment evidence exists. Inspect captured device and higher-scope coverage, select recommendations and export a private, non-executable change preview. Device-specific system settings and topology objects are excluded from generic promotion. All recommendations are blocked from automatic application pending inheritance, target support, dependency and rollback validation; the application performs no configuration writes.
 
 ## Safety boundary
 
