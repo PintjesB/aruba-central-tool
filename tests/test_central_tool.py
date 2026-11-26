@@ -446,6 +446,31 @@ class Tests(unittest.TestCase):
         self.assertFalse(preview["executable"])
         self.assertFalse(preview["effective_after_change_verified"])
 
+    def test_assignment_evidence_filters_persona_type_and_instance(self):
+        from central_tool import vlan_assignment_evidence
+        base = {"scope-id": "g", "profile-type": "layer2-vlan",
+                "device-function": "ACCESS_SWITCH", "profile-instance": "10"}
+        snap = {"persona": "ACCESS_SWITCH", "scopes": [scope("g", "global", [])],
+                "assignments_raw": {"config-assignment": [base, {**base, "device-function": "CAMPUS_AP"},
+                                  {**base, "profile-type": "roles"}, {**base, "profile-instance": "20"}]}}
+        evidence = vlan_assignment_evidence(snap, "10", "device")
+        self.assertEqual(evidence["matches"], [base])
+        self.assertTrue(evidence["global_assignment"])
+        self.assertFalse(evidence["inheritance_verified"])
+
+    def test_removal_evidence_detects_changed_fields_without_claiming_equivalence(self):
+        from central_tool import removal_evidence
+        def bundle(name):
+            return {"results": {"ACCESS_SWITCH": {"dependencies": {"devices": [
+                {"scope_id": "s", "operational_vlans": {"status": "response_received",
+                 "payload": {"items": [{"id": 10, "name": name, "taggedPorts": ["1/1/1"]}]}}}]}}}}
+        result = removal_evidence(bundle("A"), bundle("B"), "ACCESS_SWITCH", "s", "10",
+                                  {"vlan": 10}, {"vlan": 10, "enable": True})
+        self.assertEqual(result["effective_assessment"], "documented_defaults_only")
+        self.assertEqual(result["observed_fields"]["name"], "changed")
+        self.assertEqual(result["observed_fields"]["taggedPorts"], "unchanged")
+        self.assertFalse(result["behavior_preserved_verified"])
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
