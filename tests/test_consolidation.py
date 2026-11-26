@@ -1,4 +1,5 @@
 import unittest
+import copy
 from consolidation import profile_recommendations
 from central_tool import review_module_scope
 
@@ -33,8 +34,8 @@ def fixture():
     return {"schema": 1, "kind": "configuration_audit", "captured_at": "test",
             "results": {"ACCESS_SWITCH": {"scopes": scopes, "modules": {
                 "layer2-vlan": {"scope_results": results, "device_scope_only": False},
-                "system-info": {"scope_results": results, "device_scope_only": False},
-                "ethernet-interfaces": {"scope_results": results, "device_scope_only": True}}}},
+                "system-info": {"scope_results": copy.deepcopy(results), "device_scope_only": False},
+                "ethernet-interfaces": {"scope_results": copy.deepcopy(results), "device_scope_only": True}}}},
             "library": {"modules": {"layer2-vlan": view([vlan(30, "Reuse"), vlan(60, "Unassigned")])},
                         "assignments": {"status": "response_received", "rows": [
                             {"profile-type": "layer2-vlan", "profile-instance": "30"}]}}}
