@@ -38,6 +38,10 @@ Use `python central_tool.py dependencies snapshot.json --output dependencies.jso
 
 Run `python central_tool.py audit --region-file region.txt --output audit.json` to discover inventory, scan all qualified switch personas, probe dependencies and generate per-persona reviews in one read-only operation. The audit collects fresh configuration and dependencies in the same run to avoid combining stale or different-tenant snapshots. The output bundles the inventory, configuration snapshots, dependency evidence and reports. Unqualified device functions remain explicitly listed, and the bundle is never an executable migration plan.
 
+### VLAN reference and monitoring evidence
+
+The audit probes interface profiles, roles and port channels in addition to the original dependency modules. It indexes explicitly VLAN-shaped configuration fields, keeping wildcard, unknown and ambiguous expressions unresolved. Candidate paths and values remain in the private report; this is not a complete dependency graph. The audit also attempts the documented switch VLAN monitoring endpoint using the discovered inventory serial or stack identity. Responses are saved as evidence; schema and completeness must be validated before deriving operational equivalence. No profile is marked migration eligible.
+
 ## Safety boundary
 
 No configuration mutation API calls exist yet. Only OAuth token issuance uses POST. Candidate findings are not executable plans. The API is v1alpha1 and real tenant response shapes, group access, annotation semantics, and Classic/New configuration authority must be validated before enabling writes. Scope IDs are strings, not floating-point numbers.
