@@ -810,8 +810,12 @@ def coverage_view(workspace, query):
     scope_maps = library.get("scope_maps") or {}
     outcomes = assignments.get("scope_read_outcomes") or {}
     body += '<section><h2>Discovery and assignments</h2>' + table(("Source", "Status", "Observed records"), [
-        tr("Tenant assignments", status(assignments.get("status", "not_collected")), str(len(assignments.get("rows", [])))),
-        tr("Local scope maps", status(scope_maps.get("status", "not_collected")), str(len(scope_maps.get("rows", [])))),
+        tr("Tenant assignments", status(assignments.get("status", "not_collected")) + '<small>' +
+           ("Initial count confirmed" if assignments.get("collection_count_verified") else "Initial count unverified") + '</small>',
+           str(len(assignments.get("rows", []))) if assignments.get("rows") or assignments.get("status") == "response_received" else "Unavailable"),
+        tr("Local scope maps", status(scope_maps.get("status", "not_collected")) + '<small>' +
+           ("Count confirmed" if scope_maps.get("collection_count_verified") else "Count unverified") + '</small>',
+           str(len(scope_maps.get("rows", []))) if scope_maps.get("rows") or scope_maps.get("status") == "response_received" else "Unavailable"),
         tr("Scoped assignment reads", e(", ".join(f"{pretty(k)}: {v}" for k, v in sorted(outcomes.items())) or "Not collected"), str(sum(outcomes.values()))),
         tr("Additional assignment identities", "Recovered by scoped queries", str(assignments.get("additional_assignments", "Unavailable"))),
         tr("Unqualified device functions", e(", ".join(bundle.get("unqualified_personas", [])) or "None recorded"), str(len(bundle.get("unqualified_personas", []))))])
@@ -836,6 +840,17 @@ def coverage_view(workspace, query):
                        f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Inspect evidence</a>'))
     body += '<section><h2>Library and additional profile collections</h2>' + table(
         ("Profile type", "Interpretation", "Library read", "Parsed profiles", "Collection count", ""), rows, search=True) + '</section>'
+    if additional:
+        scoped = []
+        for m, v in sorted(additional.items()):
+            reads = [s[k] for s in v.get("source_views", []) for k in ("committed", "effective")]
+            captured = sum(r.get("status") == "response_received" for r in reads)
+            counted = sum(r.get("collection_count_verified") is True for r in reads)
+            scoped.append(tr(e(module_label(m)), str(len(v.get("source_views", []))),
+                             f"{captured}/{len(reads)}", str(counted),
+                             f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Inspect settings</a>'))
+        body += '<section><h2>Additional scoped configuration</h2><p class="filter-hint">These reads preserve the returned data without assuming profile identity or scope applicability.</p>' + table(
+            ("Profile type", "Scopes attempted", "Responses captured", "Count-confirmed reads", ""), scoped, search=True) + '</section>'
 
     return page("Module coverage", body, workspace.nav(name))
 
