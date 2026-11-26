@@ -257,6 +257,33 @@ class Tests(unittest.TestCase):
         self.assertEqual(review["proposed_review"], "review_library_reuse_at_existing_scope")
         self.assertEqual(review["status"], "review_only")
 
+    def test_device_capabilities_detect_known_and_unknown(self):
+        from central_tool import inventory_capabilities
+        records = inventory_capabilities([
+            {"model": "6100", "firmwareVersion": "PL.10.16.1006", "deviceFunction": "Access Switch"},
+            {"model": "6200", "firmwareVersion": "FL.10.99.1000", "deviceFunction": "Core Switch"},
+            {"model": "505", "softwareVersion": "8.13.3.1", "deviceFunction": "Campus AP"},
+            {}])
+        self.assertEqual(len(records), 4)
+        self.assertTrue(records[0]["multicast_defaults"]["igmp"])
+        self.assertTrue(records[1]["vlan_scan_supported_persona"])
+        self.assertEqual(records[1]["multicast_defaults"]["status"], "unknown")
+        self.assertFalse(records[2]["vlan_scan_supported_persona"])
+        self.assertEqual(records[3]["identity"]["persona"], "UNKNOWN")
+
+    def test_dependencies_probe_distinguishes_empty_from_permission(self):
+        from central_tool import discover_dependencies
+        class Probe:
+            def get(self, path, **params):
+                if path.endswith("sw-port-profiles"):
+                    raise APIError(path, 403)
+                return {}
+        data = discover_dependencies(Probe(), {"region": "test", "persona": "ACCESS_SWITCH",
+                                               "scopes": [scope("2", "device", [])]})
+        caps = data["devices"][0]["capabilities"]
+        self.assertEqual(caps["mgmd-global"], "empty_response")
+        self.assertEqual(caps["sw-port-profiles"], "permission_denied")
+
     def test_dependency_review_protects_svi_and_multicast(self):
         from central_tool import dependency_review
         local = {"vlan": 10, "is-l3-vlan": True}
