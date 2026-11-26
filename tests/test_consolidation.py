@@ -393,6 +393,35 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("Not returned", html)
         self.assertIn("original snapshot", html)
 
+    def test_additional_profile_inspector_preserves_values_without_identity_guesses(self):
+        import tempfile
+        import json
+        from pathlib import Path
+        from config_app import Workspace
+        data = fixture()
+        body = {"profiles": [{"arbitrary-field": "<script>example</script>", "enabled": False}]}
+        read = {"status": "response_received", "raw": body}
+        data["unadapted_profiles"] = {"new-module": {"library": read, "source_views": [
+            {"persona": "ACCESS_SWITCH", "scope": "3", "observed_instances": [],
+             "committed": read, "effective": {"status": "request_rejected", "http_error": 403}}]}}
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(data))
+            workspace = Workspace(directory)
+            q = {"snapshot": name, "module": "new-module"}
+            html = workspace.unadapted(q)
+            self.assertIn("arbitrary-field", html)
+            self.assertIn("&lt;script&gt;example&lt;/script&gt;", html)
+            self.assertNotIn("<script>example</script>", html)
+            self.assertIn("Inspect settings", html)
+            html = workspace.unadapted({**q, "persona": "ACCESS_SWITCH", "scope": "3"})
+            self.assertIn("Committed configuration", html)
+            self.assertIn("Effective configuration", html)
+            self.assertIn("Structured settings unavailable", html)
+            self.assertIn("All captured scopes", html)
+            coverage = workspace.coverage({"snapshot": name})
+            self.assertIn("Additional scoped configuration", coverage)
+
     def test_partial_vlan_matches_are_review_candidates_not_verified_removals(self):
         from central_tool import refresh_configuration_review
         from override_view import device_override_rows
