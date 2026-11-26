@@ -57,6 +57,41 @@ class ConsolidationTests(unittest.TestCase):
         self.assertTrue(all(not f["safe_to_apply"] for f in findings))
         self.assertEqual(len({f["id"] for f in findings}), len(findings))
 
+    def test_scope_impact_uses_exact_membership_and_keeps_unknown_devices(self):
+        from consolidation import scope_memberships, placement_evidence
+        bundle = fixture()
+        entry = bundle["results"]["ACCESS_SWITCH"]
+        scopes = entry["scopes"]
+        scopes[1]["metadata"] = {"id": "202", "collectionId": "300"}
+        scopes[2]["metadata"] = {"siteId": 202, "deviceGroupId": 400}
+        scopes[3]["metadata"] = {"siteId": "202", "deviceGroupId": "400"}
+        scopes[4]["metadata"] = {"siteId": 999, "deviceGroupId": 401}
+        scopes.extend([{"id": "6", "kind": "collection", "name": "Collection", "metadata": {"id": 300}},
+                       {"id": "7", "kind": "group", "name": "Switch Group", "metadata": {"id": 400}},
+                       {"id": "8", "kind": "group", "name": "Other", "metadata": {"id": 401}}])
+        membership = scope_memberships(scopes)
+        self.assertEqual(membership["3"], {"global": "1", "site": "2", "group": "7", "collection": "6"})
+        self.assertIsNone(membership["5"]["site"])
+        self.assertEqual(membership["5"]["group"], "8")
+        findings = profile_recommendations(bundle)
+        repeated = next(f for f in findings if f["identity"] == "20")
+        options = {p["scope"]: p for p in repeated["placement_options"]}
+        self.assertEqual(options["7"]["membership_status"], "exact_observed_recipient_set")
+        self.assertEqual(options["1"]["additional_devices"], [{"scope": "5", "name": "Unknown"}])
+        self.assertEqual(options["2"]["unknown_membership"], [{"scope": "5", "name": "Unknown"}])
+        self.assertFalse(options["7"]["safe_to_apply"])
+        self.assertTrue(all(not p["safe_to_apply"] for p in options.values()))
+
+    def test_ambiguous_scope_alias_does_not_infer_membership(self):
+        from consolidation import scope_memberships
+        scopes = [
+            {"id": "1", "kind": "global"},
+            {"id": "2", "kind": "site", "metadata": {"id": 20}},
+            {"id": "3", "kind": "site", "metadata": {"id": 20}},
+            {"id": "4", "kind": "device", "metadata": {"siteId": 20}},
+        ]
+        self.assertIsNone(scope_memberships(scopes)["4"]["site"])
+
     def test_missing_assignment_evidence_does_not_report_unused(self):
         bundle = fixture()
         bundle["library"]["assignments"] = {"status": "request_rejected", "rows": []}
@@ -75,5 +110,7 @@ class ConsolidationTests(unittest.TestCase):
             self.assertIn("Consolidate repeated local profiles", html)
             self.assertIn("Reuse existing Library profile", html)
             self.assertIn("Export private preview JSON", html)
+            self.assertIn("Choose destination for review", html)
+            self.assertIn("Library / exact source scopes", html)
             self.assertIn("not executable API operations", html)
             self.assertNotIn("Apply changes</button>", html)

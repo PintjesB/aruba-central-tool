@@ -354,14 +354,20 @@ if(panel.dataset.state==='running')poll();
                                   ("matching", "different", "absent", "unknown")) if observed else "Not assessed"
             details = {"source_profiles": f["sources"], "local": f["local"], "reference": f["reference"],
                        "differences": f["differences"], "observed_devices": observed,
-                       "scope_references": f["scope_references"]}
+                       "scope_references": f["scope_references"], "placement_options": f["placement_options"]}
+            placement = ""
+            if f["action"] == "promote_local":
+                choices = [("", "Choose destination for review"), ("library", "Library / exact source scopes")]
+                for p in f["placement_options"]:
+                    choices.append((p["scope"], f'{p["kind"]} / {p["name"]} ({len(p["additional_devices"])} extra, {len(p["unknown_membership"])} unknown; {p["effective"]})'))
+                placement = '<br><label>Destination<select class="destination">' + options(choices) + '</select></label>'
             rows.append(
                 f'<tr data-action="{e(f["action"])}" data-module="{e(f["module"])}" data-persona="{e(f["persona"])}">'
                 f'<td><input type="checkbox" class="choose" aria-label="Select recommendation" data-plan="{e(json.dumps(f, ensure_ascii=False))}"></td>'
                 f'<td><strong>{e(LABELS[f["action"]])}</strong><br><small>{e(f["persona"])}</small></td>'
                 f'<td>{e(f["module"])}<br><strong>{e(f["identity"])}</strong></td>'
                 f'<td>{len(f["sources"])} local scopes<br>{e(sources)}</td>'
-                f'<td>{e(f["target"])}</td><td>{e(coverage)}</td>'
+                f'<td>{e(f["target"])}{placement}</td><td>{e(coverage)}</td>'
                 '<td><span class="pill">Review required</span>'
                 '<details><summary>Evidence and steps</summary>'
                 + '<ol>' + "".join(f'<li>{e(step)}</li>' for step in f["steps"]) + '</ol>'
@@ -410,7 +416,20 @@ function filter(){
  $('visible-count').textContent=rows.filter(r=>!r.hidden).length+' of '+rows.length+' recommendations';
 }
 function selection(){
- const chosen=checks.filter(c=>c.checked).map(c=>JSON.parse(c.dataset.plan));
+ const chosen=checks.filter(c=>c.checked).map(c=>{
+   const f=JSON.parse(c.dataset.plan);
+   const field=c.closest('tr').querySelector('.destination');
+   if(field){
+     const value=field.value;
+     f.selected_destination=value==='library'?{kind:'library',assignment_scopes:f.sources.map(s=>s.scope)}:
+       f.placement_options.find(p=>p.scope===value)||null;
+     if(value==='library')f.target='Library / exact source scopes';
+     else if(f.selected_destination)f.target=f.selected_destination.kind+' / '+f.selected_destination.name+
+       ' ('+f.selected_destination.additional_devices.length+' additional, '+f.selected_destination.unknown_membership.length+' unknown members)';
+     else f.target='Destination not selected';
+   }
+   return f;
+ });
  $('selected').textContent=chosen.length+' selected (including any hidden by filters)';
  $('export-plan').disabled=!chosen.length;
  $('preview').textContent=chosen.length?chosen.map(f=>f.module+' / '+f.identity+' — '+f.action+'\\nTarget: '+f.target+'\\n'+f.steps.map((s,i)=>(i+1)+'. '+s).join('\\n')+'\\nBlocked: '+f.blockers.join(' ')).join('\\n\\n'):'Select recommendations to inspect the proposed workflow.';
@@ -421,6 +440,7 @@ $('search').addEventListener('input',filter);
 $('clear').addEventListener('click',()=>{for(const k of keys)$(k).value='';$('search').value='';filter();});
 for(const b of document.querySelectorAll('.advisor-card'))b.addEventListener('click',()=>{$('action').value=b.dataset.action;filter();});
 for(const c of checks)c.addEventListener('change',selection);
+for(const field of document.querySelectorAll('.destination'))field.addEventListener('change',selection);
 $('select-visible').addEventListener('click',()=>{for(const r of rows)if(!r.hidden)r.querySelector('.choose').checked=true;selection();});
 $('clear-selection').addEventListener('click',()=>{for(const c of checks)c.checked=false;selection();});
 $('export-plan').addEventListener('click',()=>{
