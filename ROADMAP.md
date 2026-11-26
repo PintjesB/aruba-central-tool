@@ -15,6 +15,8 @@ Reduce configuration duplication and unnecessary scope overrides in New Central 
 
 ## Priority 1: consolidation advisor
 
+Implemented: offline recommendations for C01/C02 (Global-match review), C03 (VLAN default review), C04/C08 (conflicting bodies), C05/C06 (exact repeated locals), C07 (exact Library reuse), and C10 (no observed assignments). The advisor shows captured higher-scope and device coverage, supports selection and exports non-executable previews. Actual inheritance, destination membership, dependency safety and all live write operations remain pending. C09 and C11-C18 remain planned.
+
 Each finding shows source scope, device function, profile identity, exact local and effective bodies, alternative/reference body, affected scopes and devices, dependencies, proposed action, blockers and confidence. Group repeated bodies without losing original locations. Offer filters for module, site, group, device function, action and risk. No writes from the advisor.
 
 | ID | Scenario | Suggested action | Required evidence |
@@ -57,7 +59,7 @@ Do not assume all modules support every scope. In particular HPE's VLAN guidance
 
 ## Priority 2: guided change planner
 
-- [ ] Select candidates individually or by exact repeated-profile group, preserving all affected scopes.
+- [x] Select candidates individually or by exact repeated-profile group, preserving all observed source scopes.
 - [ ] Preview candidate destination scopes and their blast radius; distinguish intended recipients, newly affected devices, protected exceptions and unknown coverage.
 - [ ] Choose reuse existing Library profile, create Library profile plus assign, create supported local profile at a higher scope, or remove redundant override.
 - [ ] Show ordered operations, before/expected-after configuration, reference changes and rollback journal. Block a plan when any prerequisite is unknown.
