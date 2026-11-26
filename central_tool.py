@@ -240,11 +240,13 @@ def scan(client, persona):
         raise ValueError("Duplicate scope IDs; stack or hierarchy semantics require validation")
     if not any(s["kind"] == "device" for s in scopes):
         raise ValueError("No devices matched the selected persona; check inventory and configuration authority")
-    print(f"Discovered {len(scopes)} scopes ({sum(s[\"kind\"] == \"device\" for s in scopes)} matching devices); reading VLAN Library", flush=True)
+    device_count = sum(s["kind"] == "device" for s in scopes)
+    print(f"Discovered {len(scopes)} scopes ({device_count} matching devices); reading VLAN Library", flush=True)
     library = vlan_rows(client, **{"view-type": "LIBRARY", "detailed": "false"})
     print(f"Library VLAN profiles: {len(library)}; reading shared assignments", flush=True)
     assignments = client.get(ALPHA + "/config-assignments")
-    print(f"Shared assignments: {len(rows(assignments, ("config-assignment",)))}", flush=True)
+    assignment_count = len(rows(assignments, ("config-assignment",)))
+    print(f"Shared assignments: {assignment_count}", flush=True)
     for index, scope in enumerate(scopes, 1):
         print(f"Reading VLAN scope {index}/{len(scopes)} ({scope['kind']})", flush=True)
         params = {"view-type": "LOCAL", "scope-id": scope["id"], "device-function": persona}
