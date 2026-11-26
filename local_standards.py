@@ -79,18 +79,23 @@ def scope_identity(bundle, persona, target):
     return {"kind": scope["kind"], "name": scope.get("name"), "entity_id": metadata.get("id"), "serial": serial}
 
 
-def create_standard(directory, *, name, snapshot, baseline_name, persona, reference, module, target, confirmed):
+def create_standard(directory, *, name, snapshot, baseline_name, persona, reference, module, target, confirmed, field_selection=None):
     from config_app import read_audit
     raw_current = read_audit(directory, snapshot)
     raw_baseline = read_audit(directory, baseline_name)
+    baseline_hash = digest(raw_baseline)
     current = refresh_configuration_review(raw_current)
-    baseline_hash = digest(raw_baseline) if snapshot != baseline_name else digest(read_audit(directory, baseline_name))
     baseline = current if snapshot == baseline_name else refresh_configuration_review(raw_baseline)
     result = reference_compliance(current, persona, module, reference, target,
                                   baseline=baseline, confirmed=confirmed, include_reference=True)
+    rules = None
+    if field_selection:
+        from field_standards import selected_field_rules
+        rules = selected_field_rules(baseline, persona, reference, result["modules"], field_selection)
     return save_record(directory, "standard", {
+        "field_rules": rules,
         "name": checked_text(name, 120), "baseline": baseline_name, "baseline_hash": baseline_hash,
-        "persona": persona, "reference": reference, "module": module, "modules": result["modules"],
+        "persona": persona, "reference": reference, "module": module, "modules": sorted({v["module"] for v in rules}) if rules else result["modules"],
         "target": target, "target_identity": scope_identity(current, persona, target)})
 
 
@@ -106,12 +111,12 @@ def evaluate_standard(directory, standard, snapshot, *, confirmed):
         raise ValueError("Target scope identity changed; create a new standard version")
     result = reference_compliance(current, persona, standard["module"], standard["reference"], target,
                                   baseline=baseline, confirmed=confirmed, selected_modules=standard["modules"],
-                                  include_reference=True)
+                                  include_reference=True, field_rules=standard.get("field_rules"))
     return current, result
 
 
-def exception_candidates(bundle, standard, result):
-    """Only complete explicit profile deviations qualify; never approve coverage gaps."""
+def exception_candidates(bundle, standard, result, *, include_legacy=False):
+    """Bind approval to an exact explicit field transition, or profile presence."""
     persona = standard["persona"]
     serials = {s["id"]: health_serial(s.get("metadata")) for s in bundle["results"][persona]["scopes"]
                if s["kind"] == "device"}
@@ -120,22 +125,54 @@ def exception_candidates(bundle, standard, result):
         serial = serials.get(finding["scope"])
         if not serial:
             continue
-        for row in finding["differences"]:
+        for index, row in enumerate(finding["differences"]):
             module = finding.get("module_results", {}).get(row["module"], {})
             if row["status"] not in ("added", "removed", "changed") or module.get("has_gaps") is not False:
                 continue
-            key = digest({"standard": standard["id"], "serial": serial, "module": row["module"],
-                          "profile": row["identity"], "status": row["status"],
-                          "before": row.get("before"), "after": row.get("after")})
-            candidates[key] = {"serial": serial, "scope": finding["scope"], "device": finding["device"],
-                               "module": row["module"], "profile": row["identity"], "observation": row}
+            common = {"standard": standard["id"], "serial": serial, "module": row["module"],
+                      "profile": row["identity"], "status": row["status"]}
+            meta = {"serial": serial, "scope": finding["scope"], "device": finding["device"],
+                    "module": row["module"], "profile": row["identity"]}
+            if row["status"] == "changed":
+                if row.get("rule_path") is not None:
+                    units = [(row["rule_path"], row["before"], row["after"], row)]
+                else:
+                    units = [(d["path"], d["local_value"], d["reference_value"], {**row, "fields": [d],
+                              "before": d["local_value"], "after": d["reference_value"]})
+                             for d in row["fields"] if d["kind"] not in ("missing_local", "missing_reference", "null_vs_value")]
+                keys = []
+                for path, old, new, observation in units:
+                    key = digest({**common, "path": path, "before": old, "after": new})
+                    keys.append(key)
+                    candidates[key] = {**meta, "field_path": path, "observation": observation,
+                                       "row_index": index, "covers": [key]}
+                if include_legacy and not standard.get("field_rules") and keys:
+                    key = digest({**common, "before": row.get("before"), "after": row.get("after")})
+                    candidates[key] = {**meta, "observation": row, "row_index": index, "covers": keys, "legacy": True}
+            else:
+                key = digest({**common, "before": row.get("before"), "after": row.get("after")})
+                candidates[key] = {**meta, "observation": row, "row_index": index, "covers": [key]}
     return candidates
+
+
+def apply_approvals(result, candidates, approved):
+    for row in result["findings"]:
+        scoped = {key: c for key, c in candidates.items() if c["scope"] == row["scope"]}
+        row["approved_exceptions"] = [v for key, approvals in approved.items() if key in scoped for v in approvals]
+        eligible = {key for key, c in scoped.items() if not c.get("legacy")}
+        covered = {unit for key in approved if key in scoped for unit in scoped[key]["covers"]}
+        covered_rows = {c["row_index"] for key, c in scoped.items() if key in eligible}
+        row["unapproved_deviation_count"] = len(eligible - covered)
+        if (row["status"] == "differences_observed" and not row.get("has_gaps") and eligible
+                and covered_rows == set(range(len(row["differences"]))) and eligible <= covered):
+            row["status"] = "approved_exceptions"
+    return result
 
 
 def approve_exception(directory, standard_id, snapshot, candidate, reason, expiry, *, confirmed):
     standard = read_record(directory, "standard", standard_id)
     bundle, result = evaluate_standard(directory, standard, snapshot, confirmed=confirmed)
-    observation = exception_candidates(bundle, standard, result).get(candidate)
+    observation = exception_candidates(bundle, standard, result, include_legacy=True).get(candidate)
     if not observation:
         raise ValueError("Deviation is no longer eligible for approval")
     end = date.fromisoformat(expiry)
