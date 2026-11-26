@@ -250,7 +250,11 @@ def advisor_view(workspace, query):
     if empty:
         return empty
     root, name, bundle, picker = loaded
+    from bulk_review import source_recipient_evidence
     findings = profile_recommendations(bundle)
+    for finding in findings:
+        entry = bundle["results"].get(finding["persona"])
+        finding["recipient_evidence"] = source_recipient_evidence(entry, finding["sources"]) if entry else {"known": [], "unknown": []}
     # Exact deep links from the device override inspector preserve the full group.
     scope_filter, identity_filter = query.get("scope"), query.get("identity")
     if scope_filter and identity_filter:
@@ -385,6 +389,61 @@ function filter(reset=true){
  $('advisor-empty').hidden=filtered.length>0;
  $('advisor-prev').parentElement.hidden=pages<=1;
 }
+function bulkReview(chosen){
+ const known=new Map(),unknown=new Map(),touches=new Map(),library=new Map(),fallbacks=[];
+ const collisions=[],seen=new Set(),stages={prepare:[],verify:[],cleanup:[]};
+ const missing=[];
+ const key=(...parts)=>JSON.stringify(parts);
+ function collision(a,b,message){
+  if(a===b)return;
+  const k=key(...[a,b].sort(),message);
+  if(!seen.has(k)){seen.add(k);collisions.push({first:a,second:b,reason:message});}
+ }
+ function touch(k,f){
+  if(touches.has(k))collision(touches.get(k),f.id,'Overlapping source or destination profile at the same scope');
+  else touches.set(k,f.id);
+ }
+ function recipients(f,items,map){for(const d of items||[])map.set(key(f.persona,d.scope),{persona:f.persona,...d});}
+ for(const f of chosen){
+  const recipient=f.recipient_evidence||{};
+  recipients(f,recipient.known,known);recipients(f,recipient.unknown,unknown);
+  const scopeKey=s=>key(f.persona,f.module,f.identity,s);
+  for(const source of f.sources)touch(scopeKey(source.scope),f);
+  if(f.action==='promote_local'){
+   const d=f.selected_destination;
+   if(!d){missing.push(f.id);}
+   else if(d.kind==='library'){
+    const k=key(f.module,f.identity);
+    if(library.has(k))collision(library.get(k),f.id,'Multiple proposals use the same Library identity; reconcile the target definition');
+    else library.set(k,f.id);
+    stages.prepare.push({id:f.id,step:'Review Library definition and exact source-scope assignments'});
+   }else{
+    touch(scopeKey(d.scope),f);
+    recipients(f,d.intended_devices,known);recipients(f,d.additional_devices,known);
+    recipients(f,d.unknown_membership,unknown);
+    stages.prepare.push({id:f.id,step:'Review destination scope and additional recipients'});
+   }
+  }else if(f.action==='reuse_library'){
+   const k=key(f.module,f.identity);
+   // Reuse/reuse alone is not a conflict, but a selected promotion to the
+   // same Library identity must be reconciled before combining the work.
+   if(library.has(k))collision(library.get(k),f.id,'Selected Library reuse overlaps a proposed Library promotion');
+   stages.prepare.push({id:f.id,step:'Verify existing Library definition and proposed assignments'});
+  }
+  for(const x of f.fallbacks||[]){
+   if(x.source)fallbacks.push({id:f.id,key:scopeKey(x.source.scope)});
+  }
+  stages.verify.push({id:f.id,step:'Verify scope, assignments, references and expected effective settings'});
+  stages.cleanup.push({id:f.id,step:'Review local removal only after preceding verification; capture fresh evidence'});
+ }
+ // Also detect reuse preceding promotion (selection order must not affect checks).
+ for(const f of chosen)if(f.action==='reuse_library'){
+  const k=key(f.module,f.identity);
+  if(library.has(k))collision(library.get(k),f.id,'Selected Library reuse overlaps a proposed Library promotion');
+ }
+ for(const f of fallbacks)if(touches.has(f.key))collision(touches.get(f.key),f.id,'A selected proposal touches another proposal’s expected inherited definition');
+ return {known_recipients:[...known.values()],unknown_recipients:[...unknown.values()],collisions,missing_destinations:missing,stages,safe_to_apply:false};
+}
 function selection(){
  const chosen=checks.filter(c=>c.checked&&!c.disabled).map(c=>{
   const f=JSON.parse(c.dataset.plan), field=c.closest('tr').querySelector('.destination');
@@ -400,12 +459,36 @@ function selection(){
  $('selected').textContent=chosen.length+' selected';
  $('clear-selection').disabled=!chosen.length;
  $('open-preview').disabled=!chosen.length;
- $('export-plan').disabled=!chosen.length||chosen.some(f=>f.action==='promote_local'&&!f.selected_destination);
+ const review=bulkReview(chosen);
+ $('export-plan').disabled=!chosen.length||review.missing_destinations.length>0||review.collisions.length>0;
  return chosen;
 }
 function el(tag,text){const n=document.createElement(tag);n.textContent=text;return n;}
 function preview(){
  const chosen=selection();$('preview').replaceChildren();
+ const review=bulkReview(chosen);
+ const summary=el('section','');
+ summary.append(el('h3','Bulk review summary'),
+  el('p',chosen.length+' proposals · '+review.known_recipients.length+' known device/function pairs · '+review.unknown_recipients.length+' uncertain recipient pairs'),
+  el('p','Counts include source recipients and selected destination impact. They are not a simulated deployment.'));
+ const recipients=el('details','');recipients.append(el('summary','Review recipient evidence'));
+ const recipientList=el('ul','');
+ for(const d of review.known_recipients)recipientList.append(el('li',d.name+' ('+d.persona+') · known'));
+ for(const d of review.unknown_recipients)recipientList.append(el('li',d.name+' ('+d.persona+') · uncertain membership'));
+ recipients.append(recipientList);summary.append(recipients);
+ if(review.collisions.length){
+  summary.append(el('h3','Resolve overlapping proposals before exporting'));
+  const list=el('ul','');
+  const labels=new Map(chosen.map(f=>[f.id,f.module+' / '+f.identity+' ('+f.persona+')']));
+  for(const c of review.collisions)list.append(el('li',labels.get(c.first)+' ↔ '+labels.get(c.second)+': '+c.reason));
+  summary.append(list);
+ }
+ const phases=el('ol','');
+ for(const [phase,items] of Object.entries(review.stages)){
+  const li=el('li',({prepare:'Prepare destinations and assignments',verify:'Verify effective configuration and dependencies',cleanup:'Review local cleanup after validation'})[phase]+' ('+items.length+')');
+  const sub=el('ul','');for(const task of items){const f=chosen.find(x=>x.id===task.id);sub.append(el('li',f.module+' / '+f.identity+': '+task.step));}li.append(sub);phases.append(li);
+ }
+ summary.append(phases);$('preview').append(summary);
  for(const f of chosen){
   const item=document.createElement('div');item.className='plan-item';
   item.append(el('h3',f.module+' / '+f.identity),el('p',({remove_override:'Review matching nearest inheritance',promote_local:'Consolidate repeated local profiles',reuse_library:'Reuse matching Library profile'}[f.action]||f.action)+' · '+f.target));
@@ -427,7 +510,7 @@ $('open-preview').addEventListener('click',()=>{preview();$('plan-dialog').showM
 $('close-preview').addEventListener('click',()=>$('plan-dialog').close());
 $('export-plan').addEventListener('click',()=>{
  const chosen=selection();if($('export-plan').disabled)return;
- const content=JSON.stringify({schema:1,kind:'consolidation_preview',safe_to_apply:false,snapshot:$('snapshot-label').dataset.snapshot,recommendations:chosen},null,2);
+ const content=JSON.stringify({schema:1,kind:'consolidation_preview',safe_to_apply:false,snapshot:$('snapshot-label').dataset.snapshot,bulk_review:bulkReview(chosen),recommendations:chosen},null,2);
  const u=URL.createObjectURL(new Blob([content],{type:'application/json'})),a=document.createElement('a');a.href=u;a.download='consolidation-preview.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);
 });
 filter();selection();

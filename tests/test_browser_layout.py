@@ -222,6 +222,24 @@ class BrowserLayoutTests(unittest.TestCase):
                             self.assertTrue(view.locator("#export-plan").is_enabled())
                             view.keyboard.press("Escape")
                             self.assertFalse(view.locator("#plan-dialog").is_visible())
+                            self.assertIn("Bulk review summary", view.locator("#preview").inner_text())
+                            # Synthetic conflicting selection: both proposals touch
+                            # the same identity at the same scope.
+                            view.locator("#finding-type").select_option("")
+                            view.locator("#clear-selection").click()
+                            view.evaluate("""() => {
+                                const checks=[...document.querySelectorAll('.choose:not(:disabled)')];
+                                const a=checks[0], b=checks[1];
+                                const plan=JSON.parse(a.dataset.plan);
+                                a.dataset.plan=JSON.stringify({...plan,action:'reuse_library'});
+                                b.dataset.plan=JSON.stringify({...plan,id:'conflicting-test',action:'reuse_library'});
+                                a.checked=b.checked=true;
+                                a.dispatchEvent(new Event('change'));
+                            }""")
+                            view.locator("#open-preview").click()
+                            self.assertIn("Resolve overlapping proposals", view.locator("#preview").inner_text())
+                            self.assertTrue(view.locator("#export-plan").is_disabled())
+                            view.keyboard.press("Escape")
                         self.assertEqual(errors, [])
                         view.set_viewport_size({"width": 390, "height": 844})
                         self.assertLessEqual(view.evaluate("document.documentElement.scrollWidth"), 392)
