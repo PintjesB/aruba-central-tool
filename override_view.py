@@ -3,7 +3,7 @@ from collections import Counter
 from central_tool import canonical, profile_body
 from consolidation import scope_memberships, REUSABLE
 from workspace_ui import e, page, intro, badge, raw, table, tr, inspect, diff_table, property_table, module_label, persona_label
-from workspace_views import load, url, select, title_profile, vlan_explanation
+from workspace_views import load, url, select, title_profile, vlan_explanation, operational_vlan_context
 
 RESULTS = {
     "identical": "Identical to Global",
@@ -123,6 +123,7 @@ def overrides_view(workspace, query):
                   + '<h3>Saved device settings</h3>' + property_table(p["local"])
                   + '<h3>Effective device settings in Central</h3>' + property_table(p["effective"])
                   + '<h3>Global settings</h3>' + property_table(p["global_reference"])
+                  + (operational_vlan_context(bundle, persona, [{"kind": "device", "scope": f["device"], "name": f["device_name"]}], f["identity"]) if f["module"] == "layer2-vlan" else "")
                   + '<h3>Applicable higher scopes (captured effective settings)</h3>'
                   + table(("Scope", "Comparison with local"), [tr(e(v["name"]), e(v["state"])) for v in f["chain"]])
                   + '<p class="note">A Global match alone does not prove that removing the override preserves configuration. Verify the inherited source, dependencies and rollback first.</p>'
