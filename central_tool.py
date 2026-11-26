@@ -1159,6 +1159,21 @@ CONFIG_MODULES = {
     "ap-system": ("name", AP_PERSONAS, False),
     "ap-port-profiles": ("profile-name", AP_PERSONAS, False),
     "gw-port-profiles": ("profile-name", GATEWAY_PERSONAS, False),
+    # Additional documented collection endpoints and profile identity keys.
+    # Persona sets are candidate adapters, not a hardware/firmware support claim.
+    "dns": ("name", NETWORK_PERSONAS, False),
+    "ntp": ("name", NETWORK_PERSONAS, False),
+    "snmp": ("name", NETWORK_PERSONAS, False),
+    "snmp-trap": ("name", NETWORK_PERSONAS, False),
+    "logging": ("name", NETWORK_PERSONAS, False),
+    "system-info": ("name", NETWORK_PERSONAS, False),
+    "macauth": ("name", PERSONAS, False),
+    "qos-queues": ("q-profile-name", PERSONAS, False),
+    "mgmd-global": ("name", PERSONAS, False),
+    "dhcp-pool": ("name", PERSONAS | GATEWAY_PERSONAS, False),
+    "gw-system": ("name", GATEWAY_PERSONAS, False),
+    "stp-gw": ("name", GATEWAY_PERSONAS, False),
+    "auth-servers": ("name", NETWORK_PERSONAS, False),
     # Central NAC authentication profiles use default query parameters.
     # Keep this existing catalog entry for historical audit compatibility.
     "auth-profiles": ("auth-profile-id", NETWORK_PERSONAS, False),
@@ -1268,7 +1283,41 @@ def recover_local_view(client, module, identity, params, local):
             **({"alternate_raw": fallback["raw"]} if "raw" in fallback else {})}
 
 
-def library_inventory(client, modules):
+def profile_inventory_view(client, endpoint, envelope):
+    """Read one evidence inventory without assuming a missing envelope means zero."""
+    try:
+        raw = client.get(ALPHA + "/" + endpoint)
+        records = rows(raw, (envelope,))
+        return {"status": "response_received", "rows": records, "raw": raw}
+    except APIError as exc:
+        if exc.status not in (400, 403, 404, 405, 406, 410, 412, 422):
+            raise
+        return {"status": "request_rejected", "http_error": exc.status, "rows": []}
+    except ValueError:
+        return {"status": "schema_unresolved", "rows": []}
+
+
+def discover_profile_types(assignments, scope_maps):
+    """Collect explicit module/function observations without inferring inheritance."""
+    result = defaultdict(set)
+    unresolved = 0
+    for view, assignment in ((assignments, True), (scope_maps, False)):
+        for row in view.get("rows", []):
+            resource = row.get("profile-type") if assignment else row.get("resource")
+            persona = row.get("device-function") if assignment else row.get("persona")
+            if isinstance(resource, str) and not assignment:
+                resource = resource.split("/", 1)[0]
+            if (not isinstance(resource, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,127}", resource)
+                    or not isinstance(persona, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", persona)):
+                unresolved += 1
+                continue
+            result[resource].add(persona)
+    return {"modules": {m: sorted(p) for m, p in sorted(result.items())},
+            "unknown_adapter_modules": sorted(set(result) - set(CONFIG_MODULES)),
+            "unresolved_records": unresolved, "complete": False}
+
+
+def library_inventory(client, modules, assignment_view=None, scope_map_view=None):
     """Read tenant-wide shared profiles once per module and preserve assignment evidence."""
     results = {}
     for module in sorted(modules):
@@ -1279,17 +1328,10 @@ def library_inventory(client, modules):
         view = read_module_view(client, module, identity, params)
         results[module] = view
         print(f"  Library {module}: {view['status']}; profiles={len(view['profiles'])}", flush=True)
-    try:
-        raw = client.get(ALPHA + "/config-assignments")
-        assignments = rows(raw, ("config-assignment",))
-        assignment_view = {"status": "response_received", "rows": assignments, "raw": raw}
-    except APIError as exc:
-        if exc.status not in (400, 403, 404, 405, 406, 412, 422):
-            raise
-        assignment_view = {"status": "request_rejected", "http_error": exc.status, "rows": []}
-    except ValueError:
-        assignment_view = {"status": "schema_unresolved", "rows": []}
+    if assignment_view is None:
+        assignment_view = profile_inventory_view(client, "config-assignments", "config-assignment")
     return {"modules": results, "assignments": assignment_view,
+            "scope_maps": scope_map_view,
             "assignment_coverage_verified": False, "safe_to_apply": False}
 
 
@@ -1362,10 +1404,19 @@ def configuration_audit(client, selected_persona=None):
         if selected_persona not in personas:
             raise ValueError("Selected persona is not in inventory")
         personas = [selected_persona]
+    assignments = profile_inventory_view(client, "config-assignments", "config-assignment")
+    # The vendor SDK still uses deprecated scope-maps as read-only evidence
+    # for local profiles. Its absence never means there are no local profiles.
+    scope_maps = profile_inventory_view(client, "scope-maps", "scope-map")
+    profile_types = discover_profile_types(assignments, scope_maps)
+    print(f"Observed profile types: {len(profile_types['modules'])}; "
+          f"without adapter: {len(profile_types['unknown_adapter_modules'])}", flush=True)
     results = {}
     unqualified = []
     for persona in personas:
-        modules = {m: spec for m, spec in CONFIG_MODULES.items() if persona in spec[1] and m != "auth-profiles"}
+        modules = {m: spec for m, spec in CONFIG_MODULES.items()
+                   if m != "auth-profiles" and (persona in spec[1]
+                   or persona in profile_types["modules"].get(m, []))}
         if not modules:
             unqualified.append(persona)
             continue
@@ -1406,12 +1457,13 @@ def configuration_audit(client, selected_persona=None):
     applicable_modules = {m for entry in results.values() for m in entry["modules"]}
     applicable_modules.add("auth-profiles")
     print("Reading tenant Library and assignments", flush=True)
-    library = library_inventory(client, applicable_modules)
+    library = library_inventory(client, applicable_modules, assignments, scope_maps)
     print(f"Configuration audit coverage: personas reviewed={len(results)}; "
           f"personas without adapter={len(unqualified)}; migration authorized=no")
     return {"schema": 1, "kind": "configuration_audit", "region": client.base,
             "captured_at": datetime.now(timezone.utc).isoformat(), "inventory": records,
             "results": results, "unqualified_personas": unqualified, "library": library,
+            "profile_type_discovery": profile_types,
             "catalog_exhaustive": False, "safe_to_apply": False}
 
 
