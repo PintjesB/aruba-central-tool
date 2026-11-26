@@ -107,7 +107,9 @@ class BrowserLayoutTests(unittest.TestCase):
             browser = pw.chromium.launch(executable_path=executable, args=["--no-sandbox"])
             try:
                 view = browser.new_page(viewport={"width": 1280, "height": 800})
-                view.set_content(workspace.advanced({"snapshot": name, "workflow": "ports"}))
+                from unittest.mock import patch
+                with patch("advanced_review.duplicate_migration_preview", side_effect=AssertionError("Unselected migration detail must not be generated")):
+                    view.set_content(workspace.advanced({"snapshot": name, "workflow": "ports"}))
                 self.assertEqual(view.locator("section[data-panel]").count(), 1)
                 self.assertEqual(view.locator("section[data-panel]").get_attribute("data-panel"), "ports")
                 self.assertIn("Access VLAN 10", view.locator("section[data-panel]").inner_text())
