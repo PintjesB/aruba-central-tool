@@ -21,3 +21,13 @@ jobs:
             python -m playwright install --with-deps chromium
           fi
       - run: python -m unittest discover -s tests -v
+        env:
+          CENTRAL_UI_PREVIEW_DIR: ${{ runner.temp }}/central-ui-preview
+      - name: Upload synthetic UI previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-ui-preview
+          path: ${{ runner.temp }}/central-ui-preview
+          if-no-files-found: ignore
+          retention-days: 7

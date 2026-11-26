@@ -289,6 +289,9 @@ def advisor_view(workspace, query):
         ("review", f"Settings to review ({counts['conflict'] + counts['default_review']})"),
         ("optional", f"Optional Library review ({counts['create_library'] + counts['unassigned_library']})"),
         ("", f"All findings ({len(findings)})")] + [(k, f"{v[0]} ({counts[k]})") for k, v in ACTION_GUIDE.items()]
+    selected_recommendation = query.get("finding", "opportunities")
+    if selected_recommendation not in dict(recommendation_options):
+        selected_recommendation = "opportunities"
     rows = []
     for f in findings:
         action = f["action"]
@@ -350,7 +353,7 @@ def advisor_view(workspace, query):
             attrs=f' data-action="{e(action)}" data-module="{e(f["module"])}" data-persona="{e(f["persona"])}" data-search="{e(profile+" "+str([s["name"] for s in sources]))}"'))
     filters = (
         '<div class="filter-bar advisor-filters">'
-        + select("finding-type", recommendation_options, "opportunities", "Recommendation")
+        + select("finding-type", recommendation_options, selected_recommendation, "Recommendation")
         + select("module", [("", "All modules")] + [(m, module_label(m)) for m in sorted({f["module"] for f in findings})], label="Module")
         + select("persona", [("", "All functions")] + [(p, persona_label(p)) for p in sorted({f["persona"] for f in findings})], label="Device function")
         + '<label class="searchbox">Search<input id="search" type="search" placeholder="Profile or scope"></label>'

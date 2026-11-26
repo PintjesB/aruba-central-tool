@@ -3,8 +3,20 @@ import unittest
 import shutil
 import importlib.util
 
-from workspace_ui import page, table, tr, inspect, raw
+from workspace_ui import page, table, tr, inspect, raw, setting_value, diff_table
 from workspace_views import vlan_explanation
+
+
+class SettingDisplayTests(unittest.TestCase):
+    def test_values_preserve_types_and_escape_central_data(self):
+        html = setting_value({"description": "<script>alert(1)</script>", "flags": [False, None, "", {}, []]})
+        self.assertIn("&lt;script&gt;", html)
+        self.assertNotIn("<script>", html)
+        for label in ("False", "Null", "Empty string", "Empty object", "Empty list"):
+            self.assertIn(label, html)
+        self.assertIn("value-object", html)
+        self.assertIn("value-list", html)
+        self.assertIn("Not returned", diff_table([{"path": ["flag"], "reference_value": False}]))
 
 
 @unittest.skipUnless(importlib.util.find_spec("playwright"), "Optional browser test requires Playwright")
@@ -105,7 +117,33 @@ class BrowserLayoutTests(unittest.TestCase):
                         self.assertEqual(view.locator(".snapshot-picker").count(), 1)
                         self.assertEqual(view.locator("main h1").count(), 1)
                         self.assertEqual(view.locator("[aria-current=page]").count(), 1)
+                        self.assertEqual(view.locator("#snapshot-slot .snapshot-picker").count(), 1)
                         self.assertLessEqual(view.evaluate("document.documentElement.scrollWidth"), 1282)
+                        if screen in ("overview", "overrides", "advisor"):
+                            # Synthetic fixture only. Captured for visual design review.
+                            import os
+                            preview_dir = os.environ.get("CENTRAL_UI_PREVIEW_DIR")
+                            if preview_dir:
+                                Path(preview_dir).mkdir(parents=True, exist_ok=True)
+                                view.screenshot(path=str(Path(preview_dir) / (screen + ".png")))
+                        if screen == "overview":
+                            self.assertEqual(view.locator(".opportunity-row").count(), 3)
+                            self.assertIn("finding=remove_override", view.locator(".opportunity-row").first.get_attribute("href"))
+                            view.locator("#workspace-menu").click()
+                            self.assertTrue(view.locator("html").evaluate("(el)=>el.classList.contains('compact-nav')"))
+                            self.assertEqual(view.locator('.sidebar a[data-nav="Library"]').get_attribute("aria-label"), "Library")
+                            view.locator("#workspace-menu").click()
+                            view.keyboard.press("Control+k")
+                            self.assertTrue(view.locator("#workspace-palette").is_visible())
+                            view.locator("#command-query").fill("library")
+                            self.assertEqual(view.locator("#command-results a").count(), 1)
+                            self.assertIn("library?snapshot=", view.locator("#command-results a").get_attribute("href"))
+                            view.keyboard.press("Escape")
+                            self.assertFalse(view.locator("#workspace-palette").is_visible())
+                            view.locator("#workspace-theme").click()
+                            self.assertEqual(view.locator("html").get_attribute("data-theme"), "dark")
+                            view.locator("#workspace-theme").click()
+                            self.assertEqual(view.locator("html").get_attribute("data-theme"), "light")
                         if screen in ("overrides", "compare", "configuration"):
                             form = view.locator("form[data-scope-filters]")
                             self.assertEqual(form.count(), 1)
@@ -131,6 +169,12 @@ class BrowserLayoutTests(unittest.TestCase):
                         self.assertEqual(errors, [])
                         view.set_viewport_size({"width": 390, "height": 844})
                         self.assertLessEqual(view.evaluate("document.documentElement.scrollWidth"), 392)
+                        if screen == "overview":
+                            view.locator("#workspace-menu").click()
+                            self.assertEqual(view.locator("#workspace-menu").get_attribute("aria-expanded"), "true")
+                            self.assertTrue(view.locator("#workspace-nav-close").is_visible())
+                            view.locator("#workspace-nav-close").click()
+                            self.assertEqual(view.locator("#workspace-menu").get_attribute("aria-expanded"), "false")
                         view.close()
             finally:
                 browser.close()

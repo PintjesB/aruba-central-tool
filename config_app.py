@@ -310,11 +310,11 @@ if(panel.dataset.state==='running')poll();
             coverage = module_coverage(bundle)
             devices = {s["id"] for entry in bundle["results"].values() for s in entry["scopes"] if s["kind"] == "device"}
             qualified = sum(r["status"] == "qualified" for r in coverage)
-            partial = sum(r["status"] == "partial" for r in coverage)
             library = (bundle.get("library") or {}).get("modules", {})
             observed = sum(len(v["profiles"]) for v in library.values() if v["status"] == "list_parsed")
+            scopes = {s["id"] for entry in bundle["results"].values() for s in entry["scopes"] if s["kind"] != "device"}
             summary = metrics([("Devices", len(devices), "Captured inventory"),
-                               ("Qualified module views", qualified, f"{partial} partially qualified"),
+                               ("Configuration scopes", len(scopes), "Non-device scopes"),
                                ("Library profiles", observed, "Observed definitions")])
             from consolidation import profile_recommendations
             from collections import Counter
@@ -332,18 +332,35 @@ if(panel.dataset.state==='running')poll();
             if findings is None:
                 summary += '<section><h2>Consolidation analysis unavailable</h2><p>This snapshot lacks the saved configuration evidence needed for review. Collect a new snapshot to calculate recommendations.</p></section>'
             else:
-                summary += (f'<section class="overview-focus"><div><small>Recommended starting point</small>'
-                        f'<h2>{opportunities} consolidation opportunities</h2>'
-                        '<p>Review matching profiles and repeated configuration before planning changes.</p>'
-                        f'<a class="button primary" href="{e(advisor_href)}">Review opportunities</a></div>'
-                        '<div class="overview-breakdown">'
-                        + "".join(f'<div><span>{e(label)}</span><strong>{counts[key]}</strong></div>' for key, label in (
-                            ("remove_override", "Matching Global"), ("promote_local", "Repeated profiles"),
-                            ("reuse_library", "Matching Library"))) + '</div></section>'
-                        + '<section class="overview-links"><div><h3>Device overrides</h3><p>Compare saved configuration against Global.</p>'
-                        f'<a href="{e(overrides_href)}">Compare overrides →</a></div>'
-                        f'<div><h3>Data coverage</h3><p>{len(coverage) - qualified} module reads are not fully qualified.</p>'
-                        f'<a href="{e(coverage_href)}">Review coverage →</a></div></section>')
+                from workspace_ui import icon
+                categories = (("remove_override", "Matching Global profiles", "Review lower-scope copies"),
+                              ("promote_local", "Repeated local profiles", "Consolidate repeated definitions"),
+                              ("reuse_library", "Matching Library profiles", "Reuse an existing definition"))
+                breakdown = "".join(
+                    f'<a class="opportunity-row" href="{e(advisor_href + "&finding=" + key)}">'
+                    f'<div><strong>{e(label)}</strong><small>{e(description)}</small></div>'
+                    f'<div class="opportunity-meter"><span style="width:{100 * counts[key] / max(1, opportunities):.2f}%"></span></div>'
+                    f'<b>{counts[key]}</b>{icon("chevron")}</a>'
+                    for key, label, description in categories)
+                gap = len(coverage) - qualified
+                summary = (f'<div class="overview-layout"><section class="overview-focus"><div class="focus-lead">'
+                           '<div class="focus-kicker">' + icon("advisor") + ' Consolidation opportunities</div>'
+                           f'<div class="focus-number">{opportunities}</div>'
+                           '<h2>Reduce configuration duplication.</h2>'
+                           '<p>Review the captured evidence and prepare a change preview. No changes are sent to Central.</p>'
+                           f'<a class="button primary" href="{e(advisor_href)}">Review opportunities {icon("arrow")}</a></div>'
+                           '<div class="overview-breakdown"><h3>Review by recommendation</h3>' + breakdown + '</div></section>'
+                           '<section class="coverage-focus"><div class="focus-kicker">' + icon("coverage") + ' Data readiness</div>'
+                           f'<div class="coverage-number">{qualified}<small> / {len(coverage)}</small></div>'
+                           '<h3>Fully qualified module reads</h3>'
+                           f'<div class="coverage-meter" role="img" aria-label="{qualified} of {len(coverage)} module reads fully qualified">'
+                           f'<span style="width:{100 * qualified / max(1, len(coverage)):.2f}%"></span></div>'
+                           f'<p>{gap} incomplete or unavailable module reads.</p><a href="{e(coverage_href)}">Inspect coverage {icon("arrow")}</a></section></div>'
+                           + summary
+                           + '<section class="overview-links"><div><h3>Review device overrides</h3><p>Inspect the actual differences between a device and Global before removing local definitions.</p>'
+                           f'<a href="{e(overrides_href)}">Compare overrides {icon("arrow")}</a></div>'
+                           '<div><h3>Library engineering</h3><p>Find duplicate definitions, compare individual usage and inspect configuration dependencies.</p>'
+                           f'<a href="{e(root + "advanced?" + urlencode({"snapshot": name}))}">Review engineering {icon("arrow")}</a></div></section>')
         else:
             summary = '<section><h2>Saved snapshots</h2><p>No snapshots yet. Connect to Central to start a read-only configuration audit.</p></section>'
         picker = snapshot_picker(root, "", files, name) if files else ""
