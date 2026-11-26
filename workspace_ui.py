@@ -252,6 +252,8 @@ html:has(.inspector[open]),html.inspector-open{overflow:hidden;scrollbar-gutter:
 .inspector pre{max-height:none;overflow:visible}.inspector ul,.inspector ol{padding-left:22px;margin:8px 0 16px}
 .inspector .note{border:0;background:var(--bg);border-radius:6px;padding:10px 12px}
 .inspector details:not(.raw){border-top:1px solid var(--line);padding:5px 0}
+.review-decision{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;padding:14px 16px;margin:0 0 18px;background:var(--bg);border-radius:8px}
+.review-decision p{margin:8px 0 0}.review-context{min-width:0;text-align:right}.review-context strong{display:block;overflow-wrap:anywhere}
 .comparison-summary{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px}
 .comparison-summary .tag{font-size:12px;padding:5px 9px}
 .comparison-table{table-layout:fixed}.comparison-table th,.comparison-table td{padding:9px 10px}
