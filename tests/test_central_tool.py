@@ -805,6 +805,28 @@ class Tests(unittest.TestCase):
         self.assertEqual(set(details["ACCESS_SWITCH"]["12"]["1"]), {"local", "effective"})
         self.assertNotIn("10", details["ACCESS_SWITCH"]["12"])
 
+    def test_vlan_feature_parsers_require_explicit_evidence(self):
+        from central_tool import parse_vlan_feature
+        ids = {"1", "10", "20"}
+        voice = "VLAN Name Status Type Interfaces\n10 Phone up static 1/1/1"
+        self.assertEqual(parse_vlan_feature(voice, "voice-enable", ids)["vlans"],
+                         {"1": False, "10": True, "20": False})
+        self.assertEqual(parse_vlan_feature("Voice VLAN not configured", "voice-enable", ids)["vlans"],
+                         {vid: False for vid in ids})
+        dhcp = "DHCPv4-Snooping : Yes\nEnabled VLANs : 1,10"
+        self.assertEqual(parse_vlan_feature(dhcp, "dhcpv4-snooping", ids)["vlans"],
+                         {"1": {"enable": True}, "10": {"enable": True}, "20": {"enable": False}})
+        self.assertEqual(parse_vlan_feature(dhcp, "dhcpv6-snooping", ids)["status"], "schema_unresolved")
+        self.assertEqual(parse_vlan_feature("DHCPv6-Snooping : No\nEnabled VLANs : unknown",
+                                            "dhcpv6-snooping", ids)["status"], "schema_unresolved")
+        for field in ("igmp", "mld"):
+            label = field.upper()
+            body = (f"VLAN ID : 1\n{label} Snooping is not enabled\n"
+                    f"VLAN ID : 10\n{label} Operating Version : 2\nVLAN ID : 20")
+            self.assertEqual(parse_vlan_feature(body, field, ids)["vlans"],
+                             {"1": {"snooping": False}, "10": {"snooping": True}})
+            self.assertEqual(parse_vlan_feature("Invalid input", field, ids)["status"], "schema_unresolved")
+
     def test_show_vlan_parser_distinguishes_shutdown_from_link_state(self):
         from central_tool import parse_show_vlan
         output = "VLAN Name Status Reason Type Interfaces\n1 DEFAULT_VLAN_1 up ok static 1/1/1\n20 Management VLAN down admin_down static 1/1/2\n30 Guest down no_member_port static\n"
