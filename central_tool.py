@@ -169,18 +169,53 @@ def inventory(client):
     raise ValueError("Inventory pagination safety limit reached")
 
 
+class VLANResponseError(RuntimeError):
+    """A successful HTTP response whose VLAN schema could not be validated."""
+
+
+def scoped_vlan_rows(payload, object_type="ANY"):
+    """Recognize empty scoped views only when the response explicitly proves zero."""
+    if not isinstance(payload, dict):
+        raise ValueError("Scoped VLAN response is not an object")
+    meta = payload.get("metadata", {})
+    if not isinstance(meta, dict):
+        raise ValueError("Unexpected scoped VLAN metadata")
+    counts = meta.get("count_objects_in_module", {})
+    if not isinstance(counts, dict):
+        raise ValueError("Unexpected scoped VLAN object counts")
+    expected = counts.get(object_type)
+    if expected is not None and (type(expected) is not int or expected < 0):
+        raise ValueError("Invalid scoped VLAN object count")
+    if isinstance(payload.get("l2-vlan"), list):
+        batch = rows(payload, ("l2-vlan",))
+        if "total" in meta and (type(meta["total"]) is not int or meta["total"] != len(batch)):
+            raise ValueError("Incomplete scoped VLAN response")
+        if not batch and expected is not None and expected > 0:
+            raise ValueError("Empty scoped VLAN list contradicts positive object count")
+        return batch
+    # Some scoped responses omit the module when no objects are present.
+    # Require explicit zero for the requested view, no unexpected response
+    # fields, and no conflicting pagination total. Never infer zero from {}.
+    if (payload.get("l2-vlan") is None and set(payload) <= {"metadata", "l2-vlan"}
+            and type(expected) is int and expected == 0
+            and ("total" not in meta or (type(meta["total"]) is int and meta["total"] == 0))):
+        return []
+    safe_counts = {k: counts[k] for k in ("LOCAL", "SHARED", "ANY")
+                   if type(counts.get(k)) is int}
+    shape = {"module_present": "l2-vlan" in payload,
+             "module_type": type(payload.get("l2-vlan")).__name__,
+             "metadata_present": "metadata" in payload,
+             "counts": safe_counts,
+             "other_top_level_fields": len(set(payload) - {"metadata", "l2-vlan"})}
+    raise ValueError(f"Unrecognized scoped VLAN envelope: {canonical(shape)}")
+
+
 def vlan_rows(client, **params):
     """Retrieve full VLAN views and independently check the Library total."""
     try:
         if params.get("view-type") != "LIBRARY":
             payload = client.get(VLAN, **params)
-            batch = rows(payload, ("l2-vlan",))
-            meta = payload.get("metadata", {})
-            if not isinstance(meta, dict):
-                raise ValueError("Unexpected scoped VLAN metadata")
-            if "total" in meta and meta["total"] != len(batch):
-                raise ValueError("Incomplete scoped VLAN response")
-            return batch
+            return scoped_vlan_rows(payload, params.get("object-type", "ANY"))
 
         # The live unpaginated Library view returned all 29 profiles.
         # Cross-check against the independently reported paginated total and
@@ -205,9 +240,12 @@ def vlan_rows(client, **params):
         if page_counts - full_counts:
             raise ValueError("VLAN Library first page differs from full response")
         return full
-    except (APIError, ValueError) as exc:
+    except APIError as exc:
         safe = {k: v for k, v in params.items() if k != "scope-id"}
         raise RuntimeError(f"{exc}; VLAN query: {canonical(safe)}") from None
+    except ValueError as exc:
+        safe = {k: v for k, v in params.items() if k != "scope-id"}
+        raise VLANResponseError(f"{exc}; VLAN query: {canonical(safe)}") from None
 
 
 def scan(client, persona):
@@ -241,12 +279,26 @@ def scan(client, persona):
     assignments = client.get(ALPHA + "/config-assignments")
     assignment_count = len(rows(assignments, ("config-assignment",)))
     print(f"Shared assignments: {assignment_count}", flush=True)
+    failures = []
     for index, scope in enumerate(scopes, 1):
-        print(f"Reading VLAN scope {index}/{len(scopes)} ({scope['kind']})", flush=True)
+        label = f"VLAN scope {index}/{len(scopes)} ({scope['kind']})"
+        print(f"Reading {label}", flush=True)
         params = {"view-type": "LOCAL", "scope-id": scope["id"], "device-function": persona}
-        scope["local"] = vlan_rows(client, **params, **{"object-type": "LOCAL", "effective": "false", "detailed": "false"})
-        scope["effective"] = vlan_rows(client, **params, effective="true", detailed="false")
-        scope["annotated"] = vlan_rows(client, **params, effective="true", detailed="true")
+        for view, query in (
+            ("local", {"object-type": "LOCAL", "effective": "false", "detailed": "false"}),
+            ("effective", {"effective": "true", "detailed": "false"}),
+            ("annotated", {"effective": "true", "detailed": "true"}),
+        ):
+            try:
+                scope[view] = vlan_rows(client, **params, **query)
+                print(f"  {view}: {len(scope[view])} profiles", flush=True)
+            except VLANResponseError as exc:
+                # Collect all schema mismatches in one scan, but never write a
+                # partial snapshot. HTTP/transport errors still stop immediately.
+                failures.append(f"{label} {view}: {exc}")
+                print(f"  {view}: SCHEMA ERROR: {exc}", flush=True)
+    if failures:
+        raise RuntimeError(f"{len(failures)} VLAN views could not be validated; no snapshot written.")
     return {"schema": 1, "captured_at": datetime.now(timezone.utc).isoformat(),
             "region": client.base, "persona": persona, "library": library,
             "assignments_raw": assignments, "scopes": scopes, "excluded_devices": excluded}

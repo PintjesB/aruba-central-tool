@@ -1,5 +1,5 @@
 import unittest
-from central_tool import APIError, Central, EU_REGIONS, detect_region, inventory, offset_rows, report, vlan_map, vlan_rows
+from central_tool import APIError, Central, EU_REGIONS, detect_region, inventory, offset_rows, report, scoped_vlan_rows, vlan_map, vlan_rows
 
 
 class Fake:
@@ -110,6 +110,36 @@ class Tests(unittest.TestCase):
         self.assertEqual(vlan_rows(client, **{"view-type": "LOCAL", "effective": "true"}), data)
         self.assertNotIn("limit", client.calls[0][1])
         self.assertNotIn("offset", client.calls[0][1])
+
+    def test_scoped_missing_module_with_explicit_zero(self):
+        response = {"metadata": {"count_objects_in_module": {"LOCAL": 0, "SHARED": 22, "ANY": 22}}}
+        self.assertEqual(scoped_vlan_rows(response, "LOCAL"), [])
+        with self.assertRaisesRegex(ValueError, "Unrecognized"):
+            scoped_vlan_rows(response, "ANY")
+
+    def test_scoped_null_module_with_explicit_zero(self):
+        self.assertEqual(scoped_vlan_rows({"l2-vlan": None, "metadata":
+                         {"count_objects_in_module": {"ANY": 0}}}), [])
+
+    def test_scoped_unknown_is_not_empty(self):
+        for response in ({}, {"metadata": {}},
+                         {"metadata": {"count_objects_in_module": {"LOCAL": False}}},
+                         {"error": "hidden", "metadata": {"count_objects_in_module": {"LOCAL": 0}}},
+                         {"l2-vlan": {}, "metadata": {"count_objects_in_module": {"LOCAL": 0}}},
+                         {"metadata": {"total": 1, "count_objects_in_module": {"LOCAL": 0}}}):
+            with self.subTest(response=response), self.assertRaises(ValueError):
+                scoped_vlan_rows(response, "LOCAL")
+
+    def test_scoped_empty_list_positive_count_fails(self):
+        with self.assertRaisesRegex(ValueError, "contradicts"):
+            scoped_vlan_rows({"l2-vlan": [], "metadata": {"count_objects_in_module": {"LOCAL": 1}}}, "LOCAL")
+
+    def test_scoped_error_does_not_expose_arbitrary_keys_or_values(self):
+        with self.assertRaises(ValueError) as error:
+            scoped_vlan_rows({"private-customer-name": "private-value", "metadata":
+                              {"count_objects_in_module": {"LOCAL": 1}}}, "LOCAL")
+        self.assertNotIn("private", str(error.exception))
+        self.assertIn('"LOCAL":1', str(error.exception))
 
     def test_vlan_error_has_safe_parameters(self):
         class Reject:
