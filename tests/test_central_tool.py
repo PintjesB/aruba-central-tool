@@ -403,6 +403,49 @@ class Tests(unittest.TestCase):
         self.assertEqual([r["vlan_ids"] for r in result["references"]], [["10"], ["30"]])
         self.assertEqual(len(result["unresolved_paths"]), 2)
 
+    def test_audit_compare_distinguishes_local_removal_from_effective_change(self):
+        from central_tool import compare_audits
+        def bundle(local, effective):
+            snapshot = {"persona": "ACCESS_SWITCH", "region": "test",
+                        "scopes": [scope("g", "global", [{"vlan": 10}]),
+                                   scope("s", "device", effective, local)],
+                        "library": [{"vlan": 10}]}
+            return {"schema": 1, "kind": "tenant_audit", "region": "test",
+                    "results": {"ACCESS_SWITCH": {"snapshot": snapshot}}}
+        body = {"vlan": 10}
+        old = bundle([body], [body])
+        new = bundle([], [body])
+        comparison = compare_audits(old, new)
+        change = comparison["results"]["ACCESS_SWITCH"]["scope_changes"][0]
+        self.assertEqual(change["local"]["removed"], ["10"])
+        self.assertEqual(change["local_removal_outcomes"][0]["status"], "effective_body_unchanged")
+        self.assertFalse(any(change["effective"].values()))
+        changed = compare_audits(old, bundle([], [{"vlan": 10, "enable": True}]))
+        self.assertEqual(changed["results"]["ACCESS_SWITCH"]["scope_changes"][0]
+                         ["local_removal_outcomes"][0]["status"], "effective_body_changed")
+        self.assertFalse(comparison["same_tenant_verified"])
+
+    def test_offline_review_keeps_reference_previews_nonexecutable(self):
+        from central_tool import offline_audit_review
+        from unittest.mock import patch
+        body = {"vlan": 10}
+        snapshot = {"persona": "ACCESS_SWITCH", "region": "test",
+                    "scopes": [scope("g", "global", [body]), scope("s", "device", [body], [body])],
+                    "library": [body]}
+        bundle = {"schema": 1, "kind": "tenant_audit", "region": "test",
+                  "results": {"ACCESS_SWITCH": {"snapshot": snapshot, "dependencies": {}}}}
+        row = {"vlan": "10", "scope": "s", "scope_kind": "device", "profile": body,
+               "proposed_review": "review_restore_global_inheritance",
+               "dependency_blockers": ["operational_equivalence_unverified"], "reference_candidate_modules": []}
+        with patch("central_tool.report", return_value={}), patch("central_tool.dependency_review",
+                   return_value={"local_profile_review": [row]}):
+            result = offline_audit_review(bundle)
+        preview = result["results"]["ACCESS_SWITCH"]["previews"][0]
+        self.assertEqual(preview["reference_kind"], "global_effective_reference")
+        self.assertEqual(preview["reference_differences"], [])
+        self.assertFalse(preview["executable"])
+        self.assertFalse(preview["effective_after_change_verified"])
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
