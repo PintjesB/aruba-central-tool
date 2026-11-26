@@ -118,7 +118,8 @@ def standards_view(workspace, query):
     def references(entry):
         return [("", "Choose reference device")] + sorted((s["id"], s.get("name") or s["id"]) for s in base_entry(entry).get("scopes", []) if s["kind"] == "device")
     def modules(entry):
-        return [("", "Choose module")] + [(m, module_label(m)) for m in sorted(STANDARD_MODULES & entry["modules"].keys() & base_entry(entry).get("modules", {}).keys())]
+        available = STANDARD_MODULES & (entry["modules"].keys() | base_entry(entry).get("modules", {}).keys())
+        return [("", "Choose module"), ("all", "All standard modules")] + [(m, module_label(m)) for m in sorted(available)]
     def targets(entry):
         return [("", "Choose target scope")] + [(s["id"], pretty(s["kind"]) + " / " + (s.get("name") or s["id"])) for s in entry["scopes"]]
     controls = scope_filter_form(root, "standards", name, bundle, persona, (
@@ -136,17 +137,24 @@ def standards_view(workspace, query):
         except ValueError as exc:
             return page("Standards compliance", body + '<section>' + e(str(exc)) + '</section>', workspace.nav(name))
         counts = Counter(r["status"] for r in result["findings"])
-        body += metrics([("Known target devices", result["target_count"], "Excludes reference device"),
+        body += metrics([("Known target devices", result["target_count"], "Includes original reference when historical" if historical else "Excludes reference device"),
                          ("Matches reference", counts["matches_reference"], "Count-confirmed exact observed bodies"),
                          ("Differences observed", counts["differences_observed"], "Review intentional exceptions"),
-                         ("Verification required", counts["verification_required"] + counts["membership_unverified"], "Coverage or membership unverified")])
+                         ("Devices with evidence gaps", sum(bool(r.get("has_gaps")) or r["status"] == "membership_unverified" for r in result["findings"]), "May also have observed differences"),
+                         ("Modules checked", len(result["modules"]), "Selected supported module set")])
         rows = []
         for row in result["findings"]:
-            details = "".join("<h3>" + e(d["identity"] or "Collection") + " · " + e(pretty(d["status"])) + "</h3>" + change_detail(d) for d in row["differences"])
-            rows.append(tr(e(row["device"]), badge(pretty(row["status"])), str(len(row["differences"])),
+            module_rows = [tr(e(module_label(m)), badge(pretty(v["status"])), str(v["difference_count"]),
+                              e("Yes" if v["has_gaps"] else "No")) for m, v in row.get("module_results", {}).items()]
+            details = table(("Module", "Result", "Observations", "Evidence gaps"), module_rows) if module_rows else ""
+            details += "".join("<h3>" + e(module_label(d["module"]) + " / " + (d["identity"] or "Collection")) + " · " + e(pretty(d["status"])) + "</h3>" + change_detail(d) for d in row["differences"])
+            module_counts = Counter(v["status"] for v in row.get("module_results", {}).values())
+            summary = (f'{module_counts["matches_reference"]} match / {module_counts["differences_observed"]} differ / {module_counts["verification_required"]} verify'
+                       if module_rows else "Membership unknown")
+            rows.append(tr(e(row["device"]), badge(pretty(row["status"])) + ('<small>Evidence gaps also present</small>' if row.get("has_gaps") and row["status"] == "differences_observed" else ""), e(summary), str(len(row["differences"])),
                            inspect(row["device"], details or raw(row), "Inspect")))
         body += '<section><div class="section-head"><h2>Reference standard results</h2>' + private_export(
             "configuration-standards", {"baseline_snapshot": baseline_name, "current_snapshot": name,
-                                        "persona": persona, "module": module, "target_scope": target, "report": result}) + '</div>' + table(("Device", "Result", "Differences / gaps", ""), rows, search=True)
+                                        "persona": persona, "module": module, "target_scope": target, "report": result}) + '</div>' + table(("Device", "Result", "Module results", "Differences / gaps", ""), rows, search=True)
         body += '<p class="note">The selected reference is an explicit comparison standard, not an automatically approved network policy. A match concerns captured configuration only. Record intentional exceptions before any remediation.</p></section>'
     return page("Standards compliance", body, workspace.nav(name))
