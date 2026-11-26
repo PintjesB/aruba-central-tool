@@ -3,7 +3,7 @@ import getpass
 import json
 import os
 
-from central_tool import APIError, Central, EU_REGIONS, VLAN_FEATURE_COMMANDS, detect_region, supported_show_commands, extract_command_output, parse_vlan_running_config, parse_show_vlan, parse_vlan_feature, VLAN_FEATURE_ALTERNATIVES, parse_multicast_interface_output, probe_operational_vlans, operational_vlan_summary, monitoring_vlan_records, collect_monitoring_voice_filter, voice_state
+from central_tool import APIError, Central, EU_REGIONS, VLAN_FEATURE_COMMANDS, detect_region, supported_show_commands, extract_command_output, parse_vlan_running_config, parse_show_vlan, parse_vlan_feature, VLAN_FEATURE_ALTERNATIVES, multicast_interface_evidence, probe_operational_vlans, operational_vlan_summary, monitoring_vlan_records, collect_monitoring_voice_filter, voice_state
 
 
 def main():
@@ -36,9 +36,9 @@ def main():
                     result = {"status": parsed["status"], "vlans": len(ids)}
                 elif command in VLAN_FEATURE_ALTERNATIVES.values():
                     field = next(k for k, v in VLAN_FEATURE_ALTERNATIVES.items() if v == command)
-                    values = parse_multicast_interface_output(extract_command_output(response["result"], command), field, ids)
-                    result = {"status": ("observed" if set(values) == ids else "partial") if values else "schema_unresolved", "vlans": len(values)}
-                    if not values:
+                    evidence = multicast_interface_evidence(extract_command_output(response["result"], command), field, ids)
+                    result = {"status": evidence["status"], "vlans": len(evidence["vlans"])}
+                    if evidence["status"] == "schema_unresolved":
                         output = extract_command_output(response["result"], command)
                         result["raw_output"] = output if output is not None else {"response_keys": sorted(response["result"])} 
                 else:
