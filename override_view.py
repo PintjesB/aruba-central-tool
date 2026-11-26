@@ -3,7 +3,7 @@ from collections import Counter
 from central_tool import canonical, profile_body, PERSONAS, vlan_comparison_evidence
 from consolidation import scope_memberships, REUSABLE
 from workspace_ui import e, page, intro, badge, raw, table, tr, inspect, diff_table, property_table, module_label, persona_label
-from workspace_views import load, url, select, title_profile, vlan_explanation, operational_vlan_context, vlan_instance_context
+from workspace_views import load, url, select, title_profile, vlan_explanation, operational_vlan_context, vlan_instance_context, scope_filter_form, device_options, module_options
 
 RESULTS = {
     "identical": "Identical to Global",
@@ -111,14 +111,11 @@ def overrides_view(workspace, query):
     scoped = [f for f in findings if (not device or f["device"] == device) and (not module or f["module"] == module)]
     missing = [f for f in incomplete if (not device or f["device"] == device) and (not module or f["module"] == module)]
     counts = Counter(f["result"] for f in scoped)
-    filters = (f'<form method="get" action="{root}overrides"><input type="hidden" name="snapshot" value="{e(name)}">'
-               + select("persona", [(p, persona_label(p)) for p in personas], persona, "Device function")
-               + '<button type="submit" class="quiet">Load devices</button></form><hr>'
-               + f'<form method="get" action="{root}overrides"><input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="persona" value="{e(persona)}">'
-               + select("device", [("", "All devices")] + devices, device, "Device")
-               + select("module", [("", "All comparable modules")] + [(m, module_label(m)) for m in modules], module, "Configuration")
-               + select("result", [("", "All results")] + [(k, f"{v} ({counts[k]})") for k, v in RESULTS.items()], result, "Comparison result")
-               + '<button type="submit">Compare with Global</button></form>')
+    filters = scope_filter_form(root, "overrides", name, bundle, persona, (
+        ("device", "Device", device, device_options),
+        ("module", "Configuration", module, lambda entry: module_options(entry, "All comparable modules", comparable=True))),
+        submit="Compare with Global", extra_fields=(("result", "Result", result,
+            [("", "All results")] + list(RESULTS.items())),))
     rows = []
     for f in sorted(scoped, key=lambda f: (list(RESULTS).index(f["result"]), f["device_name"], f["module"], f["identity"])):
         if result and f["result"] != result:
@@ -153,10 +150,12 @@ def overrides_view(workspace, query):
         rows.append(tr(f'<strong>{e(f["device_name"])}</strong>', e(module_label(f["module"])), e(label),
                        badge(RESULTS[state], "good" if state == "identical" else "warn" if state == "different" else "neutral"),
                        e(next_step), inspect(label, detail, "Compare settings")))
-    cards = []
-    for key in ("identical", "effective_match", "omitted", "different", "no_global", "protected"):
-        href = url(root, "overrides", snapshot=name, persona=persona, device=device, module=module, result=key)
-        cards.append(f'<a class="workflow-card" href="{href}"><strong>{counts[key]} · {e(RESULTS[key])}</strong><span>Show these profiles →</span></a>')
+    result_summary = '<div class="result-summary" aria-label="Comparison results">' + "".join(
+        f'<span><strong>{counts[key]}</strong> {e(label)}</span>' for key, label in (
+            ("identical", "identical saved bodies"), ("effective_match", "observed matches"),
+            ("different", "different"), ("omitted", "incomplete"), ("no_global", "no Global profile"),
+            ("protected", "protected"), ("global_unknown", "Global unavailable"),
+            ("source_uncertain", "source conflict")) if counts[key]) + '</div>'
     from central_tool import vlan_evidence_summary
     diagnostics = vlan_evidence_summary(bundle)
     report = '<details><summary>VLAN evidence collection results (entire snapshot)</summary>' + table(
@@ -167,11 +166,9 @@ def overrides_view(workspace, query):
         [tr(e(field), e(", ".join(f"{key}: {value}" for key, value in outcomes.items())))
          for field, outcomes in sorted(diagnostics["feature_cli"].items())]) + '</details>'
     body = (intro("Device overrides", "Find saved device-level configuration and compare it directly with Global.", picker)
-            + '<section>' + filters + '</section><div class="workflow-grid">' + "".join(cards) + '</div>'
-            + '<section><h2>Device-local configuration</h2><p class="muted">One row per saved local profile, excluding other Central defaults. VLAN 1 is shown for inspection only. Device-only interfaces are excluded because there is no comparable Global profile.</p>'
+            + '<section class="filter-section">' + filters + '</section>'
+            + '<section><div class="section-head"><h2>Device-local configuration</h2></div>' + result_summary
             + table(("Device", "Configuration", "Profile", "Compared with Global", "Suggested next step", ""), rows, search=True)
-            + report
-            + f'<p class="note">{len(missing)} device/module reads could not be interpreted. '
-              'An empty result is not proof that a device has no overrides. '
-              'Removal is not enabled in the production browser.</p></section>')
+            + f'<p class="filter-hint">{len(missing)} device/module reads unavailable. VLAN 1 is protected; device-only interfaces are excluded. Review only.</p></section>'
+            + report)
     return page("Device overrides", body, workspace.nav(name))
