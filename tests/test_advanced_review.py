@@ -149,3 +149,35 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(plan["saved_references"][0]["to"], "keep")
         self.assertFalse(plan["complete"])
         self.assertFalse(plan["safe_to_apply"])
+
+
+    def test_migration_recipients_check_retained_profile_visibility(self):
+        from advanced_review import library_usage, duplicate_migration_preview
+        persona = "ACCESS_SWITCH"
+        profiles = {"keep": {"profile-name": "keep", "enable": True},
+                    "old": {"profile-name": "old", "enable": True}}
+        shared = {"aruba-annotation:object_type": "SHARED"}
+        scopes = [{"id": "1", "kind": "site", "name": "Site"},
+                  {"id": "2", "kind": "device", "name": "A", "metadata": {"siteId": "1"}},
+                  {"id": "3", "kind": "device", "name": "B", "metadata": {"siteId": "1"}},
+                  {"id": "4", "kind": "device", "name": "Unknown"}]
+        def captured(rows, confirmed=True):
+            return {**view(rows), "count_confirmed": confirmed}
+        bundle = {"results": {persona: {"scopes": scopes, "modules": {
+            "sw-port-profiles": {"scope_results": [
+                {"scope": "2", "effective_view": captured({"keep": {**profiles["keep"], "@": shared}})},
+                {"scope": "3", "effective_view": captured({})},
+                {"scope": "4", "effective_view": captured({}, False)}]}}}},
+            "library": {"modules": {"sw-port-profiles": view(profiles)},
+                        "assignments": {"status": "response_received", "rows": [
+                            {"profile-type": "sw-port-profiles", "profile-instance": "old",
+                             "scope-id": "1", "device-function": persona}]}}}
+        usage = library_usage(bundle, "sw-port-profiles", profiles, [])
+        plan = duplicate_migration_preview("sw-port-profiles", usage, "keep", bundle=bundle)
+        rows = {r["scope"]: r for r in plan["recipient_review"]}
+        self.assertEqual(rows["2"]["target_visibility"], "matching_shared")
+        self.assertEqual(rows["3"]["target_visibility"], "count_confirmed_absence")
+        self.assertEqual(rows["4"]["target_visibility"], "unverified")
+        self.assertTrue(rows["4"]["uncertain_membership"])
+        self.assertFalse(rows["2"]["uncertain_membership"])
+        self.assertFalse(plan["safe_to_apply"])
