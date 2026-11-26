@@ -1804,7 +1804,7 @@ def read_raw_profile_collection(client, module, params):
     return incomplete("page_limit_reached")
 
 
-def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, workers=1, progress=None, *, scopes_by_persona=None):
+def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, workers=1, progress=None, *, scopes_by_persona=None, deep_catalog=False):
     """Inspect observed source scopes for modules without an explicit adapter.
 
     These are raw read-only diagnostics, not qualified local/effective views.
@@ -1850,6 +1850,13 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
     all_scope_ids = sorted({str(s["id"]) for scopes in (scopes_by_persona or {}).values()
                             for s in scopes if str(s["id"]).isdigit()})
 
+    if deep_catalog:
+        planned = sum(len(all_scope_ids) * 2 for module in unknown
+                      if documented.get(module, {}).get("all_function_scope")
+                      or documented.get(module, {}).get("source") == "vendor_collection")
+        print(f"Deep catalog survey: up to {planned} additional unfiltered scope reads before pagination; "
+              "rejected and incomplete reads remain visible.", flush=True)
+
     def capture(module, params):
         try:
             return read_raw_profile_collection(client, module, params)
@@ -1876,10 +1883,15 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
         # identified profile evidence and never use them to qualify a change.
         catalog_views = []
         contract = documented.get(module, {})
-        if contract.get("all_function_scope"):
-            for sid in global_ids:
+        all_functions = contract.get("all_function_scope", False)
+        documented_scope = contract.get("source") == "vendor_collection"
+        survey_ids = all_scope_ids if deep_catalog and (all_functions or documented_scope) else (
+            global_ids if all_functions else [])
+        survey_label = "ALL_DEVICE_FUNCTIONS" if all_functions else "UNFILTERED_SCOPE"
+        if survey_ids:
+            for sid in survey_ids:
                 base = {"view-type": "LOCAL", "scope-id": sid, "detailed": "true"}
-                catalog_views.append({"persona": "ALL_DEVICE_FUNCTIONS", "scope": sid,
+                catalog_views.append({"persona": survey_label, "scope": sid,
                                       "observed_instances": [],
                                       "committed": capture(module, {**base, "effective": "false"}),
                                       "effective": capture(module, {**base, "effective": "true"})})
@@ -1887,6 +1899,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
         # warrants targeted scope reads even if the assignment inventory missed
         # the module. An empty Global response is never proof of no local data.
         observed_functions = set()
+        global_functions = set()
         for view in catalog_views:
             for kind in ("committed", "effective"):
                 payload = view[kind].get("raw")
@@ -1903,6 +1916,8 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                             function = ann.get("aruba-annotation:device_function")
                             if isinstance(function, str) and function in NETWORK_PERSONAS:
                                 observed_functions.add(function)
+                                if view["scope"] in global_ids:
+                                    global_functions.add(function)
         visited = {(v["persona"], v["scope"]) for v in evidence}
         for function in sorted(observed_functions):
             for scope in (scopes_by_persona or {}).get(function, []):
@@ -1917,10 +1932,14 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
         result = {"status": "unqualified_adapter", "source_views": evidence + catalog_views,
                   "scope_read_outcomes": dict(Counter(v[k]["status"] for v in evidence + catalog_views for k in ("committed", "effective"))),
                   "library": capture(module, {"view-type": "LIBRARY", "detailed": "true"}),
-                  "catalog_scope_coverage": {"global_scopes_attempted": len(catalog_views),
-                       "global_observed_functions": sorted(observed_functions),
+                  "catalog_scope_coverage": {"global_scopes_attempted": sum(v["scope"] in global_ids for v in catalog_views),
+                       "global_observed_functions": sorted(global_functions),
+                       "observed_functions": sorted(observed_functions),
+                       "deep_catalog_requested": deep_catalog,
+                       "unfiltered_scopes_attempted": len(catalog_views),
+                       "unfiltered_scopes_not_surveyed": len(set(all_scope_ids) - set(survey_ids)),
                        "discovered_scopes": len(all_scope_ids),
-                       "all_function_scopes_not_surveyed": len(set(all_scope_ids) - {v["scope"] for v in catalog_views}),
+                       "all_function_scopes_not_surveyed": len(set(all_scope_ids) - set(survey_ids)) if all_functions else None,
                        "complete": False},
                   "safe_to_apply": False}
         result["identity_evidence"] = qualify_observed_identities(result)
@@ -2699,7 +2718,7 @@ def configuration_operational_vlan(bundle, persona, sid, vid):
             "may_be_truncated": len(lists[0]) >= 1000}
 
 
-def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None):
+def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None, deep_catalog=False):
     """Inventory-driven read-only audit with bounded parallel scope reads."""
     audit_progress(progress, "Discovery", 0, 0, "Reading device inventory and assignments")
     devices = inventory(client)
@@ -2808,7 +2827,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     print("Reading tenant Library and assignments", flush=True)
     library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress)
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress,
-                                           scopes_by_persona=scopes_by_persona)
+                                           scopes_by_persona=scopes_by_persona, deep_catalog=deep_catalog)
     details = capture_vlan_instance_details(client, results, workers, progress)
     operational = capture_configuration_operational_vlans(client, results, workers, progress)
     cli = capture_switch_vlan_cli(client, results, details, workers, progress)
@@ -3146,6 +3165,7 @@ def main():
     config = commands.add_parser("config-audit", help="Audit documented configuration modules for discovered device personas")
     config.add_argument("--output", required=True, type=Path)
     config.add_argument("--region-file", type=Path)
+    config.add_argument("--deep-catalog", action="store_true", help="Survey documented unadapted collections at every discovered scope; may take substantially longer")
     config.add_argument("--persona", choices=sorted(NETWORK_PERSONAS), help="Optional limit to one discovered persona")
     browser = commands.add_parser("review-config", help="Generate an offline configuration browser and anonymous schema diagnostics")
     browser.add_argument("audit", type=Path)
@@ -3155,6 +3175,7 @@ def main():
     app.add_argument("--region-file", type=Path)
     app.add_argument("--enable-refresh", action="store_true", help="Enable read-only Central refresh using environment credentials")
     app.add_argument("--no-browser", action="store_true")
+    app.add_argument("--deep-catalog", action="store_true", help="Use deep catalog scope surveys for environment-credential refreshes")
     inv = commands.add_parser("inventory", help="Discover every device and its known compatibility")
     inv.add_argument("--output", required=True, type=Path)
     inv.add_argument("--region-file", type=Path)
@@ -3185,7 +3206,7 @@ def main():
                 def refresh(progress=None):
                     audit_progress(progress, "Connection", 0, 0, "Authenticating and detecting region")
                     detect_region(client, preferred)
-                    return configuration_audit(client, progress=progress)
+                    return configuration_audit(client, progress=progress, deep_catalog=args.deep_catalog)
             serve(args.directory, refresh=refresh, open_browser=not args.no_browser)
             return 0
         if args.output.exists():
@@ -3221,7 +3242,7 @@ def main():
             elif args.command == "audit":
                 data = audit(client)
             elif args.command == "config-audit":
-                data = configuration_audit(client, args.persona)
+                data = configuration_audit(client, args.persona, deep_catalog=args.deep_catalog)
             elif args.command == "inventory":
                 records = inventory_capabilities(inventory(client))
                 data = {"region": region, "devices": records}
