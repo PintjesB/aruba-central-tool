@@ -77,6 +77,21 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(result["findings"][0]["status"], "verification_required")
         self.assertEqual(result["findings"][0]["differences"][0]["status"], "field_values_unavailable")
 
+    def test_multi_module_standard_reports_differences_and_gaps_together(self):
+        before, current = snapshot(), snapshot("Changed")
+        entry = current["results"]["ACCESS_SWITCH"]
+        entry["modules"]["dns"] = {"scope_results": [
+            {"scope": "4", "effective_view": {"status": "request_rejected"}}]}
+        result = reference_compliance(current, "ACCESS_SWITCH", "all", "3", "4",
+                                      baseline=before, confirmed=True)
+        finding = result["findings"][0]
+        self.assertEqual(result["modules"], ["dns", "layer2-vlan"])
+        self.assertEqual(finding["status"], "differences_observed")
+        self.assertTrue(finding["has_gaps"])
+        self.assertEqual(finding["module_results"]["dns"]["status"], "verification_required")
+        self.assertEqual(finding["module_results"]["layer2-vlan"]["status"], "differences_observed")
+        self.assertFalse(result["reference_count_confirmed"])
+
     def test_browser_routes_render_and_show_explicit_selection(self):
         import json
         import tempfile
@@ -96,6 +111,10 @@ class HistoryTests(unittest.TestCase):
             self.assertIn("Reference standard results", html)
             self.assertIn("Differences observed", html)
             self.assertIn("Membership unverified", html)
+            html = w.standards({"snapshot": "config-audit-new.json", "persona": "ACCESS_SWITCH",
+                                "module": "all", "reference": "3", "target": "2"})
+            self.assertIn("All standard modules", html)
+            self.assertIn("Module results", html)
             self.assertIn("Export private report JSON", html)
             html = w.standards({"snapshot": "config-audit-new.json", "baseline": "config-audit-old.json",
                                 "confirmed": "yes", "persona": "ACCESS_SWITCH", "module": "layer2-vlan",

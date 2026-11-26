@@ -142,9 +142,13 @@ def reference_compliance(bundle, persona, module, reference, target_scope, *, ba
     baseline_entry = (baseline if historical else bundle)["results"].get(persona, {})
     scopes = {s["id"]: s for s in entry["scopes"]}
     baseline_devices = {s["id"]: s for s in baseline_entry.get("scopes", []) if s["kind"] == "device"}
-    if (reference not in baseline_devices or target_scope not in scopes or module not in STANDARD_MODULES
-            or module not in entry["modules"] or module not in baseline_entry.get("modules", {})):
+    available = STANDARD_MODULES & (entry["modules"].keys() | baseline_entry.get("modules", {}).keys())
+    if (reference not in baseline_devices or target_scope not in scopes
+            or (module != "all" and module not in available)):
         raise ValueError("Invalid reference, module or target scope")
+    modules = sorted(available) if module == "all" else [module]
+    if not modules:
+        raise ValueError("No supported standards modules available")
     members = scope_memberships(entry["scopes"])
     kind = scopes[target_scope]["kind"]
     targets = {target_scope} if kind == "device" else {sid for sid, m in members.items() if m.get(kind) == target_scope}
@@ -152,34 +156,56 @@ def reference_compliance(bundle, persona, module, reference, target_scope, *, ba
     if not historical:
         targets.discard(reference)
         unknown.discard(reference)
-    views = {v["scope"]: v.get("effective_view", {}) for v in entry["modules"][module]["scope_results"]}
-    baseline_views = {v["scope"]: v.get("effective_view", {}) for v in baseline_entry["modules"][module]["scope_results"]}
-    expected = baseline_views.get(reference, {})
-    if expected.get("status") != "list_parsed" or not expected.get("profiles"):
-        raise ValueError("Reference device has no interpretable nonempty module view")
+    def effective_views(entry, name):
+        return {v["scope"]: v.get("effective_view", {}) for v in
+                entry.get("modules", {}).get(name, {}).get("scope_results", [])}
+
+    current_views = {name: effective_views(entry, name) for name in modules}
+    expected_views = {name: effective_views(baseline_entry, name).get(reference, {}) for name in modules}
     findings = []
     for sid in sorted(targets):
-        actual = views.get(sid, {})
-        changes = view_changes(expected, actual, include_source=False)
-        # A missing field or null value is not enough to establish that the
-        # actual setting differs. Preserve it as a gap requiring verification.
-        for change in changes:
-            if change["status"] == "changed" and all(
-                    d["kind"] in ("missing_local", "missing_reference", "null_vs_value")
-                    for d in change.get("fields", [])):
-                change["status"] = "field_values_unavailable"
-        if not changes:
-            state = "matches_reference"
-        elif any(r["status"] in ("added", "removed", "changed") for r in changes):
-            state = "differences_observed"
-        else:
-            state = "verification_required"
+        changes = []
+        module_results = {}
+        for name in modules:
+            expected = expected_views[name]
+            actual = current_views[name].get(sid, {})
+            if expected.get("status") != "list_parsed":
+                observations = [{"identity": "", "status": "reference_unavailable"}]
+            elif not expected.get("profiles") and not expected.get("count_confirmed"):
+                observations = [{"identity": "", "status": "reference_unavailable"}]
+            else:
+                observations = view_changes(expected, actual, include_source=False)
+            for change in observations:
+                if change["status"] == "changed" and all(
+                        d["kind"] in ("missing_local", "missing_reference", "null_vs_value")
+                        for d in change.get("fields", [])):
+                    change["status"] = "field_values_unavailable"
+            differences = any(r["status"] in ("added", "removed", "changed") for r in observations)
+            gaps = any(r["status"] not in ("added", "removed", "changed") for r in observations)
+            # A difference and an evidence gap may coexist in one profile.
+            gaps = gaps or expected.get("count_confirmed") is not True or actual.get("count_confirmed") is not True
+            gaps = gaps or any(d["kind"] in ("missing_local", "missing_reference", "null_vs_value")
+                               for row in observations for d in row.get("fields", []))
+            if differences:
+                state = "differences_observed"
+            elif gaps:
+                state = "verification_required"
+            else:
+                state = "matches_reference"
+            module_results[name] = {"status": state, "has_gaps": gaps,
+                                    "difference_count": len(observations)}
+            changes.extend({**row, "module": name} for row in observations)
+        states = {row["status"] for row in module_results.values()}
+        state = ("differences_observed" if "differences_observed" in states else
+                 "verification_required" if "verification_required" in states else "matches_reference")
         findings.append({"scope": sid, "device": scopes[sid].get("name") or sid,
-                         "status": state, "differences": changes})
+                         "status": state, "differences": changes, "module_results": module_results,
+                         "has_gaps": any(row["has_gaps"] for row in module_results.values())})
     for sid in sorted(unknown):
         findings.append({"scope": sid, "device": scopes[sid].get("name") or sid,
                          "status": "membership_unverified", "differences": []})
     return {"findings": findings, "historical_baseline": historical,
             "reference_scope": reference, "reference_name": baseline_devices[reference].get("name") or reference,
-            "reference_count_confirmed": expected.get("count_confirmed") is True,
+            "reference_count_confirmed": all(v.get("count_confirmed") is True for v in expected_views.values()),
+            "modules": modules,
             "target_count": len(targets), "unknown_membership": len(unknown), "safe_to_apply": False}
