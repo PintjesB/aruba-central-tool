@@ -869,6 +869,21 @@ class Tests(unittest.TestCase):
         complete = {**evidence, "payload": {"items": [{"id": 1, "voice": "Disabled"}]}}
         self.assertEqual(collect_monitoring_voice_filter(Fake([]), metadata, complete)["status"], "not_needed_or_unavailable")
 
+    def test_multicast_interface_absence_does_not_prove_snooping_disabled(self):
+        from central_tool import multicast_interface_evidence, monitoring_vlan_records
+        ids = {"1", "10"}
+        for field in ("igmp", "mld"):
+            text = f"\n{field.upper()} is not enabled on any of the interfaces.\n"
+            result = multicast_interface_evidence(text, field, ids)
+            self.assertEqual(result, {"status": "no_multicast_interfaces", "vlans": {}})
+            self.assertEqual(multicast_interface_evidence("Unrecognized response", field, ids)["status"],
+                             "schema_unresolved")
+        self.assertEqual(monitoring_vlan_records({"items": [{"id": 1, "voice": "Disabled"}],
+                                                  "count": 1, "total": 1, "offset": 0}),
+                         {"1": {"id": 1, "voice": "Disabled"}})
+        self.assertIsNone(monitoring_vlan_records({"items": [{"id": 1}], "count": 1, "total": 2, "offset": 0}))
+        self.assertIsNone(monitoring_vlan_records({"items": [{"id": 1}], "count": 1, "total": 1, "offset": 1}))
+
     def test_multicast_interface_commands_use_explicit_snooping_flag(self):
         from central_tool import parse_multicast_interface_output
         for field in ("igmp", "mld"):
