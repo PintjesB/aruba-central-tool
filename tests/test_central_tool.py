@@ -644,6 +644,25 @@ class Tests(unittest.TestCase):
         self.assertEqual(data["unresolved_records"], 1)
         self.assertFalse(data["complete"])
 
+    def test_unadapted_profile_inspection_deduplicates_source_views_and_rejects_bad_selectors(self):
+        from central_tool import discover_profile_types, inspect_unadapted_profiles
+        assignments = {"rows": [{"profile-type": "new-module", "profile-instance": "a",
+                                 "device-function": "ACCESS_SWITCH", "scope-id": "12"}]}
+        maps = {"rows": [{"resource": "new-module/a", "persona": "ACCESS_SWITCH", "scope-id": 12},
+                         {"resource": "new-module/b", "persona": "ACCESS_SWITCH", "scope-id": 12},
+                         {"resource": "new-module/c", "persona": "ACCESS_SWITCH", "scope-id": "../bad"}]}
+        discovery = discover_profile_types(assignments, maps)
+        fake = Fake([{"profiles": [{"name": "a"}]}, {"profiles": [{"name": "b"}]}, {}])
+        result = inspect_unadapted_profiles(fake, discovery, assignments, maps)
+        view = result["new-module"]
+        self.assertEqual(view["status"], "unqualified_adapter")
+        self.assertFalse(view["safe_to_apply"])
+        self.assertEqual(len(view["source_views"]), 1)
+        self.assertEqual(view["source_views"][0]["observed_instances"], ["a", "b"])
+        self.assertEqual(len(fake.calls), 3)
+        self.assertEqual(fake.calls[0][1]["scope-id"], "12")
+        self.assertEqual(fake.calls[2][1], {"view-type": "LIBRARY", "detailed": "true"})
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
