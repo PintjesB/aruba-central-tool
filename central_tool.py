@@ -1879,10 +1879,42 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                                       "observed_instances": [],
                                       "committed": capture(module, {**base, "effective": "false"}),
                                       "effective": capture(module, {**base, "effective": "true"})})
+        # Discover functions from explicit Global annotations. Positive data
+        # warrants targeted scope reads even if the assignment inventory missed
+        # the module. An empty Global response is never proof of no local data.
+        observed_functions = set()
+        for view in catalog_views:
+            for kind in ("committed", "effective"):
+                payload = view[kind].get("raw")
+                if not isinstance(payload, dict):
+                    continue
+                for key, items in payload.items():
+                    if key == "metadata" or not isinstance(items, list):
+                        continue
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        ann = item.get("@")
+                        if isinstance(ann, dict):
+                            function = ann.get("aruba-annotation:device_function")
+                            if isinstance(function, str) and function in NETWORK_PERSONAS:
+                                observed_functions.add(function)
+        visited = {(v["persona"], v["scope"]) for v in evidence}
+        for function in sorted(observed_functions):
+            for scope in (scopes_by_persona or {}).get(function, []):
+                sid = str(scope["id"])
+                if not sid.isdigit() or (function, sid) in visited:
+                    continue
+                base = {"view-type": "LOCAL", "scope-id": sid, "device-function": function, "detailed": "true"}
+                evidence.append({"persona": function, "scope": sid, "observed_instances": [],
+                                 "committed": capture(module, {**base, "effective": "false"}),
+                                 "effective": capture(module, {**base, "effective": "true"})})
+                visited.add((function, sid))
         result = {"status": "unqualified_adapter", "source_views": evidence + catalog_views,
                   "scope_read_outcomes": dict(Counter(v[k]["status"] for v in evidence + catalog_views for k in ("committed", "effective"))),
                   "library": capture(module, {"view-type": "LIBRARY", "detailed": "true"}),
                   "catalog_scope_coverage": {"global_scopes_attempted": len(catalog_views),
+                       "global_observed_functions": sorted(observed_functions),
                        "discovered_scopes": len(all_scope_ids),
                        "all_function_scopes_not_surveyed": len(set(all_scope_ids) - {v["scope"] for v in catalog_views}),
                        "complete": False},
