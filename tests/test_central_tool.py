@@ -68,24 +68,39 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(inventory(client)), 2)
         self.assertEqual(client.calls[1][1]["next"], "2")
 
-    def test_vlan_pagination_stops_at_nested_total(self):
-        pages = [[{"vlan": n} for n in range(start, end)]
-                 for start, end in ((1, 11), (11, 21), (21, 30))]
-        client = Fake([{"l2-vlan": page, "metadata": {"total": 29,
-                       "count": len(page), "offset": offset, "default_profiles_count": 1}}
-                       for page, offset in zip(pages, (10, 20, 29))])
-        self.assertEqual(vlan_rows(client, **{"view-type": "LIBRARY"}), sum(pages, []))
-        self.assertEqual([p["limit"] for _, p in client.calls], [10, 10, 10])
-        self.assertEqual([p["offset"] for _, p in client.calls], [0, 10, 20])
+    def test_vlan_library_full_read_validated_against_total(self):
+        full = [{"vlan": n} for n in range(1, 30)]
+        client = Fake([{"l2-vlan": full[:10], "metadata":
+                        {"total": 29, "count": 10, "offset": 10, "default_profiles_count": 1}},
+                       {"l2-vlan": full}])
+        self.assertEqual(vlan_rows(client, **{"view-type": "LIBRARY"}), full)
+        self.assertEqual(client.calls[0][1]["limit"], 10)
+        self.assertEqual(client.calls[0][1]["offset"], 0)
+        self.assertNotIn("offset", client.calls[1][1])
+        self.assertNotIn("limit", client.calls[1][1])
 
     def test_vlan_library_empty(self):
-        client = Fake([{"l2-vlan": [], "metadata": {"total": 0, "count": 0, "offset": 0}}])
+        client = Fake([{"l2-vlan": [], "metadata": {"total": 0, "count": 0, "offset": 0}},
+                       {"l2-vlan": []}])
         self.assertEqual(vlan_rows(client, **{"view-type": "LIBRARY"}), [])
 
     def test_vlan_library_inconsistent_metadata_fails(self):
         client = Fake([{"l2-vlan": [{"vlan": 1}], "metadata":
                        {"total": 29, "count": 1, "offset": 10}}])
         with self.assertRaisesRegex(RuntimeError, "Inconsistent"):
+            vlan_rows(client, **{"view-type": "LIBRARY"})
+
+    def test_vlan_library_truncated_full_response_fails(self):
+        full = [{"vlan": n} for n in range(1, 30)]
+        client = Fake([{"l2-vlan": full[:10], "metadata": {"total": 29, "count": 10}},
+                       {"l2-vlan": full[:20]}])
+        with self.assertRaisesRegex(RuntimeError, "count mismatch"):
+            vlan_rows(client, **{"view-type": "LIBRARY"})
+
+    def test_vlan_library_changed_first_page_fails(self):
+        client = Fake([{"l2-vlan": [{"vlan": 1}], "metadata": {"total": 1, "count": 1}},
+                       {"l2-vlan": [{"vlan": 2}]}])
+        with self.assertRaisesRegex(RuntimeError, "differs"):
             vlan_rows(client, **{"view-type": "LIBRARY"})
 
     def test_vlan_scoped_reads_unpaginated(self):
