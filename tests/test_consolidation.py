@@ -319,3 +319,33 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("Local source not confirmed", html)
         self.assertIn("Not returned", html)
         self.assertIn("original snapshot", html)
+
+    def test_recovered_vlan_fields_change_comparison_not_saved_body(self):
+        from central_tool import refresh_configuration_review, vlan_comparison_evidence
+        from override_view import device_override_rows
+        from workspace_views import vlan_explanation
+        data = fixture()
+        views = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]
+        views[0]["effective_view"]["profiles"]["70"] = {"vlan": 70, "name": "Example", "enable": True}
+        for key in ("local_view", "effective_view"):
+            views[2][key]["profiles"]["70"] = {"vlan": 70}
+        refresh_configuration_review(data)
+        data["vlan_instance_details"] = {"ACCESS_SWITCH": {"3": {"70": {
+            "effective": {"status": "observed", "profile": {"vlan": 70, "name": "Example"}}}}}}
+        data["switch_vlan_cli"] = {"ACCESS_SWITCH": {"3": {"status": "observed",
+            "vlans": {"70": {"name": "Example", "enable": True}}}}}
+        findings, _ = device_override_rows(data, "ACCESS_SWITCH")
+        f = next(f for f in findings if f["device"] == "3" and f["module"] == "layer2-vlan" and f["identity"] == "70")
+        self.assertEqual(f["result"], "effective_match")
+        self.assertFalse(f["candidate"])
+        self.assertEqual(f["profile"]["local"], {"vlan": 70})
+        self.assertEqual(f["evidence"]["comparison"], {"vlan": 70, "name": "Example", "enable": True})
+        html = vlan_explanation(f["profile"]["local"], f["profile"]["global_reference"], f["profile"]["effective"], f["evidence"])
+        self.assertIn("Central VLAN by ID", html)
+        self.assertIn("Switch show vlan", html)
+        data["switch_vlan_cli"]["ACCESS_SWITCH"]["3"]["vlans"]["70"]["name"] = "Other"
+        findings, _ = device_override_rows(data, "ACCESS_SWITCH")
+        f = next(f for f in findings if f["device"] == "3" and f["module"] == "layer2-vlan" and f["identity"] == "70")
+        self.assertEqual(f["result"], "source_uncertain")
+        self.assertIn("device.name", f["evidence"]["conflicts"])
+        self.assertFalse(f["candidate"])
