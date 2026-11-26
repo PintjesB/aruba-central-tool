@@ -278,9 +278,7 @@ def check_empty_local(annotated):
     return "unverified_annotations" if uncertain else "consistent_with_effective_annotations"
 
 
-def scan(client, persona, devices=None):
-    if devices is None:
-        devices = inventory(client)
+def discover_scopes(client, persona, devices):
     global_row = client.get(CONFIG + "/global")
     scopes = [{"id": scope_id(global_row), "kind": "global", "name": "Global"}]
     for kind, path, keys in (
@@ -303,6 +301,13 @@ def scan(client, persona, devices=None):
         raise ValueError("Duplicate scope IDs; stack or hierarchy semantics require validation")
     if not any(s["kind"] == "device" for s in scopes):
         raise ValueError("No devices matched the selected persona; check inventory and configuration authority")
+    return scopes, excluded
+
+
+def scan(client, persona, devices=None):
+    if devices is None:
+        devices = inventory(client)
+    scopes, excluded = discover_scopes(client, persona, devices)
     device_count = sum(s["kind"] == "device" for s in scopes)
     print(f"Discovered {len(scopes)} scopes ({device_count} matching devices); reading VLAN Library", flush=True)
     library = vlan_rows(client, **{"view-type": "LIBRARY", "detailed": "false"})
@@ -1133,6 +1138,200 @@ def audit(client):
             "results": results, "safe_to_apply": False}
 
 
+# Documented profile identities are intentionally explicit. Unknown envelopes or
+# model-specific shapes remain unqualified instead of choosing arbitrary keys.
+AP_PERSONAS = {"CAMPUS_AP", "MICROBRANCH_AP"}
+GATEWAY_PERSONAS = {"MOBILITY_GW", "BRANCH_GW"}
+NETWORK_PERSONAS = PERSONAS | AP_PERSONAS | GATEWAY_PERSONAS | {"BRIDGE"}
+CONFIG_MODULES = {
+    "layer2-vlan": ("vlan", PERSONAS, False),
+    "vlan-interfaces": ("id", PERSONAS, False),
+    "ethernet-interfaces": ("name", NETWORK_PERSONAS, True),
+    "portchannels": ("name", PERSONAS | GATEWAY_PERSONAS, False),
+    "sw-port-profiles": ("profile-name", PERSONAS, False),
+    "interface-profiles": ("name", NETWORK_PERSONAS, False),
+    "roles": ("name", NETWORK_PERSONAS, False),
+    "switch-system": ("name", PERSONAS, False),
+    "switch-profiles": ("name", PERSONAS, False),
+    "qos-global": ("name", PERSONAS, False),
+    "device-profile": ("name", PERSONAS, False),
+    "wlan-ssids": ("ssid", AP_PERSONAS, False),
+    "ap-system": ("name", AP_PERSONAS, False),
+    "ap-port-profiles": ("profile-name", AP_PERSONAS, False),
+    "gw-port-profiles": ("profile-name", GATEWAY_PERSONAS, False),
+    "auth-profiles": ("auth-profile-id", NETWORK_PERSONAS, False),
+}
+
+
+def module_view(payload, identity, object_type="ANY"):
+    """Validate one list envelope; never infer an empty profile set from an error."""
+    if payload == {}:
+        return {"status": "empty_object", "profiles": {}}
+    if not isinstance(payload, dict):
+        return {"status": "schema_unresolved", "profiles": {}}
+    metadata = payload.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return {"status": "schema_unresolved", "profiles": {}}
+    lists = [(k, v) for k, v in payload.items() if k != "metadata" and isinstance(v, list)]
+    if len(lists) != 1 or set(payload) - {"metadata", lists[0][0]}:
+        return {"status": "schema_unresolved", "profiles": {}}
+    envelope, items = lists[0]
+    counts = metadata.get("count_objects_in_module", {})
+    if not isinstance(counts, dict):
+        return {"status": "schema_unresolved", "profiles": {}}
+    expected = counts.get(object_type)
+    for count in (metadata.get("total"), expected):
+        if count is not None and (type(count) is not int or count != len(items)):
+            return {"status": "count_mismatch", "profiles": {}}
+    profiles = {}
+    for item in items:
+        if not isinstance(item, dict):
+            return {"status": "schema_unresolved", "profiles": {}}
+        value = item.get(identity)
+        if type(value) not in (str, int) or not str(value).strip():
+            return {"status": "identity_unresolved", "profiles": {}}
+        if identity == "vlan":
+            ids = parse_reference_ids(value)
+            if not ids:
+                return {"status": "identity_unresolved", "profiles": {}}
+            key = next(iter(ids))
+        else:
+            key = str(value)
+        if key in profiles:
+            return {"status": "identity_unresolved", "profiles": {}}
+        profiles[key] = item
+    return {"status": "list_parsed", "profiles": profiles, "envelope": envelope,
+            "count_confirmed": metadata.get("total") is not None or expected is not None}
+
+
+def read_module_view(client, module, identity, params):
+    try:
+        raw = client.get(ALPHA + "/" + module, **params)
+    except APIError as exc:
+        if exc.status not in (400, 403, 404, 405, 406, 412, 422):
+            raise
+        return {"status": "permission_denied" if exc.status == 403 else "request_rejected",
+                "http_error": exc.status, "profiles": {}}
+    return {**module_view(raw, identity, params.get("object-type", "ANY")), "raw": raw}
+
+
+def profile_body(profile):
+    return {k: v for k, v in profile.items() if k != "@"}
+
+
+def review_module_scope(local, effective, baseline, device_only=False, is_global=False):
+    """Compare committed profiles and annotated effective profiles without inferring inheritance."""
+    local_status = local["status"]
+    if local_status == "empty_object" and effective["status"] == "list_parsed":
+        validation = check_empty_local(list(effective["profiles"].values()))
+        if validation in ("consistent_with_effective_annotations", "no_effective_profiles"):
+            local_status = "empty_correlated"
+        else:
+            local_status = "empty_" + validation
+    qualified = local_status in ("list_parsed", "empty_correlated") and effective["status"] == "list_parsed"
+    result = {"local_status": local_status, "effective_status": effective["status"],
+              "qualified": qualified, "profiles": [], "safe_to_apply": False}
+    if not qualified:
+        return result
+    for key in sorted(local["profiles"].keys() | effective["profiles"].keys()):
+        committed = local["profiles"].get(key)
+        observed = effective["profiles"].get(key)
+        annotation = observed.get("@", {}) if observed is not None else {}
+        if not isinstance(annotation, dict):
+            annotation = {}
+        reference = baseline.get(key) if baseline is not None and not device_only and not is_global else None
+        body = profile_body(committed) if committed is not None else None
+        actual = profile_body(observed) if observed is not None else None
+        base = profile_body(reference) if reference is not None else None
+        differences = field_differences(body, base) if body is not None and base is not None else None
+        if annotation.get("aruba-annotation:is_default") is True:
+            status = "default_profile"
+        elif committed is not None:
+            if actual is None or canonical(body) != canonical(actual):
+                status = "local_effective_mismatch"
+            elif annotation.get("aruba-annotation:inherited") is True or annotation.get("aruba-annotation:object_type") == "SHARED":
+                status = "source_conflict"
+            elif device_only:
+                status = "device_local_profile"
+            elif is_global:
+                status = "global_local_profile"
+            elif reference is not None:
+                status = "local_matches_global" if not differences else "local_differs_from_global"
+            elif baseline is None:
+                status = "global_reference_unverified"
+            else:
+                status = "local_without_global_match"
+        elif annotation.get("aruba-annotation:inherited") is True:
+            status = "inherited"
+        elif annotation.get("aruba-annotation:object_type") == "SHARED":
+            status = "shared"
+        elif annotation.get("aruba-annotation:inherited") is False and annotation.get("aruba-annotation:object_type") == "LOCAL":
+            status = "source_conflict"
+        else:
+            status = "effective_source_unverified"
+        result["profiles"].append({"identity": key, "status": status, "local": body,
+                                   "effective": actual, "global_reference": base,
+                                   "global_differences": differences, "annotations": annotation})
+    return result
+
+
+def configuration_audit(client, selected_persona=None):
+    """Inventory-driven broader read-only audit; raw data and values stay local."""
+    devices = inventory(client)
+    records = inventory_capabilities(devices)
+    personas = sorted({r["identity"]["persona"] for r in records})
+    if selected_persona:
+        if selected_persona not in personas:
+            raise ValueError("Selected persona is not in inventory")
+        personas = [selected_persona]
+    results = {}
+    unqualified = []
+    for persona in personas:
+        modules = {m: spec for m, spec in CONFIG_MODULES.items() if persona in spec[1]}
+        if not modules:
+            unqualified.append(persona)
+            continue
+        scopes, _ = discover_scopes(client, persona, devices)
+        module_results = {}
+        print(f"Configuration audit: {persona}; scopes={len(scopes)}; modules={len(modules)}", flush=True)
+        for module, (identity, _, device_only) in modules.items():
+            scope_results = []
+            baseline = None
+            totals = Counter()
+            applicable = [s for s in scopes if not device_only or s["kind"] == "device"]
+            for scope in applicable:
+                params = {"view-type": "LOCAL", "scope-id": scope["id"], "device-function": persona}
+                local = read_module_view(client, module, identity, {**params, "object-type": "LOCAL",
+                                                                    "effective": "false", "detailed": "false"})
+                effective = read_module_view(client, module, identity, {**params, "effective": "true", "detailed": "true"})
+                if scope["kind"] == "global" and effective["status"] == "list_parsed":
+                    baseline = effective["profiles"]
+                review = review_module_scope(local, effective, baseline, device_only, scope["kind"] == "global")
+                totals["qualified_scopes" if review["qualified"] else "unqualified_scopes"] += 1
+                totals.update(row["status"] for row in review["profiles"])
+                scope_results.append({"scope": scope["id"], "scope_kind": scope["kind"],
+                                      "local_view": local, "effective_view": effective, "review": review})
+            module_results[module] = {"scope_results": scope_results, "summary": dict(totals),
+                                      "device_scope_only": device_only}
+            print(f"  {module}: qualified={totals['qualified_scopes']}/{len(applicable)}; "
+                  f"local differing from Global={totals['local_differs_from_global']}; "
+                  f"local matching Global={totals['local_matches_global']}; "
+                  f"other local={sum(totals[k] for k in ('device_local_profile', 'global_local_profile', 'local_without_global_match', 'global_reference_unverified', 'local_effective_mismatch'))}; "
+                  f"source conflicts={totals['source_conflict']}", flush=True)
+            errors = Counter((v["status"], v.get("http_error")) for s in scope_results
+                             for v in (s["local_view"], s["effective_view"])
+                             if v["status"] not in ("list_parsed", "empty_object"))
+            for (status, http), count in sorted(errors.items(), key=str):
+                print(f"    {status}{' HTTP ' + str(http) if http else ''}: {count}", flush=True)
+        results[persona] = {"scopes": scopes, "modules": module_results}
+    print(f"Configuration audit coverage: personas reviewed={len(results)}; "
+          f"personas without adapter={len(unqualified)}; migration authorized=no")
+    return {"schema": 1, "kind": "configuration_audit", "region": client.base,
+            "captured_at": datetime.now(timezone.utc).isoformat(), "inventory": records,
+            "results": results, "unqualified_personas": unqualified,
+            "catalog_exhaustive": False, "safe_to_apply": False}
+
+
 def audit_snapshots(bundle):
     if bundle.get("schema") != 1 or bundle.get("kind") != "tenant_audit":
         raise ValueError("Expected a tenant audit bundle")
@@ -1355,6 +1554,10 @@ def main():
     audit_cmd = commands.add_parser("audit", help="Discover, scan, probe dependencies and review all supported switch personas")
     audit_cmd.add_argument("--output", required=True, type=Path)
     audit_cmd.add_argument("--region-file", type=Path)
+    config = commands.add_parser("config-audit", help="Audit documented configuration modules for discovered device personas")
+    config.add_argument("--output", required=True, type=Path)
+    config.add_argument("--region-file", type=Path)
+    config.add_argument("--persona", choices=sorted(NETWORK_PERSONAS), help="Optional limit to one discovered persona")
     inv = commands.add_parser("inventory", help="Discover every device and its known compatibility")
     inv.add_argument("--output", required=True, type=Path)
     inv.add_argument("--region-file", type=Path)
@@ -1375,7 +1578,7 @@ def main():
     try:
         if args.output.exists():
             raise ValueError("Output already exists")
-        if args.command in ("scan", "scan-all", "audit", "inventory", "dependencies"):
+        if args.command in ("scan", "scan-all", "audit", "config-audit", "inventory", "dependencies"):
             source = json.loads(args.snapshot.read_text(encoding="utf-8")) if args.command == "dependencies" else None
             if args.command == "dependencies" and source is not None and source.get("kind") == "multi_persona_scan":
                 source = select_snapshot(source, args.persona)
@@ -1397,6 +1600,8 @@ def main():
                 data = scan_all(client)
             elif args.command == "audit":
                 data = audit(client)
+            elif args.command == "config-audit":
+                data = configuration_audit(client, args.persona)
             elif args.command == "inventory":
                 records = inventory_capabilities(inventory(client))
                 data = {"region": region, "devices": records}

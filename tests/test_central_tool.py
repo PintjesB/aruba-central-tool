@@ -471,6 +471,59 @@ class Tests(unittest.TestCase):
         self.assertEqual(result["observed_fields"]["taggedPorts"], "unchanged")
         self.assertFalse(result["behavior_preserved_verified"])
 
+    def test_generic_module_preserves_exact_differences_and_sources(self):
+        from central_tool import module_view, review_module_scope
+        base = {"name": "profile", "enabled": True, "description": "base"}
+        local = module_view({"profiles": [{"name": "profile", "enabled": False}]}, "name", "LOCAL")
+        effective = module_view({"profiles": [
+            {"name": "profile", "enabled": False, "@": {"aruba-annotation:object_type": "LOCAL",
+                                                        "aruba-annotation:inherited": False}},
+            {"name": "other", "@": {"aruba-annotation:inherited": True}}]}, "name")
+        review = review_module_scope(local, effective, {"profile": base})
+        self.assertTrue(review["qualified"])
+        rows = {r["identity"]: r for r in review["profiles"]}
+        self.assertEqual(rows["profile"]["status"], "local_differs_from_global")
+        self.assertEqual({d["kind"] for d in rows["profile"]["global_differences"]},
+                         {"missing_local", "value_difference"})
+        self.assertEqual(rows["other"]["status"], "inherited")
+        self.assertFalse(review["safe_to_apply"])
+        self.assertEqual(review_module_scope(local, effective, {"profile": base}, True)
+                         ["profiles"][1]["status"], "device_local_profile")
+
+    def test_generic_module_rejects_partial_unknown_and_duplicate_shapes(self):
+        from central_tool import module_view, review_module_scope
+        self.assertEqual(module_view({"profiles": [{"name": "a"}], "metadata": {"total": 2}}, "name")
+                         ["status"], "count_mismatch")
+        self.assertEqual(module_view({"profiles": [{"name": "a"}, {"name": "a"}]}, "name")
+                         ["status"], "identity_unresolved")
+        self.assertEqual(module_view({"unexpected": {"name": "a"}}, "name")["status"], "schema_unresolved")
+        local = module_view({}, "name")
+        effective = module_view({"profiles": [{"name": "a", "@": {"aruba-annotation:object_type": "LOCAL",
+                                                                  "aruba-annotation:inherited": False}}]}, "name")
+        self.assertFalse(review_module_scope(local, effective, {})["qualified"])
+        effective = module_view({"profiles": [{"name": "a", "@": {"aruba-annotation:inherited": True}}]}, "name")
+        self.assertTrue(review_module_scope(local, effective, {})["qualified"])
+        self.assertFalse(review_module_scope(local, module_view({}, "name"), {})["qualified"])
+
+    def test_configuration_audit_uses_persona_catalog(self):
+        from central_tool import configuration_audit
+        from unittest.mock import patch
+        class Client:
+            base = "test"
+            def get(self, path, **params):
+                return {"profiles": []}
+        devices = [{"deviceFunction": "Campus AP"}, {"deviceFunction": "Access Switch"},
+                   {"deviceFunction": "Hybrid NAC"}]
+        with patch("central_tool.inventory", return_value=devices), patch("central_tool.discover_scopes",
+             return_value=([scope("1", "global", []), scope("2", "device", [])], [])):
+            data = configuration_audit(Client())
+        self.assertIn("wlan-ssids", data["results"]["CAMPUS_AP"]["modules"])
+        self.assertNotIn("wlan-ssids", data["results"]["ACCESS_SWITCH"]["modules"])
+        self.assertIn("switch-system", data["results"]["ACCESS_SWITCH"]["modules"])
+        self.assertEqual(len(data["results"]["ACCESS_SWITCH"]["modules"]["ethernet-interfaces"]["scope_results"]), 1)
+        self.assertEqual(data["unqualified_personas"], ["HYBRID_NAC"])
+        self.assertFalse(data["safe_to_apply"])
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
