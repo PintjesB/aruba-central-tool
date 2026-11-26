@@ -550,7 +550,7 @@ def handler_for(workspace):
             # form pages or privacy settings may send an opaque/null Origin;
             # permit that only with same-origin fetch metadata and a CSRF token.
             origin_ok = origin == expected or (origin in (None, "null") and fetch_site == "same-origin")
-            if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials", root + "save-standard", root + "approve-exception")
+            if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials", root + "save-standard", root + "approve-exception", root + "revoke-exception")
                     or not origin_ok or fetch_site not in (None, "same-origin")):
                 self.reply("Forbidden: local session or origin check failed. Reopen the application.", 403)
                 return
@@ -561,15 +561,15 @@ def handler_for(workspace):
                 self.connection.settimeout(10)
                 values = parse_qs(self.rfile.read(length).decode("utf-8"),
                                   keep_blank_values=True, strict_parsing=True,
-                                  max_num_fields=12 if self.path in (root + "save-standard", root + "approve-exception") else 5)
+                                  max_num_fields=12 if self.path in (root + "save-standard", root + "approve-exception", root + "revoke-exception") else 5)
                 if any(len(v) != 1 for v in values.values()):
                     raise ValueError("Invalid form")
                 token = values.pop("csrf", [""])[0]
                 if not secrets.compare_digest(token.encode("utf-8"), workspace.csrf.encode("utf-8")):
                     self.reply("Forbidden: stale or invalid form token. Reopen the application.", 403)
                     return
-                if self.path in (root + "save-standard", root + "approve-exception"):
-                    from local_standards import create_standard, approve_exception
+                if self.path in (root + "save-standard", root + "approve-exception", root + "revoke-exception"):
+                    from local_standards import create_standard, approve_exception, revoke_exception
                     form = {key: value[0] for key, value in values.items()}
                     confirmed = form.pop("confirmed", "") == "yes"
                     if self.path == root + "save-standard":
@@ -577,6 +577,12 @@ def handler_for(workspace):
                             raise ValueError("Invalid standard form")
                         record = create_standard(workspace.directory, **form, confirmed=confirmed)
                         standard_id = record["id"]
+                    elif self.path == root + "revoke-exception":
+                        if set(form) != {"standard_id", "snapshot", "exception_id", "reason"}:
+                            raise ValueError("Invalid revocation form")
+                        read_audit(workspace.directory, form["snapshot"])
+                        revoke_exception(workspace.directory, form["standard_id"], form["exception_id"], form["reason"])
+                        standard_id = form["standard_id"]
                     else:
                         if set(form) != {"standard_id", "snapshot", "candidate", "reason", "expiry"}:
                             raise ValueError("Invalid exception form")
