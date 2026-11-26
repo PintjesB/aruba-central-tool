@@ -1660,6 +1660,11 @@ def main():
     browser = commands.add_parser("review-config", help="Generate an offline configuration browser and anonymous schema diagnostics")
     browser.add_argument("audit", type=Path)
     browser.add_argument("--output", required=True, type=Path, help="Private HTML output")
+    app = commands.add_parser("app", help="Open the local configuration workspace")
+    app.add_argument("--directory", required=True, type=Path, help="Private customer audit directory")
+    app.add_argument("--region-file", type=Path)
+    app.add_argument("--enable-refresh", action="store_true", help="Enable read-only Central refresh using environment credentials")
+    app.add_argument("--no-browser", action="store_true")
     inv = commands.add_parser("inventory", help="Discover every device and its known compatibility")
     inv.add_argument("--output", required=True, type=Path)
     inv.add_argument("--region-file", type=Path)
@@ -1678,6 +1683,20 @@ def main():
     analysis.add_argument("--persona", choices=sorted(PERSONAS), help="Select a persona from a scan-all snapshot")
     args = parser.parse_args()
     try:
+        if args.command == "app":
+            from config_app import serve
+            refresh = None
+            if args.enable_refresh:
+                preferred = os.getenv("CENTRAL_BASE_URL")
+                if not preferred and args.region_file and args.region_file.exists():
+                    preferred = args.region_file.read_text(encoding="utf-8-sig").strip()
+                client = Central(preferred or EU_REGIONS[0], os.getenv("CENTRAL_ACCESS_TOKEN"),
+                                 os.getenv("CENTRAL_CLIENT_ID"), os.getenv("CENTRAL_CLIENT_SECRET"))
+                def refresh():
+                    detect_region(client, preferred)
+                    return configuration_audit(client)
+            serve(args.directory, refresh=refresh, open_browser=not args.no_browser)
+            return 0
         if args.output.exists():
             raise ValueError("Output already exists")
         if args.command == "review-config":
