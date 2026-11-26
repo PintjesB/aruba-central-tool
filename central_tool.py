@@ -278,8 +278,9 @@ def check_empty_local(annotated):
     return "unverified_annotations" if uncertain else "consistent_with_effective_annotations"
 
 
-def scan(client, persona):
-    devices = inventory(client)
+def scan(client, persona, devices=None):
+    if devices is None:
+        devices = inventory(client)
     global_row = client.get(CONFIG + "/global")
     scopes = [{"id": scope_id(global_row), "kind": "global", "name": "Global"}]
     for kind, path, keys in (
@@ -527,9 +528,9 @@ def review_local_profiles(scopes, baseline, library):
 # Version-specific rules are evidence, not blanket support claims.
 # Each entry is restricted to documented model families and release trains.
 MULTICAST_RULES = (
-    {"models": ("4100i", "6000", "6100"), "release": (10, 16),
+    {"models": ("6000", "6100"), "release": (10, 16),
      "igmp": True, "mld": True,
-     "source": "https://arubanetworking.hpe.com/techdocs/AOS-CX/10.16/HTML/multicast_4100i-6000-6100/Content/Chp_mlds/mlds_vlan_cfg_cmds/ipv-mld-sno.htm"},
+     "source": "https://arubanetworking.hpe.com/techdocs/AOS-CX/10.16/PDF/cli_6000-6100.pdf"},
 )
 
 
@@ -538,7 +539,8 @@ def device_identity(item):
         return next((str(item[k]).strip() for k in keys if item.get(k)), "")
     persona = first("deviceFunction", "device-function", "persona").upper().replace(" ", "_")
     persona = {"AGGREGATION_SWITCH": "AGG_SWITCH", "CAMPUS_ACCESS_POINT": "CAMPUS_AP",
-               "MOBILITY_GATEWAY": "MOBILITY_GW", "BRANCH_GATEWAY": "BRANCH_GW"}.get(persona, persona)
+               "MOBILITY_GATEWAY": "MOBILITY_GW", "BRANCH_GATEWAY": "BRANCH_GW",
+               "MICROBRANCH_ACCESS_POINT": "MICROBRANCH_AP", "HYBRID_NETWORK_ACCESS_CONTROL": "HYBRID_NAC"}.get(persona, persona)
     model = first("model", "modelName", "deviceModel")
     firmware = first("firmwareVersion", "softwareVersion", "firmware")
     match = re.fullmatch(r"(?:[A-Z]+\.)?(\d+)\.(\d+)(?:\.\d+)*(?:[-+][A-Za-z0-9.]+)?", firmware, re.IGNORECASE)
@@ -573,9 +575,25 @@ def print_inventory_summary(records):
             (r["identity"]["persona"], r["vlan_scan_supported_persona"]) for r in records).items()):
         # Unknown raw persona values may be customer-defined; do not print them.
         label = persona if persona in PERSONAS | {"CAMPUS_AP", "MICROBRANCH_AP",
-                    "MOBILITY_GW", "BRANCH_GW", "VPN_CONCENTRATOR", "UNKNOWN"} else "OTHER"
+                    "MOBILITY_GW", "BRANCH_GW", "BRIDGE", "HYBRID_NAC", "UNKNOWN"} else "OTHER"
         print(f"  {label}: {count}; VLAN scan adapter={'available' if supported else 'not qualified'}")
     print("Documented multicast defaults:", sum(r["multicast_defaults"]["status"] != "unknown" for r in records))
+
+
+def scan_all(client):
+    """Automatically select all qualified switch personas, preserving separate scope views."""
+    devices = inventory(client)
+    records = inventory_capabilities(devices)
+    print_inventory_summary(records)
+    personas = sorted({r["identity"]["persona"] for r in records if r["vlan_scan_supported_persona"]})
+    if not personas:
+        raise ValueError("No qualified switch persona discovered")
+    snapshots = {}
+    for persona in personas:
+        print(f"Scanning persona: {persona}", flush=True)
+        snapshots[persona] = scan(client, persona, devices)
+    return {"schema": 1, "kind": "multi_persona_scan", "region": client.base,
+            "inventory": records, "snapshots": snapshots}
 
 
 DEPENDENCY_MODULES = ("vlan-interfaces", "mgmd-global", "ethernet-interfaces", "sw-port-profiles")
@@ -897,6 +915,19 @@ def write_private(path, data):
         file.write(payload)
 
 
+def select_snapshot(data, persona=None):
+    if data.get("kind") != "multi_persona_scan":
+        if persona and data.get("persona") != persona:
+            raise ValueError("Snapshot persona mismatch")
+        return data
+    snapshots = data["snapshots"]
+    if not persona and len(snapshots) == 1:
+        return next(iter(snapshots.values()))
+    if not persona or persona not in snapshots:
+        raise ValueError("Specify a discovered persona with --persona")
+    return snapshots[persona]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -904,22 +935,29 @@ def main():
     discovery.add_argument("--persona", choices=sorted(PERSONAS), default="ACCESS_SWITCH")
     discovery.add_argument("--output", required=True, type=Path)
     discovery.add_argument("--region-file", type=Path, help="Optional local file for cached API region")
+    all_scan = commands.add_parser("scan-all", help="Automatically scan all discovered switch personas")
+    all_scan.add_argument("--output", required=True, type=Path)
+    all_scan.add_argument("--region-file", type=Path)
     inv = commands.add_parser("inventory", help="Discover every device and its known compatibility")
     inv.add_argument("--output", required=True, type=Path)
     inv.add_argument("--region-file", type=Path)
     dep = commands.add_parser("dependencies", help="Probe dependency modules from a saved VLAN snapshot")
     dep.add_argument("snapshot", type=Path)
     dep.add_argument("--output", required=True, type=Path)
+    dep.add_argument("--persona", choices=sorted(PERSONAS), help="Select a persona from a scan-all snapshot")
     analysis = commands.add_parser("report")
     analysis.add_argument("snapshot", type=Path)
     analysis.add_argument("--output", required=True, type=Path)
     analysis.add_argument("--dependencies", type=Path, help="Existing read-only dependency snapshot")
+    analysis.add_argument("--persona", choices=sorted(PERSONAS), help="Select a persona from a scan-all snapshot")
     args = parser.parse_args()
     try:
         if args.output.exists():
             raise ValueError("Output already exists")
-        if args.command in ("scan", "inventory", "dependencies"):
+        if args.command in ("scan", "scan-all", "inventory", "dependencies"):
             source = json.loads(args.snapshot.read_text(encoding="utf-8")) if args.command == "dependencies" else None
+            if source is not None and source.get("kind") == "multi_persona_scan":
+                source = select_snapshot(source, args.persona)
             region_file = getattr(args, "region_file", None)
             preferred = source["region"] if source else os.getenv("CENTRAL_BASE_URL")
             if not preferred and region_file and region_file.exists():
@@ -934,6 +972,8 @@ def main():
             print(f"API region: {region}", flush=True)
             if args.command == "scan":
                 data = scan(client, args.persona)
+            elif args.command == "scan-all":
+                data = scan_all(client)
             elif args.command == "inventory":
                 records = inventory_capabilities(inventory(client))
                 data = {"region": region, "devices": records}
@@ -941,7 +981,7 @@ def main():
             else:
                 data = discover_dependencies(client, source)
         else:
-            snapshot = json.loads(args.snapshot.read_text(encoding="utf-8"))
+            snapshot = select_snapshot(json.loads(args.snapshot.read_text(encoding="utf-8")), args.persona)
             data = report(snapshot)
             if args.dependencies:
                 dependencies = json.loads(args.dependencies.read_text(encoding="utf-8"))
