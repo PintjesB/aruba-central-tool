@@ -451,6 +451,32 @@ def usage_detail(usage):
             + '<p class="note">These are separate observations, not traffic usage. Zero observed references does not prove a profile is unused. Reference coverage is incomplete.</p>')
 
 
+def port_group_label(settings):
+    """Describe only captured portable configuration, without guessing port role."""
+    switchport = settings.get("switchport", {})
+    if not isinstance(switchport, dict):
+        return "Shared port settings"
+    parts = []
+    for key, label in (("mode", "Mode"), ("access-vlan", "Access VLAN"),
+                       ("native-vlan", "Native VLAN"), ("trunk-allowed-vlans", "Allowed VLANs"),
+                       ("allowed-vlans", "Allowed VLANs"), ("vlan-mode", "VLAN mode")):
+        value = switchport.get(key)
+        if type(value) in (str, int) and str(value):
+            parts.append(f"{label} {value}")
+        elif isinstance(value, list) and value and all(type(item) in (str, int) for item in value):
+            parts.append(f"{label} " + ", ".join(map(str, value[:4])) + (f" +{len(value)-4}" if len(value) > 4 else ""))
+    return " · ".join(parts) or "Shared switchport settings"
+
+
+def port_dependency_rows(record):
+    """Deduplicate actual port dependency observations, keeping unresolved paths."""
+    unique = {}
+    for r in record.get("dependencies", []):
+        key = (r["scope"], r["source"], r["target_module"], r["target"], tuple(r["path"]) if r["target"] is None else ())
+        unique.setdefault(key, r)
+    return list(unique.values())
+
+
 def engineering_view(workspace, query):
     from advanced_review import advanced_analysis, library_usage, preferred_duplicate
     from central_tool import field_differences
@@ -464,27 +490,60 @@ def engineering_view(workspace, query):
         panels.append((key, label, count, f'<section data-panel="{key}" data-group="engineering"><p class="filter-hint">{e(hint)}</p>'
                        + table(headers, rows, search=True) + '</section>'))
     rows = []
-    for i, record in enumerate(data["port_groups"], 1):
+    for record in sorted(data["port_groups"], key=lambda r: (-len(r["ports"]), r["persona"])):
         ports = record["ports"]
         matches = record.get("matching_library_profiles", [])
         devices = sorted({p["device"] for p in ports})
         settings = record["portable_settings"]
+        label = port_group_label(settings)
+        dependencies = port_dependency_rows(record)
+        unresolved = sum(r["status"] != "observed" for r in dependencies)
         match_usage = library_usage(bundle, "sw-port-profiles", [m["identity"] for m in matches], data["references"])
         preferred = preferred_duplicate(match_usage) if len(match_usage) > 1 else next(iter(match_usage), None)
-        summary = property_table(settings)
-        mapping = table(("Device", "Port", "Description"), [tr(e(p["device"]), e(p["port"]), e(p.get("description") or "")) for p in ports])
-        visibility = [tr(e(m["identity"]), e(v["device"]), status(v["status"])) for m in matches for v in m["visibility"]]
-        details = ('<h3>Shared settings</h3>' + summary + '<h3>Ports to review</h3>' + mapping
-                   + ('<h3>Matching Library profiles</h3>' + table(("Profile", "Device", "Visibility"), visibility) if visibility else '<h3>Placement</h3><p>Review creation of a reusable switch port profile.</p>')
-                   + ('<h3>Existing profile usage</h3>' + table(("Profile", "Assignments", "Shared devices", "Referencing objects", "Unknown device reads"), [tr(e(identity), *usage_cells(u)) for identity, u in match_usage.items()]) if match_usage else "")
-                   + '<h3>Recommended next step</h3><p>' + e("Review existing profile " + preferred if preferred else "Compare matching profiles and select a canonical name" if matches else "Review creating a reusable port profile") + '. Preserve each port mapping and description.</p>'
-                   + '<h3>Validation required</h3>' + list_items(record.get("blockers", [])) + raw(record))
-        rows.append(tr(f'<strong>Port group {i}</strong><small>{e(persona_label(record["persona"]))}</small>',
-                       str(len(ports)), str(len(devices)), e(preferred or ", ".join(m["identity"] for m in matches) or "New profile candidate") + (f'<small>{len(matches)} matching profiles</small>' if len(matches) > 1 else ""),
-                       badge("Unsupported fields" if record["unsupported_fields"] else "Review port mapping", "warn" if record["unsupported_fields"] else "info"),
-                       inspect(f"Port group {i}", details)))
-    panel("ports", "Port consolidation", "Repeated settings grouped by exact body. Physical mapping and descriptions are preserved.",
-          ("Group", "Ports", "Devices", "Existing Library profile", "Next step", ""), rows, len(rows))
+        library_available = record["library_status"] == "list_parsed"
+        target = preferred or ("Choose matching profile" if matches else "New profile candidate" if library_available else "Library unavailable")
+        visibility = []
+        for match in matches:
+            counts = Counter(v["status"] for v in match["visibility"])
+            visibility.append(tr(e(match["identity"]), *usage_cells(match_usage[match["identity"]]),
+                                 e(f'{counts["matching"]}/{len(devices)} matching; {counts["unknown"]} unknown')))
+        device_summary = Counter(p["device"] for p in ports)
+        mapping = table(("Device", "Port", "Description", "Proposed profile"), [
+            tr(e(p["device"]), e(p["port"]), e(p.get("description") or "—"),
+               '<span data-port-target>' + e(preferred or "Not selected") + '</span>') for p in ports], search=len(ports) > 30)
+        chooser = ""
+        if matches:
+            chooser = ('<label>Profile to review<select data-port-profile aria-label="Profile to review">'
+                       + '<option value="">Choose matching profile</option>' + "".join(
+                           f'<option value="{e(m["identity"])}"{" selected" if m["identity"] == preferred else ""}>{e(m["identity"])}</option>'
+                           for m in matches) + '</select></label>')
+        action = ("Review unsupported settings first" if record["unsupported_fields"] else
+                  "Resolve dependency evidence" if unresolved else
+                  "Review existing profile assignment" if matches else
+                  "Review a new reusable profile" if library_available else "Retrieve Library definitions first")
+        details = ('<div class="review-decision"><div><strong>' + e(action) + '</strong><p>Preserve every port identity and description. This is a review preview, not an executable change.</p></div></div>'
+                   + '<div class="comparison-summary">' + badge(f"{len(ports)} ports", "info") + badge(f"{len(devices)} devices", "neutral")
+                   + (badge(f"{unresolved} unresolved dependencies", "warn") if unresolved else badge(f"{len(dependencies)} observed dependencies", "neutral")) + '</div>'
+                   + '<h3>Shared configuration</h3>' + property_table(settings)
+                   + ('<h3>Matching Library profiles</h3>' + table(("Profile", "Assignments", "Shared devices", "References", "Unknown reads", "Visibility on affected devices"), visibility) if matches else
+                      '<p class="note">' + e("No exact Library match in captured profiles." if library_available else "Library coverage unavailable; an existing profile may be present.") + '</p>')
+                   + '<div data-port-review><h3>Proposed port mapping</h3>' + chooser + mapping + '</div>'
+                   + ('<h3>Unsupported fields</h3>' + list_items(record["unsupported_fields"]) if record["unsupported_fields"] else "")
+                   + ('<details' + (' open' if unresolved else '') + '><summary>Port dependencies</summary>' +
+                      table(("Device", "Port", "Target", "Evidence"), [tr(e(r["device"]), e(r["source"]),
+                          e(module_label(r["target_module"]) + " / " + str(r["target"] if r["target"] is not None else "Unresolved")), status(r["status"]))
+                          for r in sorted(dependencies, key=lambda r: r["status"] == "observed")], search=len(dependencies) > 30) + '</details>' if dependencies else '<p class="note">No dependencies observed; reference coverage is incomplete.</p>')
+                   + '<details><summary>Validation required</summary>' + list_items(record.get("blockers", [])) + '</details>' + raw(record))
+        device_names = ", ".join(f"{dev} ({device_summary[dev]})" for dev in devices[:2])
+        if len(devices) > 2:
+            device_names += f" +{len(devices)-2} more"
+        rows.append(tr(f'<strong>{e(label)}</strong><small>{e(persona_label(record["persona"]))}</small>',
+                       f'<strong>{len(ports)} ports</strong><small>{e(device_names)}</small>',
+                       f'<strong>{e(target)}</strong>' + (f'<small>{len(matches)} matching Library profiles</small>' if matches else ""),
+                       badge(action, "warn" if record["unsupported_fields"] or unresolved or not library_available else "info"),
+                       inspect(label, details, "Review mapping")))
+    panel("ports", "Port consolidation", "Review shared settings, choose a reusable profile and verify port mappings and dependencies.",
+          ("Shared configuration", "Affected ports", "Proposed target", "Next step", ""), rows, len(rows))
     rows = []
     # Group the same winning/higher scope and bodies across devices instead of repeating rows.
     grouped = {}
@@ -531,9 +590,9 @@ def engineering_view(workspace, query):
                 tr(f'<strong>{e(identity)}</strong>' + (' <span class="retain-mark">Keep</span>' if identity == keep else ""),
                    *usage_cells(u)) for identity, u in usage.items()) + '</tbody></table>')
         rows.append(tr(e(module_label(r["module"])), group_usage,
-                       e(keep or "Choose profile"), inspect(", ".join(r["identities"]), detail, "Review group")))
-    panel("duplicates", "Duplicate Library profiles", "Each row is a duplicate group. Compare observed usage for each name before choosing which profile to retain.",
-          ("Module", "Profiles and observed usage", "Suggested keep", ""), rows, len(rows))
+                       inspect(", ".join(r["identities"]), detail, "Plan consolidation")))
+    panel("duplicates", "Duplicate Library profiles", "Compare observed usage for each name before choosing which profile to retain. Suggested names are based on observed migration effort, not safe deletion.",
+          ("Module", "Profiles and observed usage", ""), rows, len(rows))
     for key, label, records in (("references", "Reference review", [r for r in data["references"] if r["status"] != "observed"]),
                                 ("resolved", "Observed references", [r for r in data["references"] if r["status"] == "observed"])):
         rows = [tr(e(r["device"]), f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
@@ -541,9 +600,14 @@ def engineering_view(workspace, query):
                    status(r["status"]), e("Keep reference; verify before profile removal" if r["status"] == "observed" else "Verify target profile and scope" if r["status"] == "not_observed" else "Collect or interpret missing reference evidence"), inspect("Reference evidence", property_table(r))) for r in records]
         panel(key, label, "Observed references are not a complete dependency graph. Not observed does not prove a broken dependency.",
               ("Device", "Source", "Target", "State", "Suggested next step", ""), rows, len(rows))
-    tabs = '<div class="tabs" data-tabs="engineering">' + "".join(f'<button type="button" data-tab="{k}" aria-selected="false">{e(label)} <span>{n}</span></button>' for k, label, n, _ in panels) + '</div>'
+    selected = query.get("workflow", "")
+    if selected not in {p[0] for p in panels}:
+        selected = next((key for key in ("duplicates", "ports", "shadow", "references") if any(p[0] == key and p[2] for p in panels)), "ports")
+    tabs = '<nav class="workflow-tabs" aria-label="Engineering workflows">' + "".join(
+        f'<a href="{url(root, "advanced", snapshot=name, workflow=k)}"{" aria-current=true" if k == selected else ""}>{e(label)} <span>{n}</span></a>'
+        for k, label, n, _ in panels) + '</nav>'
     return page("Engineering review", intro("Engineering review", "Review reusable ports, scope precedence, Library duplication and references.", picker)
-                + tabs + "".join(p[3] for p in panels) + '<script>' + DUPLICATE_JS + '</script>', workspace.nav(name))
+                + tabs + next(p[3] for p in panels if p[0] == selected) + '<script>' + DUPLICATE_JS + '</script>', workspace.nav(name))
 
 
 
@@ -569,6 +633,10 @@ function update(panel){
 }
 document.addEventListener('change',event=>{
  if(event.target.matches('[data-keep]'))update(event.target.closest('[data-duplicate-preview]'));
+ if(event.target.matches('[data-port-profile]')){
+  const review=event.target.closest('[data-port-review]');
+  for(const target of review.querySelectorAll('[data-port-target]'))target.textContent=event.target.value||'Not selected';
+ }
 });
 document.addEventListener('click',event=>{
  if(event.target.closest('[data-inspect]'))requestAnimationFrame(()=>{
