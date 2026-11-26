@@ -310,11 +310,11 @@ if(panel.dataset.state==='running')poll();
             coverage = module_coverage(bundle)
             devices = {s["id"] for entry in bundle["results"].values() for s in entry["scopes"] if s["kind"] == "device"}
             qualified = sum(r["status"] == "qualified" for r in coverage)
-            partial = sum(r["status"] == "partial" for r in coverage)
             library = (bundle.get("library") or {}).get("modules", {})
             observed = sum(len(v["profiles"]) for v in library.values() if v["status"] == "list_parsed")
+            scopes = {s["id"] for entry in bundle["results"].values() for s in entry["scopes"] if s["kind"] != "device"}
             summary = metrics([("Devices", len(devices), "Captured inventory"),
-                               ("Qualified module views", qualified, f"{partial} partially qualified"),
+                               ("Configuration scopes", len(scopes), "Non-device scopes"),
                                ("Library profiles", observed, "Observed definitions")])
             from consolidation import profile_recommendations
             from collections import Counter
