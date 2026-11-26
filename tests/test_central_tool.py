@@ -661,6 +661,26 @@ class Tests(unittest.TestCase):
         self.assertEqual(result["modules"]["auth-profiles"]["status"], "list_parsed")
         self.assertFalse(result["assignment_coverage_verified"])
 
+    def test_scoped_assignment_reads_recover_and_cross_check(self):
+        from central_tool import collect_scoped_assignments, discover_profile_types
+        def row(sid, name, module="snmp"):
+            return {"scope-id": sid, "device-function": "ACCESS_SWITCH",
+                    "profile-instance": name, "profile-type": module}
+        original = row("1", "one")
+        extra = row("2", "two", "new-module")
+        fake = Fake([{"config-assignment": []},
+                     {"config-assignment": [extra, extra]},
+                     {"config-assignment": [row("4", "wrong-scope")]}])
+        result = collect_scoped_assignments(fake, {"status": "response_received", "rows": [original]},
+                    {"ACCESS_SWITCH": [{"id": "1"}, {"id": "2"}, {"id": "3"}]})
+        self.assertEqual(result["rows"], [original, extra])
+        self.assertEqual(result["additional_assignments"], 1)
+        self.assertEqual(result["scope_read_outcomes"], {"tenant_scope_disagreement": 1,
+                         "response_received": 1, "selector_mismatch": 1})
+        self.assertFalse(result["coverage_verified"])
+        self.assertIn("new-module", discover_profile_types(result, {})["modules"])
+        self.assertEqual(fake.calls[1][1], {"scope-id": "2", "device-function": "ACCESS_SWITCH"})
+
     def test_profile_type_discovery_keeps_unknown_and_scope_map_evidence(self):
         from central_tool import discover_profile_types
         assignments = {"rows": [{"profile-type": "layer2-vlan", "device-function": "ACCESS_SWITCH"},
