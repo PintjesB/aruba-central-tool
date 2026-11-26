@@ -519,6 +519,14 @@ html:has(.inspector[open]),html:has(.command-palette[open]),html.inspector-open 
 .comparison-table td small { font-size: 11px; line-height: 1.3; } .comparison-table td .tag { white-space: normal; }
 .comparison-table tbody tr[data-comparison=different] { background: var(--warn-bg); }
 .inspector li { margin-bottom: 5px; }
+.workflow-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.workflow-tabs a { display: inline-flex; align-items: center; gap: 8px; padding: 10px 13px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12px; font-weight: 600; }
+.workflow-tabs a span { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 11px; }
+.workflow-tabs a[aria-current=true] { color: var(--accent); border-color: var(--accent); background: var(--soft); }
+.workflow-tabs a:hover { text-decoration: none; border-color: var(--accent); }
+[data-port-review] label { max-width: 400px; margin-bottom: 12px; }
+[data-port-target] { color: var(--accent); font-weight: 600; }
 .tabs { display: flex; gap: 5px; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
 .tabs button { border: 0; border-radius: 0; border-bottom: 2px solid transparent; background: transparent; font-size: 13px; padding: 10px 13px; color: var(--muted); }
 .tabs button[aria-selected=true] { border-bottom-color: var(--accent); color: var(--accent); font-weight: 650; }
