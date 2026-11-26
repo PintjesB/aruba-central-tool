@@ -129,11 +129,14 @@ def detect_region(client, preferred=None):
     return client.base
 
 
-def offset_rows(client, path, keys, **params):
+def offset_rows(client, path, keys, *, page_size=100, **params):
     result, seen = [], set()
     offset = 0
     for _ in range(10000):
-        payload = client.get(path, **params, limit=100, offset=offset)
+        try:
+            payload = client.get(path, **params, limit=page_size, offset=offset)
+        except APIError as exc:
+            raise APIError(f"{path} (limit={page_size}, offset={offset})", exc.status) from None
         batch = rows(payload, keys)
         if not batch:
             return result
@@ -167,7 +170,13 @@ def inventory(client):
 
 
 def vlan_rows(client, **params):
-    return offset_rows(client, VLAN, ("l2-vlan",), **params)
+    # Live EU-2 rejects limit=100, but accepts limit=10 with an explicit offset.
+    # Preserve paging instead of assuming an unpaginated response is complete.
+    try:
+        return offset_rows(client, VLAN, ("l2-vlan",), page_size=10, **params)
+    except APIError as exc:
+        safe = {k: v for k, v in params.items() if k != "scope-id"}
+        raise RuntimeError(f"{exc}; VLAN query: {canonical(safe)}") from None
 
 
 def scan(client, persona):
@@ -194,9 +203,12 @@ def scan(client, persona):
         raise ValueError("Duplicate scope IDs; stack or hierarchy semantics require validation")
     if not any(s["kind"] == "device" for s in scopes):
         raise ValueError("No devices matched the selected persona; check inventory and configuration authority")
+    print(f"Discovered {len(scopes)} scopes; reading VLAN Library", flush=True)
     library = vlan_rows(client, **{"view-type": "LIBRARY", "detailed": "false"})
+    print(f"Library VLAN profiles: {len(library)}; reading shared assignments", flush=True)
     assignments = client.get(ALPHA + "/config-assignments")
-    for scope in scopes:
+    for index, scope in enumerate(scopes, 1):
+        print(f"Reading VLAN scope {index}/{len(scopes)} ({scope['kind']})", flush=True)
         params = {"view-type": "LOCAL", "scope-id": scope["id"], "device-function": persona}
         scope["local"] = vlan_rows(client, **params, **{"object-type": "LOCAL", "effective": "false", "detailed": "false"})
         scope["effective"] = vlan_rows(client, **params, effective="true", detailed="false")
