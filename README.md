@@ -58,6 +58,12 @@ Run `python central_tool.py config-audit --region-file region.txt --output confi
 
 Run `python central_tool.py review-config config-audit.json --output review.html` and open the generated HTML locally. The dashboard includes coverage and finding counters, color-coded status, quick views, device function/module/scope/status filters, searchable and sortable paginated findings, side-by-side field differences, raw evidence and filtered CSV export. The offline review reparses saved raw responses using current adapters; explicitly zero metadata-only local responses can be qualified without new API requests. Ambiguous nonempty responses remain unresolved. Unqualified scopes are displayed explicitly, and the terminal reports anonymous response shapes for further adapter qualification. No API calls, credentials, server or external assets are needed. Both the input and HTML report contain confidential configuration evidence; keep them outside the repository and do not publish or upload them.
 
+### Local configuration workspace
+
+Run `python central_tool.py app --directory <private-audit-directory>` to open a loopback-only browser application. It lists saved configuration audit snapshots, opens the existing explorer, and compares two devices of the same persona within one snapshot. Device comparisons exclude infrastructure by default; explicitly select a module to include it. Exact differences do not prove behavioral equivalence.
+
+Use a separate directory per customer. The application does not independently verify tenant identity. To enable read-only refresh, supply environment credentials as for config-audit and add `--enable-refresh --region-file <region-file>`. Refresh creates a new private audit file; only one refresh can run at a time. The server binds to 127.0.0.1 on a random port, uses a random session URL, validates Host and refresh Origin, disables caching and framing, and does not log request URLs. Keep the local session URL private. Press Ctrl+C to stop. No dependencies or database are required.
+
 ## Safety boundary
 
 No configuration mutation API calls exist yet. Only OAuth token issuance uses POST. Candidate findings are not executable plans. The API is v1alpha1 and real tenant response shapes, group access, annotation semantics, and Classic/New configuration authority must be validated before enabling writes. Scope IDs are strings, not floating-point numbers.
