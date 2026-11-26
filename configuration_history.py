@@ -127,7 +127,7 @@ def configuration_drift(before, after, *, confirmed=False):
             "counts": dict(Counter(r["status"] for r in records)), "complete": False, "safe_to_apply": False}
 
 
-def reference_compliance(bundle, persona, module, reference, target_scope, *, baseline=None, confirmed=False):
+def reference_compliance(bundle, persona, module, reference, target_scope, *, baseline=None, confirmed=False, selected_modules=None, include_reference=False):
     """Compare a selected standard against explicitly selected device recipients.
 
     This is an exact observed-body check, not a claim of operational compliance.
@@ -147,13 +147,17 @@ def reference_compliance(bundle, persona, module, reference, target_scope, *, ba
             or (module != "all" and module not in available)):
         raise ValueError("Invalid reference, module or target scope")
     modules = sorted(available) if module == "all" else [module]
+    if selected_modules is not None:
+        if not selected_modules or not set(selected_modules) <= STANDARD_MODULES:
+            raise ValueError("Invalid frozen module set")
+        modules = sorted(set(selected_modules))
     if not modules:
         raise ValueError("No supported standards modules available")
     members = scope_memberships(entry["scopes"])
     kind = scopes[target_scope]["kind"]
     targets = {target_scope} if kind == "device" else {sid for sid, m in members.items() if m.get(kind) == target_scope}
     unknown = set() if kind == "device" else {sid for sid, m in members.items() if m.get(kind) is None}
-    if not historical:
+    if not historical and not include_reference:
         targets.discard(reference)
         unknown.discard(reference)
     def effective_views(entry, name):

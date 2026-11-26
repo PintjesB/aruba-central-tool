@@ -550,7 +550,7 @@ def handler_for(workspace):
             # form pages or privacy settings may send an opaque/null Origin;
             # permit that only with same-origin fetch metadata and a CSRF token.
             origin_ok = origin == expected or (origin in (None, "null") and fetch_site == "same-origin")
-            if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials")
+            if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials", root + "save-standard", root + "approve-exception")
                     or not origin_ok or fetch_site not in (None, "same-origin")):
                 self.reply("Forbidden: local session or origin check failed. Reopen the application.", 403)
                 return
@@ -560,12 +560,35 @@ def handler_for(workspace):
                     raise ValueError("Invalid form")
                 self.connection.settimeout(10)
                 values = parse_qs(self.rfile.read(length).decode("utf-8"),
-                                  keep_blank_values=True, strict_parsing=True, max_num_fields=5)
+                                  keep_blank_values=True, strict_parsing=True,
+                                  max_num_fields=12 if self.path in (root + "save-standard", root + "approve-exception") else 5)
                 if any(len(v) != 1 for v in values.values()):
                     raise ValueError("Invalid form")
                 token = values.pop("csrf", [""])[0]
                 if not secrets.compare_digest(token.encode("utf-8"), workspace.csrf.encode("utf-8")):
                     self.reply("Forbidden: stale or invalid form token. Reopen the application.", 403)
+                    return
+                if self.path in (root + "save-standard", root + "approve-exception"):
+                    from local_standards import create_standard, approve_exception
+                    form = {key: value[0] for key, value in values.items()}
+                    confirmed = form.pop("confirmed", "") == "yes"
+                    if self.path == root + "save-standard":
+                        if set(form) != {"name", "snapshot", "baseline_name", "persona", "reference", "module", "target"}:
+                            raise ValueError("Invalid standard form")
+                        record = create_standard(workspace.directory, **form, confirmed=confirmed)
+                        standard_id = record["id"]
+                    else:
+                        if set(form) != {"standard_id", "snapshot", "candidate", "reason", "expiry"}:
+                            raise ValueError("Invalid exception form")
+                        approve_exception(workspace.directory, **form, confirmed=confirmed)
+                        standard_id = form["standard_id"]
+                    self.send_response(303)
+                    self.send_header("Location", root + "standards?" + urlencode({
+                        "snapshot": form["snapshot"], "standard": standard_id,
+                        "confirmed": "yes" if confirmed else ""}))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
                     return
                 if self.path == root + "credentials":
                     depth = values.pop("depth", ["standard"])[0]
@@ -579,8 +602,8 @@ def handler_for(workspace):
                     if values:
                         raise ValueError("Invalid refresh form")
                     started = workspace.start_refresh()
-            except (ValueError, OSError, UnicodeError):
-                self.reply("Invalid refresh form", 400)
+            except (ValueError, OSError, UnicodeError, KeyError, TypeError):
+                self.reply("Invalid form or unavailable evidence", 400)
                 return
             if not started:
                 self.reply(page("Refresh unavailable", "<p>Refresh unavailable or already running.</p>",

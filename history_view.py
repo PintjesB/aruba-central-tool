@@ -100,7 +100,15 @@ def standards_view(workspace, query):
     loaded, empty = load(workspace, query, "Standards compliance", "standards")
     if empty:
         return empty
+    from local_standards import records, read_record, evaluate_standard, exception_candidates, active_exceptions
+    from datetime import date, timedelta
     root, name, bundle, picker = loaded
+    saved = records(workspace.directory, "standard")
+    standard_id = query.get("standard", "")
+    standard = read_record(workspace.directory, "standard", standard_id) if standard_id else None
+    if standard:
+        query = {**query, "persona": standard["persona"], "reference": standard["reference"],
+                 "module": standard["module"], "target": standard["target"], "baseline": standard["baseline"]}
     personas = sorted(bundle["results"])
     if not personas:
         return page("Standards compliance", intro("Standards compliance", "No device inventory captured.", picker), workspace.nav(name))
@@ -115,7 +123,18 @@ def standards_view(workspace, query):
     if baseline_name not in dict(baseline_options):
         raise ValueError("Unknown baseline snapshot")
     body = intro("Standards compliance", "Choose a fixed saved baseline, approved reference device, module and intended target scope.", picker)
-    body += (f'<section><form class="filter-bar" method="get" action="{e(root + "standards")}">'
+    body += (f'<section><h2>Saved standards</h2><form class="filter-bar" method="get" action="{e(root + "standards")}">'
+             f'<input type="hidden" name="snapshot" value="{e(name)}">'
+             + select("standard", [("", "Create / assess a new standard")] +
+                      [(v["id"], v["name"] + " · " + v["created_at"][:10] + " · " + v["id"][:8]) for v in saved],
+                      standard_id, "Local standard version")
+             + f'<label><span><input type="checkbox" name="confirmed" value="yes" {"checked" if confirmed else ""}> Same tenant as baseline</span></label>'
+             + '<button type="submit">Load standard</button></form>'
+             + '<p class="note">Saved versions retain their original baseline checksum, target scope and module set. No Central settings are changed.</p></section>')
+    if standard:
+        body += '<section><h2>' + e(standard["name"]) + '</h2><p>Frozen version ' + e(standard["id"][:8]) + ' · ' + e(standard["baseline"]) + ' · ' + e(", ".join(standard["modules"])) + '</p></section>'
+    else:
+        body += (f'<section><form class="filter-bar" method="get" action="{e(root + "standards")}">'
              f'<input type="hidden" name="snapshot" value="{e(name)}">'
              + select("baseline", baseline_options, baseline_name, "Approved baseline snapshot")
              + f'<label><span><input type="checkbox" name="confirmed" value="yes" {"checked" if confirmed else ""}> Historical baseline belongs to the same tenant</span></label>'
@@ -149,31 +168,65 @@ def standards_view(workspace, query):
     if confirmed:
         hidden += '<input type="hidden" name="confirmed" value="yes">'
     controls = controls.replace("</form>", hidden + "</form>")
-    body += '<section class="filter-section">' + controls + '</section>'
+    if not standard:
+        body += '<section class="filter-section">' + controls + '</section>'
     if reference and module and target:
         try:
-            result = reference_compliance(bundle, persona, module, reference, target, baseline=baseline, confirmed=confirmed)
+            if standard:
+                bundle, result = evaluate_standard(workspace.directory, standard, name, confirmed=confirmed)
+            else:
+                result = reference_compliance(bundle, persona, module, reference, target, baseline=baseline, confirmed=confirmed)
         except ValueError as exc:
             return page("Standards compliance", body + '<section>' + e(str(exc)) + '</section>', workspace.nav(name))
+        def post_form(route, values):
+            return (f'<form method="post" action="{e(root + route)}">' +
+                    "".join(f'<input type="hidden" name="{e(k)}" value="{e(v)}">' for k, v in
+                            {**values, "csrf": workspace.csrf, "confirmed": "yes" if confirmed else ""}.items()))
+        if not standard:
+            body += ('<section><h2>Save this standard version</h2>' + post_form("save-standard", {
+                "snapshot": name, "baseline_name": baseline_name, "persona": persona, "reference": reference,
+                "module": module, "target": target}) +
+                '<label>Standard name<input name="name" required maxlength="120"></label>'
+                '<button type="submit">Save local standard</button></form><p class="note">This freezes the selected baseline and module set; later changes require a new version.</p></section>')
+        candidates = exception_candidates(bundle, standard, result) if standard else {}
+        approved = active_exceptions(workspace.directory, standard_id, candidates) if standard else {}
+        for row in result["findings"]:
+            row["approved_exceptions"] = [v for key, approvals in approved.items()
+                                         if candidates[key]["scope"] == row["scope"] for v in approvals]
+            eligible = [key for key, c in candidates.items() if c["scope"] == row["scope"]]
+            if row["status"] == "differences_observed" and not row.get("has_gaps") and eligible and len(eligible) == len(row["differences"]) and all(key in approved for key in eligible):
+                row["status"] = "approved_exceptions"
         counts = Counter(r["status"] for r in result["findings"])
         body += metrics([("Known target devices", result["target_count"], "Includes original reference when historical" if historical else "Excludes reference device"),
                          ("Matches reference", counts["matches_reference"], "Count-confirmed exact observed bodies"),
                          ("Differences observed", counts["differences_observed"], "Review intentional exceptions"),
                          ("Devices with evidence gaps", sum(bool(r.get("has_gaps")) or r["status"] == "membership_unverified" for r in result["findings"]), "May also have observed differences"),
-                         ("Modules checked", len(result["modules"]), "Selected supported module set")])
+                         ("Modules checked", len(result["modules"]), "Selected supported module set"),
+                         ("Approved deviations", len(approved), "Exact current deviations, not missing evidence")])
         rows = []
         for row in result["findings"]:
             module_rows = [tr(e(module_label(m)), badge(pretty(v["status"])), str(v["difference_count"]),
                               e("Yes" if v["has_gaps"] else "No")) for m, v in row.get("module_results", {}).items()]
             details = table(("Module", "Result", "Observations", "Evidence gaps"), module_rows) if module_rows else ""
             details += "".join("<h3>" + e(module_label(d["module"]) + " / " + (d["identity"] or "Collection")) + " · " + e(pretty(d["status"])) + "</h3>" + change_detail(d) for d in row["differences"])
+            for key, candidate in candidates.items():
+                if candidate["scope"] != row["scope"]:
+                    continue
+                details += '<h3>Exception · ' + e(module_label(candidate["module"]) + " / " + candidate["profile"]) + '</h3>'
+                if key in approved:
+                    details += ''.join('<p>Approved until ' + e(a["expiry"]) + ': ' + e(a["reason"]) + '</p>' for a in approved[key])
+                else:
+                    details += (post_form("approve-exception", {"standard_id": standard_id, "snapshot": name, "candidate": key}) +
+                                '<label>Reason<input name="reason" required maxlength="500"></label>'
+                                f'<label>Expiry<input type="date" name="expiry" required min="{date.today().isoformat()}" value="{(date.today()+timedelta(days=90)).isoformat()}"></label>'
+                                '<button type="submit">Approve exact deviation</button></form>')
             module_counts = Counter(v["status"] for v in row.get("module_results", {}).values())
             summary = (f'{module_counts["matches_reference"]} match / {module_counts["differences_observed"]} differ / {module_counts["verification_required"]} verify'
                        if module_rows else "Membership unknown")
-            rows.append(tr(e(row["device"]), badge(pretty(row["status"])) + ('<small>Evidence gaps also present</small>' if row.get("has_gaps") and row["status"] == "differences_observed" else ""), e(summary), str(len(row["differences"])),
+            rows.append(tr(e(row["device"]), badge(pretty(row["status"])) + ('<small>Approved exceptions: ' + str(len(row["approved_exceptions"])) + '</small>' if row["approved_exceptions"] else "") + ('<small>Evidence gaps also present</small>' if row.get("has_gaps") and row["status"] == "differences_observed" else ""), e(summary), str(len(row["differences"])),
                            inspect(row["device"], details or raw(row), "Inspect")))
         body += '<section><div class="section-head"><h2>Reference standard results</h2>' + private_export(
             "configuration-standards", {"baseline_snapshot": baseline_name, "current_snapshot": name,
-                                        "persona": persona, "module": module, "target_scope": target, "report": result}) + '</div>' + table(("Device", "Result", "Module results", "Differences / gaps", ""), rows, search=True)
+                                        "persona": persona, "module": module, "target_scope": target, "standard_id": standard_id, "report": result}) + '</div>' + table(("Device", "Result", "Module results", "Differences / gaps", ""), rows, search=True)
         body += '<p class="note">The selected reference is an explicit comparison standard, not an automatically approved network policy. A match concerns captured configuration only. Record intentional exceptions before any remediation.</p></section>'
     return page("Standards compliance", body, workspace.nav(name))
