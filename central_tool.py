@@ -1475,7 +1475,13 @@ def collect_scoped_assignments(client, initial, scopes_by_persona, workers=1, pr
         return (str(row.get("scope-id")), row.get("device-function"),
                 row.get("profile-type"), str(row.get("profile-instance")))
     initial_rows = initial.get("rows", [])
-    merged = {identity(row): row for row in initial_rows}
+    def identifiable(row):
+        return (type(row.get("scope-id")) in (int, str) and
+                isinstance(row.get("device-function"), str) and
+                isinstance(row.get("profile-type"), str) and
+                type(row.get("profile-instance")) in (int, str))
+    unresolved = [row for row in initial_rows if not identifiable(row)]
+    merged = {identity(row): row for row in initial_rows if identifiable(row)}
     original = set(merged)
     scoped, outcomes = {}, Counter()
     audit_progress(progress, "Assignment coverage", 0, len(tasks), "Checking profile assignments by scope")
@@ -1491,7 +1497,7 @@ def collect_scoped_assignments(client, initial, scopes_by_persona, workers=1, pr
         # tenant-wide assignment simply because a scoped read did not return it.
         for row in records:
             merged.setdefault(identity(row), row)
-    return {**initial, "rows": list(merged.values()),
+    return {**initial, "rows": list(merged.values()) + unresolved,
             "status": "response_received" if initial.get("status") == "response_received" else
                       "partial_response" if merged else initial.get("status", "not_collected"),
             "scope_reads": scoped, "scope_read_outcomes": dict(outcomes),
