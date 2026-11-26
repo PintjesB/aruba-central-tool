@@ -129,7 +129,7 @@ class Central:
 
     def show_vlan_command(self, serial, command, *, diagnostic=False):
         """Only fixed VLAN inspection commands; never retry submission."""
-        if command not in {"show vlan", "show dhcp-snooping", "show running-config all", "show running-config", *VLAN_FEATURE_COMMANDS.values()}:
+        if command not in {"show vlan", "show dhcp-snooping", "show running-config all", "show running-config", *VLAN_FEATURE_COMMANDS.values(), *VLAN_FEATURE_ALTERNATIVES.values()}:
             raise ValueError("Unsupported VLAN inspection command")
         if not isinstance(serial, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", serial):
             raise ValueError("Invalid switch serial")
@@ -1924,6 +1924,32 @@ VLAN_FEATURE_COMMANDS = {
 }
 
 
+VLAN_FEATURE_ALTERNATIVES = {"igmp": "show ip igmp", "mld": "show ipv6 mld"}
+
+
+def parse_multicast_interface_output(text, field, vlan_ids):
+    """Only explicit snooping flags in VLAN interface records are evidence."""
+    if not isinstance(text, str) or field not in VLAN_FEATURE_ALTERNATIVES:
+        return {}
+    records, conflicts, current = {}, set(), None
+    for line in text.splitlines():
+        match = re.fullmatch(r"\s*Interface\s*:\s*(.*?)\s*", line, re.I)
+        if match:
+            vlan = re.fullmatch(r"vlan\s*(\d+)", match[1], re.I)
+            current = vlan[1] if vlan and vlan[1] in vlan_ids else None
+            continue
+        if re.match(r"\s*VRF Name\s*:", line, re.I):
+            current = None
+            continue
+        flag = re.fullmatch(r"\s*" + field.upper() + r" Snoop Enabled on VLAN\s*:\s*(True|False)\s*", line, re.I)
+        if current is not None and flag:
+            value = {"snooping": flag[1].lower() == "true"}
+            if current in records and records[current] != value:
+                conflicts.add(current)
+            records[current] = value
+    return {vid: value for vid, value in records.items() if vid not in conflicts}
+
+
 def extract_command_output(result, command):
     """Read the exact live Central result envelope, not arbitrary strings."""
     if not isinstance(result, dict) or not isinstance(result.get("output"), dict):
@@ -2125,9 +2151,27 @@ def capture_switch_vlan_cli(client, results, details, workers=AUDIT_WORKERS, pro
             allowed = supported_show_commands(client.list_show_commands(serial))
         except (RuntimeError, OSError, ValueError, AttributeError):
             allowed = set()
-        results = [(persona, sid, field, {"status": "command_not_listed"}) if allowed and command not in allowed
-                   else collect_feature((persona, sid, serial, field, command, ids))
-                   for field, command in VLAN_FEATURE_COMMANDS.items()]
+        results = []
+        for field, command in VLAN_FEATURE_COMMANDS.items():
+            alternative = VLAN_FEATURE_ALTERNATIVES.get(field)
+            if allowed and command not in allowed and alternative in allowed:
+                try:
+                    response = client.show_vlan_command(serial, alternative)
+                    if response["status"] == "completed":
+                        values = parse_multicast_interface_output(extract_command_output(response["result"], alternative), field, ids)
+                        result = {"status": ("observed" if set(values) == ids else "partial") if values else "schema_unresolved",
+                                  "vlans": values, "sources": {vid: alternative for vid in values}}
+                    else:
+                        result = response
+                except APIError as exc:
+                    result = {"status": "request_rejected", "http_error": exc.status}
+                except (RuntimeError, OSError, ValueError, AttributeError):
+                    result = {"status": "read_failed"}
+                results.append((persona, sid, field, result))
+            elif allowed and command not in allowed:
+                results.append((persona, sid, field, {"status": "command_not_listed"}))
+            else:
+                results.append(collect_feature((persona, sid, serial, field, command, ids)))
         # Prefer the explicit-default config when Central actually lists it.
         # Never store or log the full running configuration.
         missing = {field for _, _, field, result in results
@@ -2146,7 +2190,7 @@ def capture_switch_vlan_cli(client, results, details, workers=AUDIT_WORKERS, pro
                         existing = result.get("vlans", {})
                         merged = {**values, **existing}
                         results[index] = (persona, sid, field, {"status": "observed" if set(merged) == ids else "partial",
-                            "vlans": merged, "sources": {vid: config_command for vid in values if vid not in existing}})
+                            "vlans": merged, "sources": {**result.get("sources", {}), **{vid: config_command for vid in values if vid not in existing}}})
             except (RuntimeError, OSError, ValueError, AttributeError):
                 pass
         return results
@@ -2194,8 +2238,14 @@ def vlan_comparison_evidence(bundle, persona, sid, row):
     cli = bundle.get("switch_vlan_cli", {}).get(persona, {}).get(sid, {})
     live = cli.get("vlans", {}).get(row["identity"], {}) if cli.get("status") == "observed" else {}
     monitor = configuration_operational_vlan(bundle, persona, sid, row["identity"])
-    if monitor["status"] == "observed" and isinstance(monitor["fields"].get("name"), str):
-        deployed["name"] = {"value": monitor["fields"]["name"], "source": "Switch monitoring"}
+    if monitor["status"] == "observed":
+        fields = monitor["fields"]
+        if isinstance(fields.get("name"), str):
+            deployed["name"] = {"value": fields["name"], "source": "Switch monitoring"}
+        voice = fields.get("voice")
+        if type(voice) is bool or (isinstance(voice, str) and voice.lower() in ("enabled", "disabled")):
+            deployed["voice-enable"] = {"value": voice if type(voice) is bool else voice.lower() == "enabled",
+                                         "source": "Switch monitoring"}
     for key in ("name", "enable", *VLAN_FEATURE_COMMANDS):
         if key in live:
             if key in deployed and canonical(deployed[key]["value"]) != canonical(live[key]):
