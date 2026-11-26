@@ -106,9 +106,9 @@ class ConsolidationTests(unittest.TestCase):
             name = "config-audit-example.json"
             (Path(directory) / name).write_text(json.dumps(fixture()))
             html = Workspace(directory).advisor({"snapshot": name})
-            self.assertIn("Review redundant override", html)
-            self.assertIn("Consolidate repeated local profiles", html)
-            self.assertIn("Reuse existing Library profile", html)
+            self.assertIn("Matches Global", html)
+            self.assertIn("Repeated local profiles", html)
+            self.assertIn("Matches Library", html)
             self.assertIn("Export private preview JSON", html)
             self.assertIn("Choose destination for review", html)
             self.assertIn("Library / exact source scopes", html)
@@ -175,7 +175,7 @@ class ConsolidationTests(unittest.TestCase):
             self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
             html = workspace.report({**query, "persona": "ACCESS_SWITCH", "module": "layer2-vlan", "diagnostics": "1"})
             self.assertIn("Not qualified", html)
-            self.assertIn("Unqualified scopes", html)
+            self.assertIn("Incomplete API results", html)
             self.assertIn("legacy-report", html)
             html = workspace.comparison({**query, "persona": "ACCESS_SWITCH", "left": "3", "right": "4"})
             self.assertIn("Differences", html)
@@ -185,3 +185,32 @@ class ConsolidationTests(unittest.TestCase):
             html = workspace.library({**query, "module": "layer2-vlan"})
             self.assertIn("Observed assignments", html)
             self.assertIn("Local instances", html)
+
+    def test_explanations_separate_opportunities_and_optional_housekeeping(self):
+        from workspace_views import ACTION_GUIDE, OPPORTUNITIES, vlan_explanation
+        self.assertEqual(set(OPPORTUNITIES), {"remove_override", "promote_local", "reuse_library"})
+        self.assertIn("does not prove", ACTION_GUIDE["unassigned_library"][1])
+        self.assertIn("Keeping it local", ACTION_GUIDE["create_library"][1])
+        html = vlan_explanation({"vlan": 10, "name": "Test"}, {"vlan": 10, "name": "Test", "enable": True})
+        self.assertIn("May equal documented default", html)
+        self.assertIn("Not returned", html)
+        self.assertIn("does not mean disabled", html)
+        html = vlan_explanation({"vlan": 10, "is-l3-vlan": True}, {"vlan": 10})
+        self.assertIn("routed VLAN interface", html)
+        import tempfile
+        import json
+        from pathlib import Path
+        from config_app import Workspace
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(fixture()))
+            html = Workspace(directory).advisor({"snapshot": name})
+            self.assertIn("Consolidation opportunities", html)
+            self.assertIn("Settings to review", html)
+            self.assertIn("Optional Library review", html)
+            self.assertIn("No assignment observed", html)
+            self.assertIn("Why this appears", html)
+            self.assertIn("What to do", html)
+            self.assertIn("let action='opportunities'", html)
+            self.assertIn("if(!check.disabled)", html)
+            self.assertNotIn(">Default differences<", html)
