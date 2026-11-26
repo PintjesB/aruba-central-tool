@@ -1474,18 +1474,16 @@ def recover_local_view(client, module, identity, params, local, effective=None):
             **({"alternate_raw": fallback["raw"]} if "raw" in fallback else {})}
 
 
-def profile_inventory_view(client, endpoint, envelope):
-    """Read one evidence inventory without assuming a missing envelope means zero."""
+def profile_inventory_view(client, endpoint, envelope, **params):
+    """Preserve positive inventory observations, even when pagination is incomplete."""
+    read = read_raw_profile_collection(client, endpoint, params)
+    if "raw" not in read:
+        return {**read, "rows": []}
     try:
-        raw = client.get(ALPHA + "/" + endpoint)
-        records = rows(raw, (envelope,))
-        return {"status": "response_received", "rows": records, "raw": raw}
-    except APIError as exc:
-        if exc.status not in (400, 403, 404, 405, 406, 410, 412, 422):
-            raise
-        return {"status": "request_rejected", "http_error": exc.status, "rows": []}
+        records = rows(read["raw"], (envelope,))
     except ValueError:
-        return {"status": "schema_unresolved", "rows": []}
+        return {**read, "status": "schema_unresolved", "rows": []}
+    return {**read, "rows": records}
 
 
 def collect_scoped_assignments(client, initial, scopes_by_persona, workers=1, progress=None):
@@ -1499,17 +1497,19 @@ def collect_scoped_assignments(client, initial, scopes_by_persona, workers=1, pr
     def read(task):
         persona, sid = task
         try:
-            raw = client.get(ALPHA + "/config-assignments", **{"scope-id": sid, "device-function": persona})
-            records = rows(raw, ("config-assignment",))
+            result = profile_inventory_view(client, "config-assignments", "config-assignment",
+                                            **{"scope-id": sid, "device-function": persona})
+            records = result.pop("rows")
+            if result["status"] not in ("response_received", "partial_response", "count_mismatch"):
+                return task, result, []
+            raw = result["raw"]
             if any(str(r.get("scope-id")) != sid or r.get("device-function") != persona
                    or not isinstance(r.get("profile-type"), str)
                    or type(r.get("profile-instance")) not in (str, int) for r in records):
-                return task, {"status": "selector_mismatch", "raw": raw}, []
-            meta = raw.get("metadata", {})
-            if (not isinstance(meta, dict) or
-                    any(type(meta[key]) is not int or meta[key] != len(records) for key in ("total", "count") if key in meta)):
-                return task, {"status": "count_mismatch", "raw": raw}, []
-            return task, {"status": "response_received", "raw": raw}, records
+                return task, {**result, "status": "selector_mismatch"}, []
+            # A truncated response can still prove that a returned assignment
+            # exists. It cannot establish that another assignment is absent.
+            return task, result, records
         except APIError as exc:
             if exc.status == 401:
                 raise
@@ -1746,11 +1746,11 @@ def read_raw_profile_collection(client, module, params):
     return incomplete("page_limit_reached")
 
 
-def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, workers=1, progress=None):
+def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, workers=1, progress=None, *, scopes_by_persona=None):
     """Inspect observed source scopes for modules without an explicit adapter.
 
     These are raw read-only diagnostics, not qualified local/effective views.
-    Module and scope selectors come only from observed resource inventories.
+    Extend observed resource/function pairs across the discovered scope inventory.
     """
     unknown = set(discovery["unknown_adapter_modules"]) | set(discovery.get("survey_modules", []))
     targets = defaultdict(set)
@@ -1771,8 +1771,28 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                 continue
             targets[(resource, persona, str(sid))].add("" if instance is None else str(instance))
 
+    # An assignment or scope-map observation identifies a possible source,
+    # not every scope on which that definition may be inherited or overridden.
+    # Survey all discovered scopes for the observed device functions. Do not
+    # guess functions for catalog-only modules or authorize changes.
+    for module in sorted(unknown):
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,127}", module):
+            continue
+        for persona in discovery["modules"].get(module, []):
+            if persona not in NETWORK_PERSONAS:
+                continue
+            for scope in (scopes_by_persona or {}).get(persona, []):
+                sid = str(scope["id"])
+                if sid.isdigit():
+                    targets.setdefault((module, persona, sid), set())
+
     def capture(module, params):
-        return read_raw_profile_collection(client, module, params)
+        try:
+            return read_raw_profile_collection(client, module, params)
+        except APIError:
+            raise
+        except (RuntimeError, OSError, ValueError):
+            return {"status": "read_failed", "collection_count_verified": False}
 
     def inspect(module):
         evidence = []
@@ -1786,6 +1806,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                              "observed_instances": sorted(instances), "committed": committed,
                              "effective": effective})
         result = {"status": "unqualified_adapter", "source_views": evidence,
+                  "scope_read_outcomes": dict(Counter(v[k]["status"] for v in evidence for k in ("committed", "effective"))),
                   "library": capture(module, {"view-type": "LIBRARY", "detailed": "true"}),
                   "safe_to_apply": False}
         result["identity_evidence"] = qualify_observed_identities(result)
@@ -2667,7 +2688,8 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     applicable_modules = set(CONFIG_MODULES)
     print("Reading tenant Library and assignments", flush=True)
     library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress)
-    unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress)
+    unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress,
+                                           scopes_by_persona=scopes_by_persona)
     details = capture_vlan_instance_details(client, results, workers, progress)
     operational = capture_configuration_operational_vlans(client, results, workers, progress)
     cli = capture_switch_vlan_cli(client, results, details, workers, progress)
