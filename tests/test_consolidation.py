@@ -393,6 +393,24 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("device.name", f["evidence"]["conflicts"])
         self.assertFalse(f["candidate"])
 
+    def test_empty_multicast_interfaces_do_not_complete_vlan_comparison(self):
+        from central_tool import vlan_comparison_evidence
+        from workspace_views import vlan_explanation
+        row = {"identity": "10", "local": {"vlan": 10}, "effective": {"vlan": 10},
+               "global_reference": {"vlan": 10, "igmp": {"snooping": False},
+                                    "mld": {"snooping": True}}}
+        data = {"switch_vlan_cli": {"ACCESS_SWITCH": {"3": {"status": "observed",
+            "vlans": {"10": {}}, "features": {
+                "igmp": {"status": "no_multicast_interfaces"},
+                "mld": {"status": "no_multicast_interfaces"}}}}}}
+        evidence = vlan_comparison_evidence(data, "ACCESS_SWITCH", "3", row)
+        self.assertNotIn("igmp", evidence["comparison"])
+        self.assertNotIn("mld", evidence["comparison"])
+        self.assertEqual(len(evidence["differences"]), 2)
+        html = vlan_explanation(row["local"], row["global_reference"], row["effective"], evidence)
+        self.assertIn("Layer 2 snooping not reported", html)
+        self.assertFalse(evidence["safe_to_apply"])
+
     def test_monitoring_voice_uses_explicit_state_only(self):
         from central_tool import vlan_comparison_evidence
         row = {"identity": "10", "local": {"vlan": 10}, "effective": {"vlan": 10},
