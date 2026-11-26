@@ -67,6 +67,27 @@ def nac_view(workspace, query):
         policy_rows.append(tr(e(p["position"]), e(p["name"]), e(p["type"]), e(str(p["enabled"])),
                               str(len(p["rules"])), inspect("Authorization policy evidence", detail, "Review rules")))
     body += table(("Position", "Policy", "Type", "Enabled", "Observed rules", ""), policy_rows, search=True) + '</section>'
+    from nac_binding_review import nac_bindings
+    bindings = nac_bindings(bundle, report, policies)
+    body += '<section><h2>Tag and policy cross-reference</h2><p>Exact condition values are review candidates only. Attribute semantics and authorization applicability are not established by a matching value.</p>'
+    body += table(("Tag", "Registered identity count", "Condition observations", ""), [
+        tr(e(tag["name"] or tag["id"]), str(tag["registered_id_count"]), str(len(tag["condition_observations"])),
+           inspect("Tag condition evidence", table(("Policy", "Rule", "Attribute", "Operator", "Value"), [
+               tr(e(v["policy"]), e(v["rule"] if v["rule"] is not None else "Policy precondition"),
+                  e(v["attribute"]), e(v["operator"]), e(v["value"])) for v in tag["condition_observations"]]), "Review"))
+        for tag in bindings["tag_summary"]], search=True) + '</section>'
+    body += '<section><h2>Configured VLAN enforcement</h2><p>Compare explicit NAC VLAN attributes with captured switch VLAN definitions. A switch without the VLAN is not necessarily an affected switch; actual client location and authorization remain unverified.</p>'
+    vlan_rows = []
+    for target in bindings["vlan_targets"]:
+        visibility = bindings["vlan_visibility"].get(target["vlan_id"], [])
+        counts = Counter(row["status"] for row in visibility)
+        details = table(("Function", "Switch", "VLAN name", "Visibility"), [
+            tr(e(v["persona"]), e(v["device"]), e(v["name"] or ""), badge(pretty(v["status"]))) for v in visibility], search=True)
+        vlan_rows.append(tr(e(target["policy"]), e(target["rule"] if target["rule"] is not None else "Default"),
+                            e(target["value"]), badge(pretty(target["status"])), str(counts["observed"]),
+                            str(counts["count_confirmed_absence"]), str(counts["unverified"]),
+                            inspect("Switch VLAN evidence", details, "Review")))
+    body += table(("Policy", "Rule position", "VLAN attribute", "Evidence", "Observed", "Confirmed absent", "Unknown", ""), vlan_rows, search=True) + '</section>'
     body += '<section><h2>Authorization limits</h2><p>Registration and static tag association do not prove the effective role, VLAN, authentication result or authorization rule. Named MPSK secret collection is intentionally excluded.</p>'
-    body += private_export("nac-registration-review", {"snapshot": name, "report": report, "authorization": policies}) + '</section>'
+    body += private_export("nac-registration-review", {"snapshot": name, "report": report, "authorization": policies, "bindings": bindings}) + '</section>'
     return page("NAC identities", body, workspace.nav(name))
