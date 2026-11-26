@@ -11,7 +11,7 @@ from central_tool import canonical, health_serial, refresh_configuration_review
 from configuration_history import reference_compliance
 
 ID = re.compile(r"[a-f0-9]{32}")
-KINDS = {"standard", "exception"}
+KINDS = {"standard", "exception", "exception-revocation"}
 
 
 def digest(value):
@@ -25,7 +25,7 @@ def read_record(directory, kind, identity):
     if not path.is_file() or path.is_symlink():
         raise ValueError("Unknown local record")
     record = json.loads(path.read_text(encoding="utf-8"))
-    if record.get("schema") != 1 or record.get("kind") != kind or record.get("id") != identity:
+    if not isinstance(record, dict) or record.get("schema") != 1 or record.get("kind") != kind or record.get("id") != identity:
         raise ValueError("Invalid local record")
     return record
 
@@ -146,14 +146,40 @@ def approve_exception(directory, standard_id, snapshot, candidate, reason, expir
                        **observation})
 
 
-def active_exceptions(directory, standard_id, candidates, today=None):
+def revoke_exception(directory, standard_id, exception_id, reason):
+    standard = read_record(directory, "standard", standard_id)
+    approval = read_record(directory, "exception", exception_id)
+    if approval["standard"] != standard["id"]:
+        raise ValueError("Exception belongs to a different standard")
+    return save_record(directory, "exception-revocation", {
+        "standard": standard_id, "exception": exception_id, "reason": checked_text(reason, 500)})
+
+
+def exception_history(directory, standard_id, candidates, today=None):
     today = today or date.today()
-    active = {}
+    revoked = {}
+    for record in records(directory, "exception-revocation"):
+        if record.get("standard") == standard_id and isinstance(record.get("exception"), str):
+            revoked.setdefault(record["exception"], []).append(record)
+    history = []
     for record in records(directory, "exception"):
         try:
-            if (record["standard"] == standard_id and record["candidate"] in candidates
-                    and date.fromisoformat(record["expiry"]) >= today):
-                active.setdefault(record["candidate"], []).append(record)
+            if record["standard"] != standard_id:
+                continue
+            state = ("revoked" if record["id"] in revoked else
+                     "expired" if date.fromisoformat(record["expiry"]) < today else
+                     "not_observed" if record["candidate"] not in candidates else "active")
+            history.append({**record, "state": state, "revocations": revoked.get(record["id"], [])})
         except (KeyError, ValueError, TypeError):
             continue
+    return history
+
+
+def active_exceptions(directory, standard_id, candidates, today=None):
+    active = {}
+    for record in exception_history(directory, standard_id, candidates, today):
+        if record["state"] == "active":
+            # Preserve the original approval payload for existing report consumers.
+            active.setdefault(record["candidate"], []).append({k: v for k, v in record.items()
+                                                               if k not in ("state", "revocations")})
     return active
