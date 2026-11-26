@@ -260,10 +260,12 @@ def check_empty_local(annotated):
     """Cross-check observed empty local response against effective annotations."""
     if not annotated:
         return "no_effective_profiles"
+    uncertain = False
     for profile in annotated:
         annotation = profile.get("@")
         if not isinstance(annotation, dict):
-            return "unverified_annotations"
+            uncertain = True
+            continue
         inherited = annotation.get("aruba-annotation:inherited")
         object_type = annotation.get("aruba-annotation:object_type")
         if inherited is True:
@@ -272,8 +274,8 @@ def check_empty_local(annotated):
             continue
         if inherited is False and isinstance(object_type, str) and object_type.upper() == "LOCAL":
             return "contradictory_local_profile"
-        return "unverified_annotations"
-    return "consistent_with_effective_annotations"
+        uncertain = True
+    return "unverified_annotations" if uncertain else "consistent_with_effective_annotations"
 
 
 def scan(client, persona):
