@@ -94,9 +94,20 @@ Scoped reads across modules within a persona, Library collections and additional
 
 From Standards compliance, choose an approved baseline snapshot, reference device, module or all standard modules, and target scope. Run the assessment and save a named local version. The version pins the original snapshot checksum and module set; keep that snapshot in the private workspace. Select the saved version and a newer current snapshot to reassess it. Confirm same-tenant identity for historical comparisons. Use one workspace directory per customer.
 
-Open a device result to approve an exact, complete observed profile deviation with a reason and expiry date. Missing reads cannot be approved. An approval applies only to the same standard version, device serial and exact before/after profile bodies. Changed values or expiry require review again. Exception history preserves approvals and reasoned revocations; expired, revoked and currently unobserved approvals remain visible. The files contain private customer configuration: keep them with the audit snapshots and out of source control. They are local review records, not centrally authenticated approvals.
+Open a device result to approve an exact, complete observed profile deviation with a reason and expiry date. Missing reads cannot be approved. An approval applies only to the same standard version, device serial and exact before/after field values (or complete profile presence deviations). Legacy whole-profile approvals remain supported. Changed values or expiry require review again. Exception history preserves approvals and reasoned revocations; expired, revoked and currently unobserved approvals remain visible. The files contain private customer configuration: keep them with the audit snapshots and out of source control. They are local review records, not centrally authenticated approvals.
 
 Bulk consolidation previews summarize selected proposals, source and destination recipients, scope/Library overlaps and preparation, verification and cleanup phases. Resolve overlaps and select destinations before export. Duplicate Library migration previews show assignment and reference worklists plus the retained profile's visibility for affected devices. These are review-only plans, not executable API operations.
+
+### Engineering evidence workflows
+
+- **Configuration sources:** select a device, module and effective profile to compare saved and effective definitions through the scope chain and inspect Library assignment observations. A matching body alone does not prove the winning source.
+- **Library assignments:** filter captured assignment tuples and inspect known recipients, uncertain membership, effective visibility and observed overlaps. Overlap may be intentional; it does not establish a policy conflict.
+- **Port consolidation:** compare saved and effective per-port settings, candidate shared fields and fields to retain locally before considering a reusable profile. No executable conversion is generated.
+- **Policy variants:** group same-identity effective configuration bodies within one device function and compare device populations and differing fields. The largest group is not automatically the correct standard.
+- **Remediation verification:** compare a prior qualified override candidate or duplicate Library group with a strictly newer same-tenant capture. Export prior bodies and observed assignments for rollback review, not executable restoration.
+- **Compliance trends:** assess up to 20 saved captures against one frozen standard using approvals effective at the capture time. Baseline-driven templates select modules, and optional field rules select exact captured paths.
+
+All these browser workflows are read-only with respect to Central. Complete reference coverage, semantic ACL overlap, operational behavior and production write qualification remain separate tasks.
 
 ### Consolidation advisor
 
