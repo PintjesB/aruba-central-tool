@@ -674,6 +674,23 @@ def engineering_view(workspace, query):
     panel("shadow", "Scope precedence", "Shows which configuration takes precedence over a higher-scope definition. This is normal inheritance, not necessarily a problem. Identical definitions may warrant reviewing the lower-scope copy; do not delete the higher-scope profile.",
           ("Profile", "Applied from", "Higher-scope definition", "Devices", "Settings compared", "Suggested next step", ""), rows, len(rows))
     rows = []
+    from policy_variants import policy_variants
+    for finding in policy_variants(bundle):
+        variants = finding["variants"]
+        detail = '<p>The largest observed variant is a comparison reference only; it is not automatically an approved standard.</p>'
+        for i, variant in enumerate(variants, 1):
+            detail += '<h3>Variant ' + str(i) + ' · ' + str(len(variant["devices"])) + ' devices</h3>' + property_table(variant["body"])
+            if variant["differences"]:
+                detail += diff_table(variant["differences"], "Largest variant", "This variant")
+            detail += table(("Device", "Source evidence"), [tr(e(d["name"]), f'<a href="{url(root, "sources", snapshot=name, persona=finding["persona"], device=d["scope"], module=finding["module"], identity=finding["identity"])}">Trace source</a>') for d in variant["devices"]])
+        detail += '<h3>Confirmed absent</h3>' + list_items([d["name"] for d in finding["absent"]])
+        detail += '<h3>Unavailable or unqualified presence</h3>' + list_items([d["name"] for d in finding["unknown"]])
+        rows.append(tr(e(module_label(finding["module"])), e(finding["identity"]), e(persona_label(finding["persona"])),
+                       str(len(variants)), str(finding["present_count"]), str(len(finding["unknown"])),
+                       badge(pretty(finding["status"])), inspect(finding["identity"], detail, "Compare variants")))
+    panel("variants", "Policy variants", "Review same-name effective profiles with different captured settings within the same device function. These may be intentional site or device differences, not necessarily policy conflicts.",
+          ("Module", "Profile", "Function", "Variants", "Observed devices", "Unknown presence", "Evidence", ""), rows, len(rows))
+    rows = []
     for r in data["library_duplicates"]:
         keep = r["suggested_keep"]
         usage = r["usage"]
