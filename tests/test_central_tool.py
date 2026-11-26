@@ -178,6 +178,24 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(offset_rows(client, "/x", ("items",))), 2)
         self.assertEqual(client.calls[1][1]["offset"], 1)
 
+    def test_inventory_pagination_keeps_previous_total_and_rejects_duplicate_records(self):
+        for pages in (
+            [{"items": [{"id": "1"}], "total": 2}, {"items": []}],
+            [{"items": [{"id": "1"}], "total": 2}, {"items": [{"id": "2"}], "total": 3}],
+            [{"items": [{"id": "1"}]}, {"items": [{"id": "1"}, {"id": "2"}]}],
+        ):
+            with self.assertRaises(ValueError):
+                offset_rows(Fake(pages), "/x", ("items",))
+        for pages in (
+            [{"items": [{"id": "1"}], "next": "a", "total": 3}, {"items": [{"id": "2"}]}],
+            [{"items": [{"id": "1"}], "next": "a"}, {"items": [{"id": "1"}, {"id": "2"}]}],
+            [{"items": [{"id": "1"}], "next": "a", "total": 2}, {"items": [{"id": "2"}], "total": 3}],
+        ):
+            with self.assertRaises(ValueError):
+                inventory(Fake(pages))
+        self.assertEqual(len(inventory(Fake([{"items": [{"id": "1"}], "next": "a", "total": 2},
+                                            {"items": [{"id": "2"}]}]))), 2)
+
     def test_repeated_page_fails(self):
         client = Fake([{"items": [{"id": "1"}]}] * 2)
         with self.assertRaises(ValueError):
@@ -638,6 +656,23 @@ class Tests(unittest.TestCase):
         self.assertEqual(set(view["profiles"]), {"a", "b", "c"})
         self.assertEqual([params.get("offset") for _, params in fake.calls], [None, 0, 2])
         self.assertEqual(len(view["raw_pages"]), 2)
+
+    def test_module_recovers_count_only_truncation_and_next_offsets(self):
+        from central_tool import read_module_view, module_view
+        def page(names, offset, total=3):
+            return {"metadata": {"count_objects_in_module": {"LOCAL": total, "ANY": total},
+                                 "count": len(names), "offset": offset},
+                    "profiles": [{"name": name} for name in names]}
+        for offsets in ((0, 2), (2, 3)):
+            fake = Fake([page(["a"], 1), page(["a", "b"], offsets[0]), page(["c"], offsets[1])])
+            result = read_module_view(fake, "snmp", "name", {"object-type": "LOCAL"})
+            self.assertEqual(result["status"], "list_parsed")
+            self.assertEqual(result["pagination_status"], "complete")
+            self.assertEqual(set(result["profiles"]), {"a", "b", "c"})
+            self.assertTrue(result["count_confirmed"])
+        self.assertEqual(module_view(page(["a", "b", "c"], 3), "name")["status"], "list_parsed")
+        fake = Fake([page(["a"], 1), page(["a", "b"], 2), page(["c"], 3, 4)])
+        self.assertEqual(read_module_view(fake, "snmp", "name", {})["pagination_status"], "count_changed")
 
     def test_generic_module_rejects_repeated_or_changed_pages(self):
         from central_tool import read_module_view

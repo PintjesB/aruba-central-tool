@@ -229,43 +229,62 @@ def detect_region(client, preferred=None):
     return client.base
 
 
+def inventory_page_total(payload, batch, previous):
+    """Retain the first explicit total and reject changing/truncated inventories."""
+    if "count" in payload and (type(payload["count"]) is not int or payload["count"] != len(batch)):
+        raise ValueError("Inventory page count mismatch")
+    if "total" not in payload:
+        return previous
+    total = payload["total"]
+    if type(total) is not int or total < 0 or (previous is not None and total != previous):
+        raise ValueError("Inventory pagination total changed or invalid")
+    return total
+
+
 def offset_rows(client, path, keys, *, page_size=100, **params):
     result, seen = [], set()
-    offset = 0
+    offset, total = 0, None
     for _ in range(10000):
         try:
             payload = client.get(path, **params, limit=page_size, offset=offset)
         except APIError as exc:
             raise APIError(f"{path} (limit={page_size}, offset={offset})", exc.status) from None
         batch = rows(payload, keys)
-        if not batch:
-            return result
-        signature = canonical(batch)
-        if signature in seen:
-            raise ValueError("Repeated offset page; pagination cannot be trusted")
-        seen.add(signature)
+        total = inventory_page_total(payload, batch, total)
+        signatures = [canonical(row) for row in batch]
+        if len(set(signatures)) != len(signatures) or seen.intersection(signatures):
+            raise ValueError("Repeated offset record; pagination cannot be trusted")
+        seen.update(signatures)
         result.extend(batch)
         offset += len(batch)
-        if isinstance(payload.get("total"), int) and offset >= payload["total"]:
-            if offset != payload["total"]:
-                raise ValueError("Pagination total mismatch")
+        if total is not None and (offset > total or (not batch and offset != total)):
+            raise ValueError("Pagination total mismatch")
+        if not batch or offset == total:
             return result
     raise ValueError("Pagination safety limit reached")
 
 
 def inventory(client):
-    result, seen, cursor = [], set(), None
+    result, cursors, records, cursor, total = [], set(), set(), None, None
     for _ in range(10000):
         payload = client.get(INVENTORY, limit=100, **({"next": cursor} if cursor else {}))
-        result.extend(rows(payload, ("items",)))
+        batch = rows(payload, ("items",))
+        total = inventory_page_total(payload, batch, total)
+        signatures = [canonical(row) for row in batch]
+        if len(set(signatures)) != len(signatures) or records.intersection(signatures):
+            raise ValueError("Repeated inventory record")
+        records.update(signatures)
+        result.extend(batch)
         cursor = payload.get("next")
+        if total is not None and len(result) > total:
+            raise ValueError("Inventory total mismatch")
         if not cursor:
-            if isinstance(payload.get("total"), int) and len(result) != payload["total"]:
+            if total is not None and len(result) != total:
                 raise ValueError("Inventory total mismatch")
             return result
-        if not isinstance(cursor, str) or cursor in seen:
+        if not batch or not isinstance(cursor, str) or cursor in cursors:
             raise ValueError("Invalid or repeated inventory cursor")
-        seen.add(cursor)
+        cursors.add(cursor)
     raise ValueError("Inventory pagination safety limit reached")
 
 
@@ -1314,7 +1333,7 @@ def module_view(payload, identity, object_type="ANY"):
     if len(lists) != 1 or set(payload) - {"metadata", lists[0][0]}:
         return {"status": "schema_unresolved", "profiles": {}}
     envelope, items = lists[0]
-    if "offset" in metadata and (type(metadata["offset"]) is not int or metadata["offset"] != 0):
+    if "offset" in metadata and (type(metadata["offset"]) is not int or metadata["offset"] not in (0, len(items))):
         return {"status": "count_mismatch", "profiles": {}}
     for count in (metadata.get("total"), metadata.get("count"), expected):
         if count is not None and (type(count) is not int or count != len(items)):
@@ -1389,10 +1408,11 @@ def read_module_view(client, module, identity, params):
     if not isinstance(meta, dict) or len(lists) != 1 or set(raw) != {"metadata", lists[0][0]}:
         return {**parsed, "raw": raw}
     envelope, initial = lists[0]
-    total = meta.get("total")
     counts = meta.get("count_objects_in_module", {})
+    if not isinstance(counts, dict):
+        return {**parsed, "raw": raw}
+    total = meta.get("total", counts.get(object_type))
     if (type(total) is not int or not len(initial) < total
-            or not isinstance(counts, dict)
             or counts.get(object_type, total) != total):
         return {**parsed, "raw": raw}
     pages, items, seen = [], [], set()
@@ -1412,10 +1432,11 @@ def read_module_view(client, module, identity, params):
         if not isinstance(page, dict) or set(page) != {"metadata", envelope}:
             return incomplete("schema_changed")
         page_meta, batch = page["metadata"], page[envelope]
-        if (not isinstance(page_meta, dict) or page_meta.get("total") != total
+        if (not isinstance(page_meta, dict)
+                or page_meta.get("total", page_meta.get("count_objects_in_module", {}).get(object_type) if isinstance(page_meta.get("count_objects_in_module", {}), dict) else None) != total
                 or not isinstance(batch, list) or not batch
                 or page_meta.get("count", len(batch)) != len(batch)
-                or page_meta.get("offset", len(items)) != len(items)
+                or page_meta.get("offset", len(items)) not in (len(items), len(items) + len(batch))
                 or page_meta.get("count_objects_in_module", {}) != counts
                 or len(items) + len(batch) > total):
             return incomplete("count_changed")
@@ -1682,7 +1703,7 @@ def read_raw_profile_collection(client, module, params):
     total = meta.get("total")
     if type(total) is not int:
         return result
-    if total == len(initial) and meta.get("count", len(initial)) == len(initial) and meta.get("offset", 0) == 0:
+    if total == len(initial) and meta.get("count", len(initial)) == len(initial) and meta.get("offset", 0) in (0, len(initial)):
         return {**result, "collection_count_verified": True}
     if total <= len(initial):
         return {**result, "status": "count_mismatch"}
@@ -1704,7 +1725,7 @@ def read_raw_profile_collection(client, module, params):
         batch, page_meta = page[envelope], page["metadata"]
         if (not isinstance(batch, list) or not batch or not isinstance(page_meta, dict)
                 or page_meta.get("total") != total or page_meta.get("count", len(batch)) != len(batch)
-                or page_meta.get("offset", len(combined)) != len(combined)
+                or page_meta.get("offset", len(combined)) not in (len(combined), len(combined) + len(batch))
                 or len(combined) + len(batch) > total):
             return incomplete("count_or_offset_changed")
         signature = canonical(batch)
