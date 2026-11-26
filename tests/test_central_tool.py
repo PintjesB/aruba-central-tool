@@ -524,6 +524,13 @@ class Tests(unittest.TestCase):
         self.assertIn("wlan-ssids", data["results"]["CAMPUS_AP"]["modules"])
         self.assertNotIn("wlan-ssids", data["results"]["ACCESS_SWITCH"]["modules"])
         self.assertIn("switch-system", data["results"]["ACCESS_SWITCH"]["modules"])
+        for module in ("aliases", "net-groups", "policies", "role-acls", "alg"):
+            self.assertIn(module, data["results"]["ACCESS_SWITCH"]["modules"])
+            self.assertIn(module, data["library"]["modules"])
+        self.assertIn("gw-system", data["library"]["modules"])
+        self.assertIn("policy-groups", data["unadapted_profiles"])
+        self.assertIn("arc", data["unadapted_profiles"])
+        self.assertFalse(data["catalog_exhaustive"])
         self.assertEqual(len(data["results"]["ACCESS_SWITCH"]["modules"]["ethernet-interfaces"]["scope_results"]), 1)
         self.assertEqual(data["unqualified_personas"], ["HYBRID_NAC"])
         self.assertFalse(data["safe_to_apply"])
@@ -718,6 +725,27 @@ class Tests(unittest.TestCase):
         self.assertEqual(data["unknown_adapter_modules"], ["policy-groups", "unknown-profile"])
         self.assertEqual(data["unresolved_records"], 1)
         self.assertFalse(data["complete"])
+
+    def test_raw_profile_collection_recovers_explicitly_truncated_pages(self):
+        from central_tool import read_raw_profile_collection
+        def page(total, offset, items):
+            return {"metadata": {"total": total, "offset": offset, "count": len(items)}, "profiles": items}
+        a, b, c = {"name": "one"}, {"name": "two"}, {"name": "three"}
+        initial = page(3, 0, [a])
+        fake = Fake([initial, page(3, 0, [a, b]), page(3, 2, [c])])
+        result = read_raw_profile_collection(fake, "arc", {"view-type": "LIBRARY"})
+        self.assertEqual(result["raw"]["profiles"], [a, b, c])
+        self.assertEqual(result["initial_raw"], initial)
+        self.assertTrue(result["collection_count_verified"])
+        self.assertEqual(result["pagination_status"], "complete")
+        self.assertEqual(fake.calls[-1][1]["offset"], 2)
+        for bad in (page(4, 2, [c]), page(3, 1, [c]), page(3, 2, [b])):
+            result = read_raw_profile_collection(Fake([initial, page(3, 0, [a,b]), bad]), "arc", {})
+            self.assertEqual(result["status"], "partial_response")
+            self.assertFalse(result["collection_count_verified"])
+            self.assertEqual(result["raw"], initial)
+        result = read_raw_profile_collection(Fake([{"profiles": [a]}]), "arc", {})
+        self.assertFalse(result["collection_count_verified"])
 
     def test_unadapted_profile_inspection_deduplicates_source_views_and_rejects_bad_selectors(self):
         from central_tool import discover_profile_types, inspect_unadapted_profiles
