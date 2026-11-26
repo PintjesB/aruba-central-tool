@@ -127,7 +127,7 @@ def configuration_drift(before, after, *, confirmed=False):
             "counts": dict(Counter(r["status"] for r in records)), "complete": False, "safe_to_apply": False}
 
 
-def reference_compliance(bundle, persona, module, reference, target_scope, *, baseline=None, confirmed=False, selected_modules=None, include_reference=False):
+def reference_compliance(bundle, persona, module, reference, target_scope, *, baseline=None, confirmed=False, selected_modules=None, include_reference=False, field_rules=None):
     """Compare a selected standard against explicitly selected device recipients.
 
     This is an exact observed-body check, not a claim of operational compliance.
@@ -151,6 +151,10 @@ def reference_compliance(bundle, persona, module, reference, target_scope, *, ba
         if not selected_modules or not set(selected_modules) <= STANDARD_MODULES:
             raise ValueError("Invalid frozen module set")
         modules = sorted(set(selected_modules))
+    if field_rules is not None:
+        if not field_rules or not {rule["module"] for rule in field_rules} <= set(modules):
+            raise ValueError("Invalid field standard")
+        modules = sorted({rule["module"] for rule in field_rules})
     if not modules:
         raise ValueError("No supported standards modules available")
     members = scope_memberships(entry["scopes"])
@@ -177,6 +181,9 @@ def reference_compliance(bundle, persona, module, reference, target_scope, *, ba
                 observations = [{"identity": "", "status": "reference_unavailable"}]
             elif not expected.get("profiles") and not expected.get("count_confirmed"):
                 observations = [{"identity": "", "status": "reference_unavailable"}]
+            elif field_rules is not None:
+                from field_standards import compare_fields
+                observations = compare_fields(expected, actual, [rule for rule in field_rules if rule["module"] == name])
             else:
                 observations = view_changes(expected, actual, include_source=False)
             for change in observations:
@@ -184,8 +191,8 @@ def reference_compliance(bundle, persona, module, reference, target_scope, *, ba
                         d["kind"] in ("missing_local", "missing_reference", "null_vs_value")
                         for d in change.get("fields", [])):
                     change["status"] = "field_values_unavailable"
-            differences = any(r["status"] in ("added", "removed", "changed") for r in observations)
-            gaps = any(r["status"] not in ("added", "removed", "changed") for r in observations)
+            differences = any(r["status"] in ("added", "removed", "changed", "field_profile_absent") for r in observations)
+            gaps = any(r["status"] not in ("added", "removed", "changed", "field_profile_absent") for r in observations)
             # A difference and an evidence gap may coexist in one profile.
             gaps = gaps or expected.get("count_confirmed") is not True or actual.get("count_confirmed") is not True
             gaps = gaps or any(d["kind"] in ("missing_local", "missing_reference", "null_vs_value")
