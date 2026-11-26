@@ -17,7 +17,10 @@ def load(workspace, query, title, route):
         return None, page(title, intro(title) + '<section class="empty">No snapshots available. Connect from Overview.</section>', workspace.nav())
     name = query.get("snapshot", files[0].name)
     bundle = refresh_configuration_review(read_audit(workspace.directory, name))
-    return (root, name, bundle, snapshot_picker(root, route, files, name)), None
+    picker = snapshot_picker(root, route, files, name)
+    if bundle.get("collection_checkpoint", {}).get("mixed_capture_times"):
+        picker += '<p class="note">Resumed collection: some scope evidence predates the final capture. Do not use this snapshot to verify remediation.</p>'
+    return (root, name, bundle, picker), None
 
 
 def url(root, route, **query):

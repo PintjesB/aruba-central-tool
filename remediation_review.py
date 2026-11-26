@@ -7,6 +7,8 @@ from advanced_review import advanced_analysis, duplicate_migration_preview
 
 
 def comparable(before, after, confirmed):
+    if any(bundle.get("collection_checkpoint", {}).get("mixed_capture_times") for bundle in (before, after)):
+        raise ValueError("Remediation verification requires fresh captures without resumed scope evidence")
     if not confirmed:
         raise ValueError("Confirm that both snapshots belong to the same tenant")
     result = snapshot_identity_checks(before, after)
