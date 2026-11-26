@@ -2817,6 +2817,8 @@ def configuration_operational_vlan(bundle, persona, sid, vid):
 
 def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None, deep_catalog=False):
     """Inventory-driven read-only audit with bounded parallel scope reads."""
+    from api_coverage import ReadCoverage
+    client = ReadCoverage(client)
     audit_progress(progress, "Discovery", 0, 0, "Reading device inventory and assignments")
     devices = inventory(client)
     records = inventory_capabilities(devices)
@@ -2937,8 +2939,11 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             "profile_type_discovery": profile_types, "unadapted_profiles": unadapted,
             "operational_vlans": operational, "vlan_instance_details": details, "switch_vlan_cli": cli,
             "configuration_health": health,
+            "api_read_coverage": client.report(),
             "catalog_exhaustive": False, "safe_to_apply": False}
 
+    coverage_counts = Counter(row["status"] for row in bundle["api_read_coverage"]["operations"])
+    print("Documented GET operation outcomes: " + canonical(dict(coverage_counts)), flush=True)
     print("VLAN evidence coverage: " + canonical(vlan_evidence_summary(bundle)), flush=True)
     return bundle
 
