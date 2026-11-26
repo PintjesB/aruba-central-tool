@@ -1317,6 +1317,77 @@ def discover_profile_types(assignments, scope_maps):
             "unresolved_records": unresolved, "complete": False}
 
 
+def observed_identity_candidates(view):
+    """Use exact source resource identities and count evidence, never field names alone."""
+    instances = view.get("observed_instances", [])
+    raw = view.get("committed", {}).get("raw")
+    if not isinstance(raw, dict) or not instances or "" in instances:
+        return set()
+    metadata = raw.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return set()
+    lists = [v for k, v in raw.items() if k != "metadata" and isinstance(v, list)]
+    if len(lists) != 1 or not lists[0] or any(not isinstance(v, dict) for v in lists[0]):
+        return set()
+    items = lists[0]
+    if len(items) != len(instances) or len(set(instances)) != len(instances):
+        return set()
+    candidates = set.intersection(*(set(item) for item in items)) - {"@"}
+    matches = set()
+    for key in candidates:
+        if not isinstance(key, str) or not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]{0,127}", key):
+            continue
+        values = [item[key] for item in items]
+        if any(type(v) not in (str, int) for v in values):
+            continue
+        if {str(v) for v in values} != set(instances):
+            continue
+        parsed = module_view(raw, key, "ANY")
+        if parsed["status"] != "list_parsed" or not parsed.get("count_confirmed"):
+            continue
+        if annotated_committed_local(raw, key)["status"] != "list_parsed":
+            continue
+        matches.add(key)
+    return matches
+
+
+def qualify_observed_identities(evidence):
+    """Produce provisional source-scope read evidence; never promote an inferred write adapter.
+
+    Require a unique field matching inventory identities in every nonempty
+    committed capture for the persona, with two distinct observed identities.
+    """
+    by_persona = defaultdict(list)
+    for view in evidence["source_views"]:
+        by_persona[view["persona"]].append(view)
+    results = {}
+    for persona, views in sorted(by_persona.items()):
+        nonempty = [v for v in views if v.get("observed_instances")]
+        identities = {i for v in nonempty for i in v["observed_instances"] if i}
+        sets = [observed_identity_candidates(v) for v in nonempty]
+        common = set.intersection(*sets) if sets else set()
+        if len(identities) < 2 or len(common) != 1:
+            results[persona] = {"status": "identity_unresolved", "source_scopes": len(views),
+                                "candidate_count": len(common), "safe_to_apply": False}
+            continue
+        identity = next(iter(common))
+        reviews = []
+        for view in views:
+            committed = view.get("committed", {}).get("raw")
+            effective = view.get("effective", {}).get("raw")
+            local = annotated_committed_local(committed, identity)
+            actual = module_view(effective, identity, "ANY")
+            review = review_module_scope(local, actual, None)
+            reviews.append({"scope": view["scope"], "review": review,
+                            "local_status": local["status"], "effective_status": actual["status"]})
+        qualified = sum(r["review"]["qualified"] for r in reviews)
+        results[persona] = {"status": "source_identity_observed", "identity_field": identity,
+                            "source_scopes": len(views), "comparable_source_scopes": qualified,
+                            "reviews": reviews, "full_scope_coverage_verified": False,
+                            "safe_to_apply": False}
+    return results
+
+
 def inspect_unadapted_profiles(client, discovery, assignments, scope_maps):
     """Inspect observed source scopes for modules without an explicit adapter.
 
@@ -1366,6 +1437,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps):
         result[module] = {"status": "unqualified_adapter", "source_views": evidence,
                           "library": capture(module, {"view-type": "LIBRARY", "detailed": "true"}),
                           "safe_to_apply": False}
+        result[module]["identity_evidence"] = qualify_observed_identities(result[module])
         print(f"  Unadapted profile type: source views={len(evidence)}", flush=True)
     return result
 
