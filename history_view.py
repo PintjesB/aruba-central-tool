@@ -100,7 +100,7 @@ def standards_view(workspace, query):
     loaded, empty = load(workspace, query, "Standards compliance", "standards")
     if empty:
         return empty
-    from local_standards import records, read_record, evaluate_standard, exception_candidates, active_exceptions
+    from local_standards import records, read_record, evaluate_standard, exception_candidates, active_exceptions, exception_history
     from datetime import date, timedelta
     root, name, bundle, picker = loaded
     saved = records(workspace.directory, "standard")
@@ -190,6 +190,7 @@ def standards_view(workspace, query):
                 '<button type="submit">Save local standard</button></form><p class="note">This freezes the selected baseline and module set; later changes require a new version.</p></section>')
         candidates = exception_candidates(bundle, standard, result) if standard else {}
         approved = active_exceptions(workspace.directory, standard_id, candidates) if standard else {}
+        history = exception_history(workspace.directory, standard_id, candidates) if standard else []
         for row in result["findings"]:
             row["approved_exceptions"] = [v for key, approvals in approved.items()
                                          if candidates[key]["scope"] == row["scope"] for v in approvals]
@@ -229,4 +230,18 @@ def standards_view(workspace, query):
             "configuration-standards", {"baseline_snapshot": baseline_name, "current_snapshot": name,
                                         "persona": persona, "module": module, "target_scope": target, "standard_id": standard_id, "report": result}) + '</div>' + table(("Device", "Result", "Module results", "Differences / gaps", ""), rows, search=True)
         body += '<p class="note">The selected reference is an explicit comparison standard, not an automatically approved network policy. A match concerns captured configuration only. Record intentional exceptions before any remediation.</p></section>'
+    if standard and reference and module and target:
+        rows = []
+        for item in history:
+            detail = '<h3>Approval reason</h3><p>' + e(item["reason"]) + '</p>' + change_detail(item["observation"])
+            for revocation in item["revocations"]:
+                detail += '<p>Revoked: ' + e(revocation["created_at"]) + ' · ' + e(revocation["reason"]) + '</p>'
+            if item["state"] != "revoked":
+                detail += (post_form("revoke-exception", {"standard_id": standard_id, "snapshot": name, "exception_id": item["id"]}) +
+                           '<label>Revocation reason<input name="reason" required maxlength="500"></label>'
+                           '<button type="submit">Revoke approval</button></form>')
+            rows.append(tr(e(item["device"]), e(module_label(item["module"])), e(item["profile"]),
+                           badge(pretty(item["state"])), e(item["expiry"]), inspect("Exception history", detail, "Review")))
+        body += '<section><h2>Exception history</h2>' + table(("Device", "Module", "Profile", "Approval state", "Expiry", ""), rows, search=True)
+        body += '<p class="note">Expired, revoked and currently unobserved approvals remain visible for audit. Only exact active approvals affect the current assessment.</p></section>'
     return page("Standards compliance", body, workspace.nav(name))

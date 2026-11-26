@@ -97,7 +97,8 @@ Laboratory-only initial VLAN write adapter implemented in `vlan_change.py`: exac
 - [x] Select candidates individually or by exact repeated-profile group, preserving all observed source scopes.
 - [x] Preview candidate destination scope membership from captured IDs, distinguishing intended, additional and unknown recipients; verified effective blast radius and protected-exception handling remain pending.
 - [ ] Choose reuse existing Library profile, create Library profile plus assign, create supported local profile at a higher scope, or remove redundant override.
-- [ ] Show ordered operations, before/expected-after configuration, reference changes and rollback journal. Block a plan when any prerequisite is unknown.
+- [x] Group browser consolidation previews into preparation, verification and cleanup phases; count known and uncertain recipients and block export on overlapping selections or missing destinations. Library migration worklists show recipient-specific retained-profile visibility.
+- [ ] Construct qualified executable operations, before/expected-after verification and rollback journal for modules beyond the lab-only VLAN adapter. Block execution when any prerequisite is unknown.
 - [ ] Capture fresh evidence just before execution, detect drift and reject stale plans.
 - [ ] Implement explicit approval, per-module write adapters, least-privilege authentication, idempotent operations, phased verification and failure handling.
 - [ ] Create/reuse and verify target configuration before removing local definitions. Verify every affected device after changes, including operational checks where meaningful.
@@ -111,7 +112,8 @@ No live write may be authorized by profile similarity, inferred identity, or a s
 - [ ] NAC MAC identity/tag/role/VLAN assignment inspection and controlled bulk administration.
 - [x] Configuration drift worklist compares saved and effective profile bodies, source annotations, Library definitions, observed assignments and scope metadata across explicitly confirmed same-tenant snapshots. Require region/Global agreement and common device serial evidence; keep missing reads and unverified absence distinct.
 - [x] Standards compliance worklist compares explicitly selected reference-device effective configuration against known recipients of a selected target scope, with count-aware differences and unknown membership.
-- [ ] Persist versioned approved standards, field-level exceptions and drift exports; qualify raw-only modules and live customer coverage.
+- [x] Persist named immutable standard versions with baseline checksums, exact module sets and target scope identities. Approve exact observed profile deviations with a reason and expiry; retain revocation history. Export private drift and standards evidence.
+- [ ] Support individually approved field subsets and validate live customer coverage; current approvals apply to the exact complete profile deviation, not a wildcard or field subset.
 - [ ] Multi-customer workspaces with explicit tenant separation, credential entry in memory only, no persistent API credentials and no cross-tenant comparison by default.
 
 ## Vendor references
