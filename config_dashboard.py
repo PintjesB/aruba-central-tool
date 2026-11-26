@@ -140,6 +140,7 @@ def render_dashboard(bundle, records, shape):
                      "name": name, "status": status,
                      "local": "yes" if row.get("local") is not None and status != "default_profile" else "no",
                      "category": category, "repeated": str(repeated_id),
+                     "qualified": "yes" if review["qualified"] else "no",
                      "review": "yes" if status in REVIEW else "no"}
             attributes = " ".join(f'data-{k}="{e(v)}"' for k, v in attrs.items())
             cells = (persona, module, scope["scope_kind"], name, row["identity"] or "—")
@@ -195,7 +196,7 @@ def render_dashboard(bundle, records, shape):
         '<div class="filters">' + filters +
         '<label class="search">Search<input id="query" type="search" placeholder="Scope, profile, status or setting"></label>'
         '<button id="reset">Reset filters</button></div>'
-        '<div class="table-bar"><span id="count" aria-live="polite"></span><label><input id="grouped" type="checkbox"> Group identical candidates</label><label>Rows per page '
+        '<div class="table-bar"><span id="count" aria-live="polite"></span><label><input id="grouped" type="checkbox"> Group identical candidates</label><label><input id="diagnostics" type="checkbox"> Include unqualified evidence</label><label>Rows per page '
         '<select id="page-size"><option>25</option><option selected>50</option><option>100</option></select></label></div>'
         '<div class="table-wrap"><table id="findings"><thead><tr>' +
         "".join(f'<th><button data-sort="{i}">{label}</button></th>'
@@ -269,7 +270,7 @@ function matchQuick(r){
 function update(reset=false){
   if(reset)page=0;
   const q=$('query').value.trim().toLowerCase();
-  filtered=rows.filter(r=>matchQuick(r)&&keys.every(k=>!$(k).value||r.dataset[k]===$(k).value)&&searchable.get(r).includes(q));
+  filtered=rows.filter(r=>($('diagnostics').checked||r.dataset.qualified==='yes')&&matchQuick(r)&&keys.every(k=>!$(k).value||r.dataset[k]===$(k).value)&&searchable.get(r).includes(q));
   filtered.sort((a,b)=>(ascending?1:-1)*collator.compare(a.cells[sort].textContent,b.cells[sort].textContent));
   // Preserve all matching instances for filtering and export.
   const seen=new Set();
@@ -294,12 +295,13 @@ function update(reset=false){
     if(Number(b.dataset.sort)===sort)b.parentElement.setAttribute('aria-sort',ascending?'ascending':'descending');
   }
 }
-for(const b of document.querySelectorAll('[data-quick]'))b.addEventListener('click',()=>{quick=b.dataset.quick;update(true);});
+for(const b of document.querySelectorAll('[data-quick]'))b.addEventListener('click',()=>{quick=b.dataset.quick;$('diagnostics').checked=quick==='unqualified'||quick==='review';update(true);});
 for(const k of keys)$(k).addEventListener('change',()=>update(true));
 $('query').addEventListener('input',()=>update(true));
 $('page-size').addEventListener('change',()=>update(true));
 $('grouped').addEventListener('change',()=>update(true));
-$('reset').addEventListener('click',()=>{for(const k of keys)$(k).value='';$('query').value='';$('grouped').checked=false;quick='candidate';update(true);});
+$('diagnostics').addEventListener('change',()=>update(true));
+$('reset').addEventListener('click',()=>{for(const k of keys)$(k).value='';$('query').value='';$('grouped').checked=false;$('diagnostics').checked=false;quick='candidate';update(true);});
 $('prev').addEventListener('click',()=>{page--;update();});
 $('next').addEventListener('click',()=>{page++;update();});
 for(const b of table.querySelectorAll('[data-sort]'))b.addEventListener('click',()=>{
