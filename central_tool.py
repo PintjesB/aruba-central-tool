@@ -1930,10 +1930,15 @@ def vlan_evidence_summary(bundle):
                 continue
             sid = scope["scope"]
             for row in scope["review"]["profiles"]:
-                if row["local"] is None or row["global_reference"] is None or row["identity"] == "1":
+                if row["local"] is None or row["global_reference"] is None:
                     continue
                 evidence = vlan_comparison_evidence(bundle, persona, sid, row)
                 sources.update(evidence["sources"].values())
+                if row["identity"] == "1":
+                    states["protected_default_vlan"] += 1
+                    fields.update(safe_difference_path(d["path"]) for d in (evidence["differences"] or [])
+                                  if d["kind"] in ("missing_local", "missing_reference"))
+                    continue
                 if evidence["conflicts"]:
                     states["conflicting_observations"] += 1
                 elif evidence["differences"] == []:
