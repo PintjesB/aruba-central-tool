@@ -355,6 +355,73 @@ def vlan_map(profiles):
     return result
 
 
+def review_local_profiles(scopes, baseline, library):
+    """Review each local definition, including singletons, without proposing writes."""
+    device_maps = {s["id"]: vlan_map(s["effective"]) for s in scopes if s["kind"] == "device"}
+    results = []
+    for scope in scopes:
+        effective = vlan_map(scope["effective"])
+        annotated = vlan_map(scope.get("annotated", []))
+        for vid, body in sorted(vlan_map(scope["local"]).items(), key=lambda pair: int(pair[0])):
+            signature = canonical(body)
+            global_match = vid in baseline and canonical(baseline[vid]) == signature
+            library_state = ("identical" if vid in library and canonical(library[vid]) == signature
+                             else "conflict" if vid in library else "absent")
+            matching, differing, missing = [], [], []
+            for device_id, config in device_maps.items():
+                if vid not in config:
+                    missing.append(device_id)
+                elif canonical(config[vid]) == signature:
+                    matching.append(device_id)
+                else:
+                    differing.append(device_id)
+            annotation = annotated.get(vid, {}).get("@", {})
+            if not isinstance(annotation, dict):
+                annotation = {}
+            same_effective = vid in effective and canonical(effective[vid]) == signature
+            if annotation.get("aruba-annotation:is_default") is True:
+                recommendation = "retain_default"
+            elif not same_effective:
+                recommendation = "inspect_local_effective_difference"
+            elif scope["kind"] != "global" and global_match:
+                recommendation = "review_restore_global_inheritance"
+            elif library_state == "conflict":
+                recommendation = "resolve_library_conflict"
+            elif library_state == "identical":
+                recommendation = "review_reuse_library_profile"
+            else:
+                recommendation = "review_create_library_profile"
+            results.append({
+                "scope": scope["id"], "scope_kind": scope["kind"], "scope_name": scope["name"],
+                "vlan": vid, "profile": body, "library_state": library_state,
+                "matches_global": global_match, "matches_scope_effective": same_effective,
+                "matching_devices": matching, "different_devices": differing,
+                "missing_devices": missing,
+                "global_coverage": ("all_scanned_devices_match" if device_maps and len(matching) == len(device_maps)
+                                    else "not_all_scanned_devices_match"),
+                "annotations": annotation,
+                "recommendation": recommendation, "status": "review_only"
+            })
+    return results
+
+
+def print_review_summary(data):
+    """Print only aggregate counts and ordinal device labels, no customer identifiers."""
+    candidates = data["local_profile_review"]
+    print("Local profile review (read-only):")
+    for name, count in sorted(Counter(row["recommendation"] for row in candidates).items()):
+        print(f"  {name}: {count}")
+    print("Device deviations from Global:")
+    for index, scope in enumerate((s for s in data["scope_comparisons"] if s["kind"] == "device"), 1):
+        print(f"  Device {index}: local={len(scope['local_vlan_ids'])}, "
+              f"matching-global-local={len(scope['local_matching_global'])}, "
+              f"additional={len(scope['additional_vs_global'])}, "
+              f"missing={len(scope['missing_vs_global'])}, "
+              f"different={len(scope['different_vs_global'])}")
+    print(f"Excluded inventory entries: {data['excluded_device_count']}")
+    print("No changes are authorized; review full report locally.")
+
+
 def report(snapshot):
     if snapshot.get("schema") != 1:
         raise ValueError("Unsupported snapshot schema")
@@ -405,6 +472,7 @@ def report(snapshot):
                            "status": "review_only"})
     return {"schema": 1, "captured_at": snapshot["captured_at"], "persona": snapshot["persona"],
             "scope_comparisons": comparisons, "duplicate_local_candidates": candidates,
+            "local_profile_review": review_local_profiles(scopes, baseline, library),
             "excluded_device_count": len(snapshot["excluded_devices"]),
             "safe_to_apply": False,
             "warning": "Exact equality is not proof of safe inheritance; verify annotations, authority, dependencies and all affected devices."}
@@ -446,6 +514,8 @@ def main():
         else:
             data = report(json.loads(args.snapshot.read_text(encoding="utf-8")))
         write_private(args.output, data)
+        if args.command == "report":
+            print_review_summary(data)
         print("Completed read-only operation; output stored locally.")
     except (ValueError, OSError, KeyError, RuntimeError) as exc:
         # Do not log API payloads, URLs containing query data, or secrets.
