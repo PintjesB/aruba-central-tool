@@ -3083,7 +3083,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress,
                                            scopes_by_persona=scopes_by_persona, deep_catalog=deep_catalog, checkpoint=checkpoint)
     from nac_authorization import capture_nac_configuration
-    nac_configuration = capture_nac_configuration(client, progress)
+    nac_configuration = capture_nac_configuration(client, progress, checkpoint=checkpoint)
     from nac_review import read_mac_registrations
     audit_progress(progress, "NAC registrations", 0, 0, "Reading Central NAC MAC registrations")
     nac_registrations = read_mac_registrations(client, progress)
