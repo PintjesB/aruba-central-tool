@@ -738,6 +738,42 @@ class Tests(unittest.TestCase):
         self.assertEqual(data["ACCESS_SWITCH"]["3"]["status"], "monitoring_read_failed")
         self.assertNotIn("CAMPUS_AP", data)
 
+    def test_vlan_instance_reads_validate_identity_and_local_source(self):
+        from central_tool import read_vlan_instance, VLAN
+        annotation = {"aruba-annotation:object_type": "LOCAL",
+                      "aruba-annotation:inherited": False}
+        fake = Fake([{"l2-vlan": [{"vlan": 1, "name": "DEFAULT_VLAN_1", "enable": True, "@": annotation}]},
+                     {"vlan": 1, "name": "Observed"},
+                     {"vlan": 2, "name": "Wrong"},
+                     {"vlan": 1, "name": "Unverified local"}])
+        local = read_vlan_instance(fake, "ACCESS_SWITCH", "12", "1", False)
+        self.assertEqual(local["status"], "observed")
+        self.assertEqual(local["profile"]["enable"], True)
+        self.assertEqual(fake.calls[0][0], VLAN + "/1")
+        self.assertEqual(fake.calls[0][1]["object-type"], "LOCAL")
+        self.assertEqual(fake.calls[0][1]["detailed"], "true")
+        actual = read_vlan_instance(fake, "ACCESS_SWITCH", "12", "1", True)
+        self.assertEqual(actual["profile"]["name"], "Observed")
+        self.assertNotIn("enable", actual["profile"])
+        self.assertNotIn("object-type", fake.calls[1][1])
+        self.assertNotEqual(read_vlan_instance(fake, "ACCESS_SWITCH", "12", "1", True)["status"], "observed")
+        self.assertEqual(read_vlan_instance(fake, "ACCESS_SWITCH", "12", "1", False)["status"], "source_unverified")
+
+    def test_vlan_instance_capture_only_targets_omitted_fields(self):
+        from central_tool import capture_vlan_instance_details
+        from unittest.mock import patch
+        data = {"ACCESS_SWITCH": {"modules": {"layer2-vlan": {"scope_results": [
+            {"scope": "12", "scope_kind": "device", "review": {"qualified": True, "profiles": [
+                {"identity": "1", "local": {"vlan": 1}, "effective": {"vlan": 1}},
+                {"identity": "10", "local": {"vlan": 10, "name": "Complete", "enable": True},
+                 "effective": {"vlan": 10, "name": "Complete", "enable": True}},
+                {"identity": "20", "local": None, "effective": {"vlan": 20}}]}}]}}}}
+        with patch("central_tool.read_vlan_instance", return_value={"status": "observed", "profile": {"vlan": 1}}) as read:
+            details = capture_vlan_instance_details(object(), data, workers=1)
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual(set(details["ACCESS_SWITCH"]["12"]["1"]), {"local", "effective"})
+        self.assertNotIn("10", details["ACCESS_SWITCH"]["12"])
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
