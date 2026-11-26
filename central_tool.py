@@ -170,11 +170,48 @@ def inventory(client):
 
 
 def vlan_rows(client, **params):
-    # Live EU-2 rejects limit=100, but accepts limit=10 with an explicit offset.
-    # Preserve paging instead of assuming an unpaginated response is complete.
+    """Library uses nested pagination; scoped views use unpaginated reads."""
     try:
-        return offset_rows(client, VLAN, ("l2-vlan",), page_size=10, **params)
-    except APIError as exc:
+        if params.get("view-type") != "LIBRARY":
+            payload = client.get(VLAN, **params)
+            batch = rows(payload, ("l2-vlan",))
+            meta = payload.get("metadata", {})
+            if not isinstance(meta, dict):
+                raise ValueError("Unexpected scoped VLAN metadata")
+            if "total" in meta and meta["total"] != len(batch):
+                raise ValueError("Incomplete scoped VLAN response")
+            return batch
+
+        result, seen = [], set()
+        offset, total = 0, None
+        for _ in range(10000):
+            try:
+                payload = client.get(VLAN, **params, limit=10, offset=offset)
+            except APIError as exc:
+                raise APIError(f"{VLAN} (limit=10, offset={offset})", exc.status) from None
+            batch = rows(payload, ("l2-vlan",))
+            metadata = payload.get("metadata")
+            if not isinstance(metadata, dict):
+                raise ValueError("Missing VLAN Library pagination metadata")
+            page_total, count, next_offset = (metadata.get(k) for k in ("total", "count", "offset"))
+            if (any(type(v) is not int or v < 0 for v in (page_total, count, next_offset))
+                    or count != len(batch) or count > 10 or next_offset != offset + count
+                    or next_offset > page_total or (total is not None and page_total != total)):
+                raise ValueError("Inconsistent VLAN Library pagination metadata")
+            total = page_total
+            if batch:
+                signature = canonical(batch)
+                if signature in seen:
+                    raise ValueError("Repeated VLAN Library page")
+                seen.add(signature)
+                result.extend(batch)
+            if next_offset == total:
+                return result
+            if not count:
+                raise ValueError("VLAN Library pagination stopped before total")
+            offset = next_offset
+        raise ValueError("VLAN Library pagination safety limit reached")
+    except (APIError, ValueError) as exc:
         safe = {k: v for k, v in params.items() if k != "scope-id"}
         raise RuntimeError(f"{exc}; VLAN query: {canonical(safe)}") from None
 
@@ -203,10 +240,11 @@ def scan(client, persona):
         raise ValueError("Duplicate scope IDs; stack or hierarchy semantics require validation")
     if not any(s["kind"] == "device" for s in scopes):
         raise ValueError("No devices matched the selected persona; check inventory and configuration authority")
-    print(f"Discovered {len(scopes)} scopes; reading VLAN Library", flush=True)
+    print(f"Discovered {len(scopes)} scopes ({sum(s[\"kind\"] == \"device\" for s in scopes)} matching devices); reading VLAN Library", flush=True)
     library = vlan_rows(client, **{"view-type": "LIBRARY", "detailed": "false"})
     print(f"Library VLAN profiles: {len(library)}; reading shared assignments", flush=True)
     assignments = client.get(ALPHA + "/config-assignments")
+    print(f"Shared assignments: {len(rows(assignments, ("config-assignment",)))}", flush=True)
     for index, scope in enumerate(scopes, 1):
         print(f"Reading VLAN scope {index}/{len(scopes)} ({scope['kind']})", flush=True)
         params = {"view-type": "LOCAL", "scope-id": scope["id"], "device-function": persona}
