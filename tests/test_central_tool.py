@@ -681,6 +681,19 @@ class Tests(unittest.TestCase):
         self.assertEqual(keyed_profile_read(fake, "dns", "name", "1/1/24", {}, None)["status"], "invalid_selector")
         self.assertEqual(len(fake.calls), 1)
 
+    def test_observed_named_adapters_have_exact_keyed_contracts(self):
+        from central_tool import CONFIG_MODULES, keyed_profile_contracts
+        contracts = keyed_profile_contracts()
+        for module in ("net-services", "named-vlan", "role-gpids", "radios", "dot1xauth",
+                       "captive-portal", "auth-server-global-config", "devicefingerprinting",
+                       "client-iptracker", "traffic-insight"):
+            self.assertEqual(CONFIG_MODULES[module][0], "name")
+            self.assertEqual(contracts[module], "name")
+            self.assertFalse(CONFIG_MODULES[module][2])
+        self.assertIn("CAMPUS_AP", CONFIG_MODULES["radios"][1])
+        self.assertNotIn("ACCESS_SWITCH", CONFIG_MODULES["radios"][1])
+        self.assertIn("ACCESS_SWITCH", CONFIG_MODULES["dot1xauth"][1])
+
     def test_configuration_audit_uses_persona_catalog(self):
         from central_tool import configuration_audit
         from unittest.mock import patch
