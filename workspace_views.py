@@ -101,38 +101,16 @@ ASSESSMENT_LABELS = {
 
 
 def vlan_explanation(local, reference, effective=None, evidence=None):
-    from central_tool import assess_vlan_reference
+    from central_tool import comparison_fields
+    from workspace_ui import setting_value
     if local is None or reference is None:
         return ""
-    saved = local
     if evidence is not None:
-        local = evidence['local']
-        effective = evidence['comparison']
-    # The original saved/reference diff alone hides fields present only in
-    # effective or recovered configuration. Include every observed setting,
-    # keeping precise nested difference paths where available.
-    comparisons = {}
-    for body in (saved, local, effective):
-        if isinstance(body, dict):
-            for d in assess_vlan_reference(body, reference)["differences"]:
-                comparisons.setdefault(tuple(d["path"]), d)
-    for key in sorted(set().union(*(b.keys() for b in (saved, local, effective, reference) if isinstance(b, dict)))):
-        if not any(path and path[0] == key for path in comparisons):
-            comparisons[(key,)] = {"path": [key], "assessment": "matching"}
-    # Always expose the known VLAN settings, including when every source omits
-    # them. An absent value is not a disabled setting or an equality result.
-    for key in ("name", "enable", "voice-enable", "igmp", "mld", "dhcpv4-snooping", "dhcpv6-snooping"):
-        if not any(path and path[0] == key for path in comparisons):
-            comparisons[(key,)] = {"path": [key], "assessment": "unavailable"}
-    def has_value(body, path):
-        for key in path:
-            if isinstance(body, dict) and key in body:
-                body = body[key]
-            elif isinstance(body, list) and isinstance(key, int) and 0 <= key < len(body):
-                body = body[key]
-            else:
-                return False
-        return body is not None
+        local = evidence["local"]
+        effective = evidence["comparison"]
+    assessment = comparison_fields(effective, reference, vlan=True,
+                                   conflicts=(evidence or {}).get("conflicts", ()), saved=local)
+    comparisons = assessment["rows"]
     def observed_cell(body, path, source_key):
         value = body
         for key in path:
@@ -157,27 +135,15 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
         elif isinstance(value, str):
             display = value
         else:
-            display = json.dumps(value, ensure_ascii=False)
+            return setting_value(value) + (f'<small>{e(source)}</small>' if source else '')
         return e(display) + (f'<small>{e(source)}</small>' if source else '')
     def result_for(d):
-        path = d["path"]
-        if not has_value(effective, path) or not has_value(reference, path):
-            return "unavailable", "Unavailable", "Cannot compare: value unavailable"
-        if evidence is not None and evidence["conflicts"]:
-            # A conflict on this field is not a verified match. Keep the
-            # full conflict list visible separately, without flagging every row.
-            field = ".".join(map(str, path))
-            if any(v == field or v.endswith("." + field) or ("." + field + ".") in v
-                   for v in evidence["conflicts"]):
-                return "conflict", "Conflict", "Check conflicting observations"
-        def at(body):
-            for key in path:
-                body = body[key]
-            return body
-        from central_tool import canonical
-        if canonical(at(effective)) == canonical(at(reference)):
-            return "matching", "Match", "Observed value matches reference"
-        return "different", "Different", "Observed value differs from reference"
+        return {
+            "matching": ("matching", "Match", "Observed value matches reference"),
+            "different": ("different", "Different", "Observed value differs from reference"),
+            "unavailable": ("unavailable", "Unavailable", "Cannot compare: value unavailable"),
+            "conflict": ("conflict", "Conflict", "Check conflicting observations"),
+        }[d["state"]]
     conflict = ('<p class="note">Conflicting observations: ' + e(', '.join(evidence['conflicts'])) + '. Resolve before changing configuration.</p>') if evidence and evidence['conflicts'] else ''
     labels = {"vlan": "VLAN ID", "name": "Name", "enable": "Administrative state",
               "voice-enable": "Voice VLAN", "igmp": "IGMP snooping", "mld": "MLD snooping",
@@ -188,25 +154,34 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
             return labels.get(path[0], pretty(path[0]))
         return ".".join(map(str, path))
     rows = []
-    counts = Counter()
-    priority = {"different": 0, "conflict": 1, "unavailable": 2, "matching": 3}
-    ordered = sorted(comparisons.values(), key=lambda d: (
+    unavailable_rows = []
+    context_rows = []
+    counts = assessment["counts"]
+    priority = {"different": 0, "conflict": 1, "matching": 2, "unavailable": 3}
+    ordered = sorted(comparisons, key=lambda d: (
         priority[result_for(d)[0]], list(labels).index(d["path"][0]) if d["path"][0] in labels else len(labels),
         tuple(map(str, d["path"]))))
     for d in ordered:
         kind, label, explanation = result_for(d)
-        counts[kind] += 1
         tone = {"matching": "good", "different": "warn", "conflict": "warn", "unavailable": "neutral"}[kind]
         result = f'<span class="tag {tone}" title="{e(explanation)}">{e(label)}</span>'
-        rows.append(tr(e(field_label(d["path"])), observed_cell(local, d["path"], "local"),
-                       observed_cell(effective, d["path"], "comparison"), observed_cell(reference, d["path"], "reference"),
-                       result, attrs=f' data-comparison="{kind}"'))
+        # Operational context does not count toward comparable configuration.
+        target = context_rows if d["path"][0] in ("vlan", "is-l3-vlan") else unavailable_rows if kind == "unavailable" else rows
+        target.append(tr(e(field_label(d["path"])), observed_cell(local, d["path"], "local"),
+                         observed_cell(effective, d["path"], "comparison"), observed_cell(reference, d["path"], "reference"),
+                         result, attrs=f' data-comparison="{kind}"'))
     summary = '<div class="comparison-summary" aria-label="Comparison summary">' + "".join(
         badge(f"{counts[kind]} {label}", tone) for kind, label, tone in (
             ("different", "different", "warn"), ("conflict", "conflicting", "warn"),
-            ("unavailable", "unavailable", "neutral"), ("matching", "matching", "good"))) + '</div>'
-    return summary + table(("Setting", "Saved locally", "Effective at source", "Global / reference", "Result"),
-                           rows, style="comparison-table") + conflict + '<p class="note">Unavailable: Central did not provide a verified value. Not returned: the saved local field was omitted. A named switch source indicates device evidence; otherwise the value is from Central configuration, not a live switch CLI measurement.</p>'
+            ("matching", "matching", "good"), ("unavailable", "unavailable", "neutral")) if counts[kind]) + '</div>'
+    headers = ("Setting", "Saved locally", "Effective at source", "Global / reference", "Result")
+    main = table(headers, rows, style="comparison-table") if rows else '<p class="empty">No verified configuration values to compare.</p>'
+    gaps = (f'<details class="comparison-gaps"{" open" if not rows else ""}><summary>{len(unavailable_rows)} unavailable settings</summary>'
+            + table(headers, unavailable_rows, style="comparison-table")
+            + '<p class="note">Unavailable fields remain unverified; they are not assumed equal or disabled.</p></details>') if unavailable_rows else ""
+    context = ('<details><summary>VLAN identity and operational context</summary>'
+               + table(headers, context_rows, style="comparison-table") + '</details>') if context_rows else ""
+    return summary + main + gaps + context + conflict + '<p class="note">Not returned: the saved local field was omitted. A named switch source indicates device evidence; otherwise the value is from Central configuration, not a live switch CLI measurement.</p>'
 
 
 def vlan_instance_context(bundle, persona, sources, identity):
