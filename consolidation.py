@@ -227,10 +227,14 @@ def profile_recommendations(bundle):
                             "safe_to_apply": False}
                     fallbacks.append({"scope": scope["scope"], "name": names.get(scope["scope"], scope["scope"]), **fallback})
                 exact_nearest = bool(fallbacks) and all(f["status"] == "matching_fallback" for f in fallbacks)
-                if exact_global or exact_nearest:
+                atomic_match = bool(fallbacks) and all(f["status"] in ("matching_fallback", "matching_settings_identity_changed") for f in fallbacks)
+                if exact_global or exact_nearest or atomic_match:
                     action = "remove_override"
                     if exact_nearest:
                         target, ref = "Nearest observed inherited definitions", local
+                    elif atomic_match:
+                        target, ref = "Review matching nearest settings; profile identity changes", None
+                        conflicts.append("Atomic profile identity would change; removal preview is blocked until references and assignments are verified.")
                     elif any(f["status"] == "different_fallback" for f in fallbacks):
                         target, ref = "Retain: nearer scope differs", global_ref
                         conflicts.append("At least one device would inherit a different observed definition; removal preview is blocked.")

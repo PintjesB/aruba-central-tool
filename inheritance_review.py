@@ -4,7 +4,9 @@ from consolidation import scope_memberships
 
 PRECEDENCE = ("group", "site", "collection", "global")
 # Identity-preserving, additive profile families already reviewed by the advisor.
-SUPPORTED = {"layer2-vlan", "roles", "wlan-ssids", "auth-servers"}
+ADDITIVE = {"layer2-vlan", "roles", "wlan-ssids", "auth-servers"}
+ATOMIC = {"dns", "ntp"}
+SUPPORTED = ADDITIVE | ATOMIC
 
 
 def nearest_fallback(entry, module, device, identity, local, effective, annotations):
@@ -16,6 +18,8 @@ def nearest_fallback(entry, module, device, identity, local, effective, annotati
     """
     result = {"status": "unresolved", "source": None, "chain": [],
               "differences": None, "blockers": [], "safe_to_apply": False}
+    atomic = module in ATOMIC
+    result["mode"] = "atomic" if atomic else "additive" if module in ADDITIVE else "unqualified"
     if module not in SUPPORTED:
         result["blockers"].append("Module inheritance semantics not qualified")
         return result
@@ -34,8 +38,14 @@ def nearest_fallback(entry, module, device, identity, local, effective, annotati
         result["blockers"].append("Device membership unavailable")
         return result
     scopes = {s["id"]: s for s in entry["scopes"]}
-    kinds = {s["kind"] for s in scopes.values()}
     views = {s["scope"]: s for s in entry["modules"].get(module, {}).get("scope_results", [])}
+    if atomic:
+        for key in ("local_view", "effective_view"):
+            view = views.get(device, {}).get(key, {})
+            if (view.get("status") != "list_parsed" or view.get("count_confirmed") is not True
+                    or set(view.get("profiles", {})) != {identity}):
+                result["blockers"].append("Atomic device profile cardinality not confirmed")
+                return result
     for kind in PRECEDENCE:
         sid = membership[kind]
         if sid is None:
@@ -50,7 +60,16 @@ def nearest_fallback(entry, module, device, identity, local, effective, annotati
             result["chain"].append({**step, "status": "read_unqualified"})
             result["blockers"].append(f"{kind} effective configuration unavailable")
             continue
-        raw = view.get("profiles", {}).get(identity)
+        profiles = view.get("profiles", {})
+        source_identity = identity
+        if atomic:
+            if view.get("count_confirmed") is not True or len(profiles) > 1:
+                result["chain"].append({**step, "status": "atomic_cardinality_unverified"})
+                result["blockers"].append(f"{kind} atomic profile cardinality not confirmed")
+                continue
+            if profiles:
+                source_identity = next(iter(profiles))
+        raw = profiles.get(source_identity)
         if raw is None:
             confirmed = view.get("count_confirmed") is True
             result["chain"].append({**step, "status": "absent_count_confirmed" if confirmed else "absence_unverified"})
@@ -70,11 +89,18 @@ def nearest_fallback(entry, module, device, identity, local, effective, annotati
                 result["blockers"].append(f"{kind} profile source not established")
             continue
         body = profile_body(raw)
-        result["source"] = {**step, "body": body, "object_type": ann["aruba-annotation:object_type"]}
+        result["source"] = {**step, "body": body, "identity": source_identity, "object_type": ann["aruba-annotation:object_type"]}
         result["chain"].append({**step, "status": "direct_definition"})
         result["differences"] = field_differences(local, body)
+        if atomic:
+            result["setting_differences"] = field_differences(
+                {k: v for k, v in local.items() if k != "name"},
+                {k: v for k, v in body.items() if k != "name"})
         if result["blockers"]:
             result["status"] = "candidate_unverified"
+        elif atomic and source_identity != identity and not result["setting_differences"]:
+            result["status"] = "matching_settings_identity_changed"
+            result["blockers"].append("Atomic fallback changes profile identity; verify references and assignment effects")
         else:
             result["status"] = "matching_fallback" if not result["differences"] else "different_fallback"
         break
