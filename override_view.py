@@ -159,7 +159,9 @@ def overrides_view(workspace, query):
         ("Source", "Read outcomes"), [tr(e(label), e(", ".join(f"{key}: {value}" for key, value in diagnostics[key].items()) or "No observations"))
          for key, label in (("individual_vlan_reads", "Individual VLAN API"), ("switch_cli", "Switch show vlan"),
                             ("monitoring", "Switch monitoring"), ("recovered_values", "Recovered field values"),
-                            ("remaining_fields", "Unresolved field occurrences"))]) + '</details>'
+                            ("remaining_fields", "Unresolved field occurrences"))] +
+        [tr(e(field), e(", ".join(f"{key}: {value}" for key, value in outcomes.items())))
+         for field, outcomes in sorted(diagnostics["feature_cli"].items())]) + '</details>'
     body = (intro("Device overrides", "Find saved device-level configuration and compare it directly with Global.", picker)
             + '<section>' + filters + '</section><div class="workflow-grid">' + "".join(cards) + '</div>'
             + '<section><h2>Device-local configuration</h2><p class="muted">One row per saved local profile, excluding other Central defaults. VLAN 1 is shown for inspection only. Device-only interfaces are excluded because there is no comparable Global profile.</p>'
