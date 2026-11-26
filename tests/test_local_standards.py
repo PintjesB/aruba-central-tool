@@ -84,6 +84,60 @@ class LocalStandardTests(unittest.TestCase):
         self.assertIn("Policy updated", html)
         self.assertIn("Approve exact deviation", html)
 
+    def test_field_standard_ignores_unselected_changes_and_preserves_approval(self):
+        from field_standards import field_key
+        base, current = snapshot(), snapshot("Changed")
+        for data in (base, current):
+            for row in data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]:
+                for key in ("local_view", "effective_view"):
+                    row[key]["profiles"]["20"]["enable"] = True
+        self.write(self.base, base)
+        self.write(self.current, current)
+        rule = {"module": "layer2-vlan", "identity": "20", "path": ["name"]}
+        standard = create_standard(self.directory, name="VLAN names", snapshot=self.current,
+                                   baseline_name=self.base, persona="ACCESS_SWITCH", reference="3",
+                                   module="all", target="2", confirmed=True,
+                                   field_selection=json.dumps([field_key(rule)]))
+        self.assertEqual(standard["field_rules"][0]["path"], ["name"])
+        bundle, result = evaluate_standard(self.directory, standard, self.current, confirmed=True)
+        candidates = exception_candidates(bundle, standard, result)
+        self.assertEqual(len(candidates), 1)
+        key = next(iter(candidates))
+        expiry = (date.today() + timedelta(days=7)).isoformat()
+        approve_exception(self.directory, standard["id"], self.current, key,
+                          "Intentional name", expiry, confirmed=True)
+        current["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"][-1]["effective_view"]["profiles"]["20"]["enable"] = False
+        self.write(self.current, current)
+        bundle, result = evaluate_standard(self.directory, standard, self.current, confirmed=True)
+        self.assertEqual(set(exception_candidates(bundle, standard, result)), {key})
+        from local_standards import apply_approvals
+        candidates = exception_candidates(bundle, standard, result)
+        apply_approvals(result, candidates, active_exceptions(self.directory, standard["id"], candidates))
+        target = next(r for r in result["findings"] if r["scope"] == "4")
+        self.assertEqual(target["status"], "approved_exceptions")
+
+    def test_whole_profile_standard_independent_field_approvals(self):
+        from local_standards import apply_approvals
+        base, current = snapshot(), snapshot("Changed")
+        for data in (base, current):
+            for row in data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]:
+                for key in ("local_view", "effective_view"):
+                    row[key]["profiles"]["20"]["enable"] = True
+        current["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"][-1]["effective_view"]["profiles"]["20"]["enable"] = False
+        self.write(self.base, base)
+        self.write(self.current, current)
+        standard = self.standard()
+        bundle, result = evaluate_standard(self.directory, standard, self.current, confirmed=True)
+        candidates = exception_candidates(bundle, standard, result)
+        self.assertEqual(len(candidates), 2)
+        key = next(k for k, c in candidates.items() if c["field_path"] == ["name"])
+        approval = approve_exception(self.directory, standard["id"], self.current, key, "Name only",
+                                     (date.today() + timedelta(days=7)).isoformat(), confirmed=True)
+        apply_approvals(result, candidates, {key: [approval]})
+        target = next(r for r in result["findings"] if r["scope"] == "4")
+        self.assertEqual(target["status"], "differences_observed")
+        self.assertEqual(target["unapproved_deviation_count"], 1)
+
     def test_standard_ui(self):
         from config_app import Workspace
         standard = self.standard()

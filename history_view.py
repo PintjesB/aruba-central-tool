@@ -100,7 +100,7 @@ def standards_view(workspace, query):
     loaded, empty = load(workspace, query, "Standards compliance", "standards")
     if empty:
         return empty
-    from local_standards import records, read_record, evaluate_standard, exception_candidates, active_exceptions, exception_history
+    from local_standards import records, read_record, evaluate_standard, exception_candidates, active_exceptions, exception_history, apply_approvals
     from datetime import date, timedelta
     root, name, bundle, picker = loaded
     saved = records(workspace.directory, "standard")
@@ -132,7 +132,7 @@ def standards_view(workspace, query):
              + '<button type="submit">Load standard</button></form>'
              + '<p class="note">Saved versions retain their original baseline checksum, target scope and module set. No Central settings are changed.</p></section>')
     if standard:
-        body += '<section><h2>' + e(standard["name"]) + '</h2><p>Frozen version ' + e(standard["id"][:8]) + ' · ' + e(standard["baseline"]) + ' · ' + e(", ".join(standard["modules"])) + '</p></section>'
+        body += '<section><h2>' + e(standard["name"]) + '</h2><p>Frozen version ' + e(standard["id"][:8]) + ' · ' + e(standard["baseline"]) + ' · ' + e(", ".join(standard["modules"])) + '</p>' + ('<p>Selected field rules: ' + str(len(standard["field_rules"])) + '</p>' + table(("Module", "Profile", "Field", "Expected value"), [tr(e(v["module"]), e(v["identity"]), e(".".join(v["path"])), property_table(v["value"])) for v in standard["field_rules"]], search=True) if standard.get("field_rules") else "") + '</section>'
     else:
         body += (f'<section><form class="filter-bar" method="get" action="{e(root + "standards")}">'
              f'<input type="hidden" name="snapshot" value="{e(name)}">'
@@ -183,20 +183,21 @@ def standards_view(workspace, query):
                     "".join(f'<input type="hidden" name="{e(k)}" value="{e(v)}">' for k, v in
                             {**values, "csrf": workspace.csrf, "confirmed": "yes" if confirmed else ""}.items()))
         if not standard:
+            from field_standards import baseline_field_options, field_key
+            field_options = baseline_field_options(baseline, persona, reference, result["modules"])
+            field_controls = ('<details><summary>Optional: select individual baseline fields</summary><p>Select only the fields to enforce (Ctrl or Shift to select multiple). Leave empty to enforce complete profiles.</p>'
+                              + '<label>Field rules<select name="field_selection" multiple size="12">'
+                              + "".join(f'<option value="{e(field_key(v))}">{e(module_label(v["module"]) + " / " + v["identity"] + " / " + ".".join(v["path"]) + " = " + str(v["value"]))}</option>' for v in field_options)
+                              + '</select></label></details>') if field_options else ""
             body += ('<section><h2>Save this standard version</h2>' + post_form("save-standard", {
                 "snapshot": name, "baseline_name": baseline_name, "persona": persona, "reference": reference,
                 "module": module, "target": target}) +
-                '<label>Standard name<input name="name" required maxlength="120"></label>'
+                '<label>Standard name<input name="name" required maxlength="120"></label>' + field_controls +
                 '<button type="submit">Save local standard</button></form><p class="note">This freezes the selected baseline and module set; later changes require a new version.</p></section>')
-        candidates = exception_candidates(bundle, standard, result) if standard else {}
+        candidates = exception_candidates(bundle, standard, result, include_legacy=True) if standard else {}
         approved = active_exceptions(workspace.directory, standard_id, candidates) if standard else {}
         history = exception_history(workspace.directory, standard_id, candidates) if standard else []
-        for row in result["findings"]:
-            row["approved_exceptions"] = [v for key, approvals in approved.items()
-                                         if candidates[key]["scope"] == row["scope"] for v in approvals]
-            eligible = [key for key, c in candidates.items() if c["scope"] == row["scope"]]
-            if row["status"] == "differences_observed" and not row.get("has_gaps") and eligible and len(eligible) == len(row["differences"]) and all(key in approved for key in eligible):
-                row["status"] = "approved_exceptions"
+        apply_approvals(result, candidates, approved)
         counts = Counter(r["status"] for r in result["findings"])
         body += metrics([("Known target devices", result["target_count"], "Includes original reference when historical" if historical else "Excludes reference device"),
                          ("Matches reference", counts["matches_reference"], "Count-confirmed exact observed bodies"),
@@ -211,9 +212,9 @@ def standards_view(workspace, query):
             details = table(("Module", "Result", "Observations", "Evidence gaps"), module_rows) if module_rows else ""
             details += "".join("<h3>" + e(module_label(d["module"]) + " / " + (d["identity"] or "Collection")) + " · " + e(pretty(d["status"])) + "</h3>" + change_detail(d) for d in row["differences"])
             for key, candidate in candidates.items():
-                if candidate["scope"] != row["scope"]:
+                if candidate["scope"] != row["scope"] or (candidate.get("legacy") and key not in approved):
                     continue
-                details += '<h3>Exception · ' + e(module_label(candidate["module"]) + " / " + candidate["profile"]) + '</h3>'
+                details += '<h3>Exception · ' + e(module_label(candidate["module"]) + " / " + candidate["profile"] + (" / " + ".".join(candidate["field_path"]) if "field_path" in candidate else "")) + '</h3>' + change_detail(candidate["observation"])
                 if key in approved:
                     details += ''.join('<p>Approved until ' + e(a["expiry"]) + ': ' + e(a["reason"]) + '</p>' for a in approved[key])
                 else:
