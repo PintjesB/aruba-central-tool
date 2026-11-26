@@ -80,6 +80,12 @@ When the observed assignment or scope-map inventories identify a module without 
 
 See [ROADMAP.md](ROADMAP.md) for the configuration consolidation workflows, Library selection criteria, safety gates and delivery order.
 
+### Audit progress and performance
+
+The local workspace shows authentication/discovery, scoped configuration, Library, additional profile types and snapshot publication progress. It polls only the loopback server once per second while an audit is running, refreshes the snapshot list on completion, and displays sanitized failures. Progress counts describe the current phase, not an estimated overall completion time.
+
+Scoped reads, Library collections and additional profile types use at most four concurrent read workers. OAuth token renewal is serialized; HTTP 429 retries share a cooldown across workers. Scope review occurs after capture so the Global baseline is available independently of request completion order. No modules or applicable scopes are skipped for speed. Actual latency and throughput depend on Central and its rate limits; validate against a live capture.
+
 ## Safety boundary
 
 No configuration mutation API calls exist yet. Only OAuth token issuance uses POST. Candidate findings are not executable plans. The API is v1alpha1 and real tenant response shapes, group access, annotation semantics, and Classic/New configuration authority must be validated before enabling writes. Scope IDs are strings, not floating-point numbers.

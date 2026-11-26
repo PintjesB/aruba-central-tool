@@ -67,6 +67,10 @@ class WorkspaceTests(unittest.TestCase):
                 status, cache, body = request("GET", root)
                 self.assertEqual((status, cache), (200, "no-store"))
                 self.assertIn(b"Saved snapshots", body)
+                self.assertIn(b"async function poll()", body)
+                self.assertEqual(request("GET", root + "status", {"Host": "example.com"})[0], 404)
+                initial = json.loads(request("GET", root + "status")[2])
+                self.assertEqual(initial["state"], "idle")
                 self.assertEqual(request("POST", root + "refresh", {"Origin": "https://example.com"})[0], 403)
                 same = {"Origin": f"http://127.0.0.1:{server.server_port}",
                         "Content-Type": "application/x-www-form-urlencoded"}
@@ -78,7 +82,7 @@ class WorkspaceTests(unittest.TestCase):
                 opaque = {**same, "Origin": "null", "Sec-Fetch-Site": "same-origin"}
                 form = urlencode({"csrf": workspace.csrf, "client_id": "example-id",
                                   "client_secret": "example-secret", "region": ""})
-                with patch("config_app.credential_refresh", return_value=lambda: self.fixture()) as factory:
+                with patch("config_app.credential_refresh", return_value=lambda progress=None: self.fixture()) as factory:
                     self.assertEqual(request("POST", root + "credentials",
                                              {**opaque, "Sec-Fetch-Site": "cross-site"}, form)[0], 403)
                     self.assertEqual(request("POST", root + "credentials",
@@ -91,6 +95,12 @@ class WorkspaceTests(unittest.TestCase):
                     while workspace.state == "running" and time.monotonic() < deadline:
                         time.sleep(.01)
                     self.assertEqual(workspace.state, "complete")
+                    finished = json.loads(request("GET", root + "status")[2])
+                    self.assertEqual(finished["state"], "complete")
+                    self.assertTrue(finished["snapshot"].endswith(".json"))
+                    self.assertNotIn("example-secret", json.dumps(finished))
+                    self.assertIn(b"Audit complete", request("GET", root)[2])
+                    self.assertIn(b"Open new configuration snapshot", request("GET", root)[2])
             finally:
                 server.shutdown()
                 server.server_close()
@@ -115,7 +125,8 @@ class WorkspaceTests(unittest.TestCase):
             workspace = Workspace(directory)
             with patch("central_tool.detect_region"), patch("central_tool.configuration_audit", return_value=self.fixture()):
                 refresh = credential_refresh("test-client-id", "test-secret", EU_REGIONS[0])
-                client = refresh.__closure__[0].cell_contents
+                from inspect import getclosurevars
+                client = getclosurevars(refresh).nonlocals['client']
                 self.assertTrue(workspace.start_refresh(refresh))
                 deadline = time.monotonic() + 3
                 while workspace.state == "running" and time.monotonic() < deadline:
@@ -156,15 +167,37 @@ class WorkspaceTests(unittest.TestCase):
         scopes[1]["review"]["qualified"] = False
         self.assertEqual(len(library_profile_comparison(data, "layer2-vlan")["10"]["local_variants"]), 1)
 
+    def test_refresh_failure_is_sanitized(self):
+        from central_tool import APIError
+        def fail(progress=None):
+            raise APIError("OAuth", 403)
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory, fail)
+            self.assertTrue(workspace.start_refresh())
+            deadline = time.monotonic() + 3
+            while workspace.state == "running" and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertEqual(workspace.status()["state"], "failed")
+            self.assertIn("OAuth returned HTTP 403", workspace.status()["message"])
+            self.assertIsNone(workspace.status()["snapshot"])
+            self.assertEqual(audit_files(Path(directory)), [])
+
     def test_refresh_single_flight_and_saved_capture(self):
         with tempfile.TemporaryDirectory() as directory:
             release = threading.Event()
-            def refresh():
+            def refresh(progress=None):
+                progress("Configuration scopes", 2, 5, "ACCESS_SWITCH / layer2-vlan")
                 release.wait(2)
                 return self.fixture()
             workspace = Workspace(directory, refresh)
             self.assertTrue(workspace.start_refresh())
             self.assertFalse(workspace.start_refresh())
+            deadline = time.monotonic() + 1
+            while workspace.status()["done"] != 2 and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertEqual(workspace.status()["done"], 2)
+            self.assertEqual(workspace.status()["total"], 5)
+            self.assertEqual(workspace.status()["state"], "running")
             release.set()
             deadline = time.monotonic() + 3
             while workspace.state == "running" and time.monotonic() < deadline:
