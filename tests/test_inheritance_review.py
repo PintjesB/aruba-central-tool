@@ -41,6 +41,16 @@ class InheritanceTests(unittest.TestCase):
         self.assertEqual(result["status"], "matching_fallback")
         self.assertEqual(result["source"]["scope"], "3")
 
+    def test_intermediate_inherited_body_must_match_candidate_source(self):
+        entry = fixture(group="Different", site="Office")
+        profile = entry["modules"]["layer2-vlan"]["scope_results"][-1]["effective_view"]["profiles"]["20"]
+        profile["@"]["aruba-annotation:inherited"] = True
+        result = self.resolve(entry)
+        self.assertEqual(result["status"], "candidate_unverified")
+        self.assertIn("group inherited observation disagrees with candidate source", result["blockers"])
+        profile["name"] = "Office"
+        self.assertEqual(self.resolve(entry)["status"], "matching_fallback")
+
     def test_unknown_membership_prevents_resolution(self):
         result = self.resolve(fixture(site="Office", group_known=False))
         self.assertEqual(result["status"], "candidate_unverified")
