@@ -119,6 +119,46 @@ class Central:
                 self.expires = time.monotonic() + max(0, int(result["expires_in"]) - 60)
             return self.token
 
+    def show_vlans(self, serial):
+        """Submit only the fixed read-only show vlan command, never retry submission."""
+        if not isinstance(serial, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", serial):
+            raise ValueError("Invalid switch serial")
+        path = "/network-troubleshooting/v1/cx/" + quote(serial, safe="") + "/showCommands"
+        request = Request(self.base + path, data=b'{"commands":["show vlan"]}',
+                          headers={"Accept": "application/json", "Content-Type": "application/json",
+                                   "Authorization": "Bearer " + self._token()}, method="POST")
+        self._wait_rate_limit()
+        if not hasattr(self._http, "opener"):
+            self._http.opener = build_opener(NoRedirect())
+        try:
+            with self._http.opener.open(request, timeout=30) as response:
+                if response.status != 202:
+                    raise APIError("Show VLAN submission", response.status)
+                location = response.headers.get("Location")
+                payload = response.read()
+                if not location and payload:
+                    data = json.loads(payload)
+                    location = data.get("location") if isinstance(data, dict) else None
+        except HTTPError as exc:
+            raise APIError("Show VLAN submission", exc.code) from None
+        # Never send credentials to a location supplied by an untrusted response.
+        task = location.rsplit("/", 1)[-1] if isinstance(location, str) else ""
+        if not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", task):
+            raise ValueError("Invalid troubleshooting task ID")
+        for attempt in range(12):
+            result = self.get(path + "/async-operations/" + task)
+            if not isinstance(result, dict):
+                return {"status": "schema_unresolved"}
+            if result.get("status") == "COMPLETED":
+                return {"status": "completed", "result": result}
+            if result.get("status") == "FAILED":
+                return {"status": "command_failed"}
+            if result.get("status") not in ("INITIATED", "RUNNING"):
+                return {"status": "schema_unresolved"}
+            if attempt < 11:
+                time.sleep(2)
+        return {"status": "poll_timeout"}
+
     def change(self, method, path, params, body=None):
         """Private transport for explicit guarded change adapters; never retry writes."""
         if method not in ("POST", "DELETE") or not path.startswith(ALPHA + "/"):
@@ -1662,7 +1702,10 @@ def capture_vlan_instance_details(client, results, workers=AUDIT_WORKERS, progre
                     continue
                 for kind in ("local", "effective"):
                     body = row[kind]
-                    if isinstance(body, dict) and any(k not in body for k in ("name", "enable")):
+                    reference = row.get("global_reference")
+                    omitted = isinstance(body, dict) and isinstance(reference, dict) and any(
+                        d["kind"] == "missing_local" for d in field_differences(body, reference))
+                    if isinstance(body, dict) and (omitted or any(k not in body for k in ("name", "enable"))):
                         tasks.append((persona, scope["scope"], row["identity"], kind))
     def collect(task):
         persona, scope, vid, kind = task
@@ -1692,6 +1735,134 @@ def capture_configuration_operational_vlans(client, results, workers=AUDIT_WORKE
             completed=lambda done, total: audit_progress(progress, "Operational VLANs", done, total, "Reading switch monitoring")):
         observations[persona][sid] = evidence
     return dict(observations)
+
+
+def parse_show_vlan(result):
+    """Accept a uniquely recognizable CX show vlan table; never infer from arbitrary text."""
+    texts = []
+    def collect(value):
+        if isinstance(value, str) and "\n" in value:
+            texts.append(value)
+        elif isinstance(value, dict):
+            for item in value.values():
+                collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+    collect(result)
+    header = re.compile(r"^\s*VLAN\s+Name\s+Status\s+Reason\s+Type\s+Interfaces\s*$", re.I)
+    candidates = [s for s in texts if any(header.fullmatch(line) for line in s.splitlines())]
+    if len(candidates) != 1:
+        return {"status": "schema_unresolved", "vlans": {}}
+    vlans = {}
+    seen = False
+    for line in candidates[0].splitlines():
+        if header.fullmatch(line):
+            seen = True
+            continue
+        if not seen:
+            continue
+        match = re.fullmatch(r"\s*(\d+)\s+(.+?)\s+(up|down)\s+(\S+)\s+(\S+)(?:\s+.*)?", line, re.I)
+        if not match:
+            continue
+        vid, name, state, reason, vlan_type = match.groups()
+        if not 1 <= int(vid) <= 4094 or vid in vlans:
+            return {"status": "identity_unresolved", "vlans": {}}
+        record = {"name": name, "status": state.lower(), "reason": reason, "type": vlan_type}
+        # Up/ok explicitly proves an operationally enabled VLAN; down alone
+        # does not establish administrative shutdown.
+        if state.lower() == "up" and reason.lower() == "ok":
+            record["enable"] = True
+        elif state.lower() == "down" and reason.lower() == "admin_down":
+            record["enable"] = False
+        vlans[vid] = record
+    return {"status": "observed" if vlans else "schema_unresolved", "vlans": vlans}
+
+
+def capture_switch_vlan_cli(client, results, details, workers=AUDIT_WORKERS, progress=None):
+    """One bounded show vlan task per affected switch, after direct API reads."""
+    tasks = []
+    for persona, entry in sorted(results.items()):
+        for scope in entry["scopes"]:
+            sid = scope["id"]
+            if persona not in PERSONAS or scope["kind"] != "device" or not details.get(persona, {}).get(sid):
+                continue
+            metadata = scope.get("metadata") or {}
+            # Use the discovered serial, not a guessed stack identifier.
+            serial = metadata.get("conductorSerialNumber") or metadata.get("serialNumber") or metadata.get("serial")
+            tasks.append((persona, sid, serial))
+    def collect(task):
+        persona, sid, serial = task
+        result = {"status": "identity_unresolved"}
+        if isinstance(serial, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,32}", serial):
+            try:
+                response = client.show_vlans(serial)
+                result = parse_show_vlan(response["result"]) if response["status"] == "completed" else response
+            except APIError as exc:
+                result = {"status": "permission_denied" if exc.status == 403 else "request_rejected",
+                          "http_error": exc.status}
+            except (RuntimeError, OSError, ValueError, AttributeError):
+                result = {"status": "read_failed"}
+        return persona, sid, {**result, "captured_at": datetime.now(timezone.utc).isoformat()}
+    audit_progress(progress, "Switch VLAN verification", 0, len(tasks), "Reading show vlan on affected switches")
+    output = {}
+    for persona, sid, evidence in ordered_parallel(tasks, collect, min(workers, 4),
+            completed=lambda done, total: audit_progress(progress, "Switch VLAN verification", done, total, "Reading show vlan")):
+        output.setdefault(persona, {})[sid] = evidence
+    return output
+
+
+def vlan_comparison_evidence(bundle, persona, sid, row):
+    """Resolve observed values without inventing saved configuration or hiding disagreements."""
+    import copy
+    details = bundle.get("vlan_instance_details", {}).get(persona, {}).get(sid, {}).get(row["identity"], {})
+    local = copy.deepcopy(row["local"])
+    effective = copy.deepcopy(row["effective"])
+    sources = {}
+    conflicts = []
+    def merge(target, extra, path, source):
+        for key, value in extra.items():
+            here = path + (key,)
+            if key not in target:
+                target[key] = copy.deepcopy(value)
+                sources[".".join(here)] = source
+            elif isinstance(target[key], dict) and isinstance(value, dict):
+                merge(target[key], value, here, source)
+            elif canonical(target[key]) != canonical(value):
+                conflicts.append(".".join(here))
+    for kind, body in (("local", local), ("effective", effective)):
+        detail = details.get(kind, {})
+        if isinstance(body, dict) and detail.get("status") == "observed":
+            merge(body, detail["profile"], (kind,), "Central VLAN by ID")
+    if isinstance(local, dict) and isinstance(effective, dict):
+        conflicts.extend("local_vs_effective." + ".".join(map(str, d["path"])) for d in field_differences(local, effective)
+                         if d["kind"] not in ("missing_local", "missing_reference"))
+    deployed = {}
+    cli = bundle.get("switch_vlan_cli", {}).get(persona, {}).get(sid, {})
+    live = cli.get("vlans", {}).get(row["identity"], {}) if cli.get("status") == "observed" else {}
+    monitor = configuration_operational_vlan(bundle, persona, sid, row["identity"])
+    if monitor["status"] == "observed" and isinstance(monitor["fields"].get("name"), str):
+        deployed["name"] = {"value": monitor["fields"]["name"], "source": "Switch monitoring"}
+    for key in ("name", "enable"):
+        if key in live:
+            if key in deployed and canonical(deployed[key]["value"]) != canonical(live[key]):
+                conflicts.append("device." + key)
+            deployed[key] = {"value": live[key], "source": "Switch show vlan"}
+    # Actual device observations complement the comparison, but are not saved
+    # local fields and must not be used as executable configuration.
+    comparison = copy.deepcopy(effective)
+    if isinstance(comparison, dict):
+        for key, observed in deployed.items():
+            if key not in comparison:
+                comparison[key] = observed["value"]
+                sources["comparison." + key] = observed["source"]
+            elif canonical(comparison[key]) != canonical(observed["value"]):
+                conflicts.append("device." + key)
+    reference = row["global_reference"]
+    differences = field_differences(comparison, reference) if comparison is not None and reference is not None else None
+    return {"local": local, "effective": effective, "comparison": comparison,
+            "sources": sources, "device_observations": deployed, "conflicts": sorted(set(conflicts)),
+            "differences": differences, "safe_to_apply": False}
 
 
 def configuration_operational_vlan(bundle, persona, sid, vid):
@@ -1806,13 +1977,14 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress)
     details = capture_vlan_instance_details(client, results, workers, progress)
     operational = capture_configuration_operational_vlans(client, results, workers, progress)
+    cli = capture_switch_vlan_cli(client, results, details, workers, progress)
     print(f"Configuration audit coverage: personas reviewed={len(results)}; "
           f"personas without adapter={len(unqualified)}; migration authorized=no")
     return {"schema": 1, "kind": "configuration_audit", "region": client.base,
             "captured_at": datetime.now(timezone.utc).isoformat(), "inventory": records,
             "results": results, "unqualified_personas": unqualified, "library": library,
             "profile_type_discovery": profile_types, "unadapted_profiles": unadapted,
-            "operational_vlans": operational, "vlan_instance_details": details,
+            "operational_vlans": operational, "vlan_instance_details": details, "switch_vlan_cli": cli,
             "catalog_exhaustive": False, "safe_to_apply": False}
 
 

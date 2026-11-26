@@ -774,6 +774,17 @@ class Tests(unittest.TestCase):
         self.assertEqual(set(details["ACCESS_SWITCH"]["12"]["1"]), {"local", "effective"})
         self.assertNotIn("10", details["ACCESS_SWITCH"]["12"])
 
+    def test_show_vlan_parser_distinguishes_shutdown_from_link_state(self):
+        from central_tool import parse_show_vlan
+        output = "VLAN Name Status Reason Type Interfaces\n1 DEFAULT_VLAN_1 up ok static 1/1/1\n20 Management VLAN down admin_down static 1/1/2\n30 Guest down no_member_port static\n"
+        evidence = parse_show_vlan({"status": "COMPLETED", "output": [{"command": "show vlan", "output": output}]})
+        self.assertEqual(evidence["status"], "observed")
+        self.assertEqual(evidence["vlans"]["1"]["enable"], True)
+        self.assertEqual(evidence["vlans"]["20"]["enable"], False)
+        self.assertEqual(evidence["vlans"]["20"]["name"], "Management VLAN")
+        self.assertNotIn("enable", evidence["vlans"]["30"])
+        self.assertEqual(parse_show_vlan({"output": "show vlan failed"})["status"], "schema_unresolved")
+
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
