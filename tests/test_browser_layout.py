@@ -75,6 +75,59 @@ class BrowserLayoutTests(unittest.TestCase):
                 browser.close()
 
 
+    def test_engineering_workflow_port_mapping_and_library_duplicate_review(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from playwright.sync_api import sync_playwright
+        from config_app import Workspace
+        from test_consolidation import fixture
+        from workspace_views import port_group_label
+        data = fixture()
+        entry = data["results"]["ACCESS_SWITCH"]
+        settings = {"switchport": {"access-vlan": 10}, "routing": False}
+        def captured(profiles):
+            return {"status": "list_parsed", "profiles": profiles}
+        def scope(sid, profiles):
+            return {"scope": sid, "scope_kind": "device",
+                    "local_view": captured(profiles), "effective_view": captured(profiles)}
+        entry["modules"]["ethernet-interfaces"] = {"device_scope_only": True, "scope_results": [
+            scope("3", {"1/1/1": {"name": "1/1/1", **settings},
+                        "1/1/2": {"name": "1/1/2", "description": "desk", **settings}}),
+            scope("4", {"1/1/3": {"name": "1/1/3", **settings}})]}
+        profiles = {name: {"profile-name": name, **settings} for name in ("Access-A", "Access-B")}
+        data["library"]["modules"]["sw-port-profiles"] = captured(profiles)
+        entry["modules"]["sw-port-profiles"] = {"scope_results": [scope("3", profiles), scope("4", {})]}
+        self.assertEqual(port_group_label(settings), "Access VLAN 10")
+        with tempfile.TemporaryDirectory() as directory, sync_playwright() as pw:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(data))
+            workspace = Workspace(directory)
+            executable = shutil.which("google-chrome") or shutil.which("chromium")
+            browser = pw.chromium.launch(executable_path=executable, args=["--no-sandbox"])
+            try:
+                view = browser.new_page(viewport={"width": 1280, "height": 800})
+                view.set_content(workspace.advanced({"snapshot": name, "workflow": "ports"}))
+                self.assertEqual(view.locator("section[data-panel]").count(), 1)
+                self.assertEqual(view.locator("section[data-panel]").get_attribute("data-panel"), "ports")
+                self.assertIn("Access VLAN 10", view.locator("section[data-panel]").inner_text())
+                self.assertIn("3 ports", view.locator("section[data-panel]").inner_text())
+                view.get_by_role("button", name="Review mapping").click()
+                view.locator("[data-port-profile]").select_option("Access-B")
+                self.assertEqual(view.locator("#workspace-inspector-body [data-port-target]").all_text_contents(), ["Access-B"] * 3)
+                self.assertIn("Port dependencies", view.locator("#workspace-inspector-body").inner_text())
+                view.locator("#workspace-close").click()
+                view.set_content(workspace.advanced({"snapshot": name, "workflow": "duplicates"}))
+                self.assertEqual(view.locator("section[data-panel]").get_attribute("data-panel"), "duplicates")
+                self.assertIn("Access-A", view.locator("section[data-panel]").inner_text())
+                view.get_by_role("button", name="Plan consolidation").click()
+                view.locator("[data-keep]").select_option("Access-A")
+                self.assertIn("Access-B", view.locator("[data-migration-summary]").inner_text())
+                self.assertNotIn("Access-A:", view.locator("[data-migration-summary]").inner_text())
+            finally:
+                browser.close()
+
+
     def test_workspace_navigation_filters_and_preview(self):
         import copy
         import json
