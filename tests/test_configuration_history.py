@@ -59,6 +59,24 @@ class HistoryTests(unittest.TestCase):
         result = reference_compliance(snapshot(), "ACCESS_SWITCH", "layer2-vlan", "3", "4")
         self.assertEqual(result["findings"][0]["status"], "matches_reference")
 
+    def test_historical_standard_remains_fixed_and_checks_original_device(self):
+        before, current = snapshot(), snapshot("Changed")
+        with self.assertRaises(ValueError):
+            reference_compliance(current, "ACCESS_SWITCH", "layer2-vlan", "3", "2", baseline=before)
+        result = reference_compliance(current, "ACCESS_SWITCH", "layer2-vlan", "3", "2",
+                                      baseline=before, confirmed=True)
+        self.assertTrue(result["historical_baseline"])
+        self.assertEqual(result["target_count"], 2)
+        self.assertEqual({r["device"]: r["status"] for r in result["findings"]},
+                         {"Reference": "matches_reference", "Target": "differences_observed",
+                          "Unknown": "membership_unverified"})
+        actual = current["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"][-1]["effective_view"]
+        actual["profiles"]["20"].pop("name")
+        result = reference_compliance(current, "ACCESS_SWITCH", "layer2-vlan", "3", "4",
+                                      baseline=before, confirmed=True)
+        self.assertEqual(result["findings"][0]["status"], "verification_required")
+        self.assertEqual(result["findings"][0]["differences"][0]["status"], "field_values_unavailable")
+
     def test_browser_routes_render_and_show_explicit_selection(self):
         import json
         import tempfile
@@ -72,8 +90,15 @@ class HistoryTests(unittest.TestCase):
             html = w.drift({"snapshot": "config-audit-new.json", "previous": "config-audit-old.json", "confirmed": "yes"})
             self.assertIn("Change worklist", html)
             self.assertIn("Common device serials", html)
+            self.assertIn("Export private report JSON", html)
             html = w.standards({"snapshot": "config-audit-new.json", "persona": "ACCESS_SWITCH",
                                 "module": "layer2-vlan", "reference": "3", "target": "2"})
             self.assertIn("Reference standard results", html)
             self.assertIn("Differences observed", html)
             self.assertIn("Membership unverified", html)
+            self.assertIn("Export private report JSON", html)
+            html = w.standards({"snapshot": "config-audit-new.json", "baseline": "config-audit-old.json",
+                                "confirmed": "yes", "persona": "ACCESS_SWITCH", "module": "layer2-vlan",
+                                "reference": "3", "target": "2"})
+            self.assertIn("Approved baseline snapshot", html)
+            self.assertIn("Reference standard results", html)
