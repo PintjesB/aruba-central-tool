@@ -93,11 +93,11 @@ def table(headers, rows, *, search=False, label="Search", style=""):
     table_class = f' class="{e(style)}"' if style else ""
     controls = ""
     if search:
-        controls = (f'<div class="table-toolbar"><label class="searchbox">{e(label)}'
-                    '<input type="search" data-table-search placeholder="Filter results"></label>'
+        controls = (f'<div class="table-toolbar"><label class="searchbox table-search"><span class="sr-only">{e(label)}</span>'
+                    + icon("search") + '<input type="search" data-table-search placeholder="Search records"></label>'
                     '<span data-table-count class="muted" aria-live="polite"></span></div>')
-    pager = ('<div class="table-toolbar paging"><button type="button" data-prev>Previous</button>'
-             '<span data-page class="muted"></span><button type="button" data-next>Next</button></div>') if search else ""
+    pager = ('<div class="table-toolbar paging"><button type="button" data-prev aria-label="Previous page">Previous</button>'
+             '<span data-page class="muted"></span><button type="button" data-next aria-label="Next page">Next</button></div>') if search else ""
     empty = '<p data-table-empty class="empty" hidden>No matching records.</p>' if search else ""
     return ('<div class="data-grid"' + (' data-paginated' if search else '') + '>' + controls
             + f'<div class="table-scroll"><table{table_class}><thead><tr>{header}</tr></thead><tbody>'
@@ -109,7 +109,7 @@ def tr(*cells, attrs=""):
 
 
 def inspect(title, content, label="Inspect"):
-    return (f'<button class="quiet inspect-trigger" type="button" data-inspect>{e(label)}</button>'
+    return (f'<button class="quiet inspect-trigger" type="button" data-inspect>{e(label)}{icon("chevron")}</button>'
             f'<template><div class="inspector-title"><h2>{e(title)}</h2></div>{content}</template>')
 
 
@@ -151,19 +151,48 @@ def snapshot_picker(root, route, files, selected):
             '<noscript><button type="submit" class="quiet">Open</button></noscript></form>')
 
 
+# Inline, monochrome SVGs keep the local workspace independent of external assets.
+ICONS = {
+    "overview": '<rect x="3" y="3" width="7" height="7" rx="1.3"/><rect x="14" y="3" width="7" height="7" rx="1.3"/><rect x="3" y="14" width="7" height="7" rx="1.3"/><rect x="14" y="14" width="7" height="7" rx="1.3"/>',
+    "overrides": '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor" stroke="none"/><circle cx="15" cy="17" r="3" fill="currentColor" stroke="none"/>',
+    "advisor": '<path d="M12 3 3 8l9 5 9-5-9-5ZM3 12l9 5 9-5M3 16l9 5 9-5"/>',
+    "advanced": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/>',
+    "report": '<path d="M6 3h9l4 4v14H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM14 3v5h5M8 12h7m-7 4h7"/>',
+    "scopes": '<rect x="8" y="3" width="8" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-4h12v4"/>',
+    "library": '<rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="4" height="16" rx="1"/><path d="m17 5 4 14-4 1-3-14 3-1Z"/>',
+    "compare": '<path d="M4 7h15m-4-4 4 4-4 4M20 17H5m4-4-4 4 4 4"/>',
+    "coverage": '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+    "search": '<circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4 4"/>',
+    "arrow": '<path d="M5 12h14m-5-5 5 5-5 5"/>',
+    "chevron": '<path d="m9 18 6-6-6-6"/>',
+    "menu": '<path d="M4 6h16M4 12h16M4 18h16"/>',
+    "shield": '<path d="m12 3 8 3v6c0 4-3 7-8 9-5-2-8-5-8-9V6l8-3Z"/><path d="m9 12 2 2 4-4"/>',
+    "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>',
+    "moon": '<path d="M20.5 14.2A9 9 0 0 1 9.8 3.5 9 9 0 1 0 20.5 14.2Z"/>',
+    "database": '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+    "close": '<path d="m6 6 12 12M18 6 6 18"/>',
+    "brand": '<path d="M3 12 8 3h9l4 9-4 9H8L3 12Z"/><path d="m8 12 4-5 4 5-4 5-4-5Z"/>',
+}
+
+
+def icon(name):
+    return ('<svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+            'stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+            + ICONS.get(name, ICONS["chevron"]) + '</svg>')
+
+
 def navigation(root, snapshot=None):
     suffix = "?" + urlencode({"snapshot": snapshot}) if snapshot else ""
     links = []
     for group, items in (
-        ("Workspace", (("", "Overview", "⌂"), ("overrides", "Device overrides", "⇅"), ("advisor", "Consolidation", "◈"),
-                       ("advanced", "Engineering", "▤"))),
-        ("Explore", (("report", "Configuration", "▦"), ("scopes", "Inventory", "▥"),
-                     ("library", "Library", "▣"), ("compare", "Compare", "⇄"))),
-        ("Diagnostics", (("coverage", "Coverage", "◉"),))):
+        ("Analyze", (("", "Overview"), ("overrides", "Device overrides"), ("advisor", "Consolidation"),
+                       ("advanced", "Engineering"))),
+        ("Explore", (("report", "Configuration"), ("scopes", "Inventory"), ("library", "Library"), ("compare", "Compare"))),
+        ("System", (("coverage", "Coverage"),))):
         links.append(f'<div class="nav-group"><span>{e(group)}</span>')
-        for route, label, icon in items:
+        for route, label in items:
             links.append(f'<a data-nav="{e(label)}" href="{e(root + route + suffix)}">'
-                         f'<span class="nav-icon" aria-hidden="true">{icon}</span>{e(label)}</a>')
+                         f'{icon(route or "overview")}<span class="nav-label">{e(label)}</span></a>')
         links.append('</div>')
     return "".join(links)
 
@@ -176,17 +205,25 @@ def page(title, content, nav="", extra_css=""):
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{e(active)} · Central Workspace</title><style>{extra_css}\n{CSS}</style></head>'
             '<body class="app-shell"><a class="skip-link" href="#main-content">Skip to content</a>'
-            '<aside class="sidebar"><div class="brand"><span class="brand-mark">C</span>'
-            '<div><strong>Central</strong><small>Configuration workspace</small></div></div>'
+            '<aside class="sidebar" id="workspace-sidebar"><div class="brand"><span class="brand-mark">' + icon("brand") + '</span>'
+            '<div><strong>Central<span class="brand-accent">.</span></strong><small>Configuration intelligence</small></div></div>'
             f'<nav aria-label="Main navigation">{nav}</nav>'
-            '<div class="nav-footer"><span class="lock-dot"></span>Local · read-only</div></aside>'
-            '<div class="app-body"><header class="topbar"><span class="workspace-context"><span class="lock-dot"></span> Local audit workspace</span>'
-            '<button id="workspace-theme" class="quiet" type="button" aria-label="Switch color theme" aria-pressed="false">Theme</button></header>'
+            '<div class="nav-footer">' + icon("shield") + '<div><strong>Read-only workspace</strong><small>Private local data</small></div></div></aside>'
+            '<div class="app-body"><header class="topbar"><div class="topbar-left">'
+            '<button id="workspace-menu" class="icon-button" type="button" aria-label="Toggle navigation" aria-controls="workspace-sidebar" aria-expanded="false">' + icon("menu") + '</button>'
+            '<span class="breadcrumb">Workspace</span>' + icon("chevron") + f'<strong>{e(active)}</strong></div>'
+            '<div class="topbar-actions"><div id="snapshot-slot"></div>'
+            '<button id="workspace-command" class="command-trigger" type="button" aria-haspopup="dialog">' + icon("search") + '<span>Quick navigation</span><kbd>Ctrl K</kbd></button>'
+            '<button id="workspace-theme" class="icon-button" type="button" aria-label="Switch color theme" aria-pressed="false">' + icon("moon") + '</button></div></header>'
             f'<main id="main-content">{content}</main></div>'
             '<dialog class="inspector" id="workspace-inspector" aria-labelledby="workspace-inspector-title"><div class="inspector-head">'
             '<div><small>Configuration review</small><h2 id="workspace-inspector-title"></h2></div>'
-            '<button type="button" id="workspace-close" autofocus>Close <span aria-hidden="true">×</span></button></div>'
+            '<button type="button" class="icon-button" id="workspace-close" autofocus aria-label="Close inspector">' + icon("close") + '</button></div>'
             '<div id="workspace-inspector-body"></div></dialog>'
+            '<dialog id="workspace-palette" class="command-palette" aria-label="Quick navigation"><div class="command-input">' + icon("search")
+            + '<input id="command-query" type="search" placeholder="Find a workspace page..." aria-label="Find a workspace page"><kbd>Esc</kbd></div>'
+            '<div id="command-results" class="command-results"></div><p id="command-empty" class="empty" hidden>No matching pages.</p>'
+            '<div class="command-footer">Navigate <kbd>↑</kbd> <kbd>↓</kbd><span>Open <kbd>Enter</kbd></span></div></dialog>'
             f'<script>{SCRIPT}</script></body></html>')
 
 
