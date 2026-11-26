@@ -1,5 +1,5 @@
 import unittest
-from central_tool import APIError, Central, EU_REGIONS, detect_region, inventory, offset_rows, report, vlan_map
+from central_tool import APIError, Central, EU_REGIONS, detect_region, inventory, offset_rows, report, vlan_map, vlan_rows
 
 
 class Fake:
@@ -67,6 +67,27 @@ class Tests(unittest.TestCase):
                        {"items": [{"id": "2"}], "total": 2}])
         self.assertEqual(len(inventory(client)), 2)
         self.assertEqual(client.calls[1][1]["next"], "2")
+
+    def test_vlan_pagination_uses_ten_and_explicit_offset(self):
+        first = [{"vlan": n} for n in range(1, 11)]
+        second = [{"vlan": 11}]
+        client = Fake([{"l2-vlan": first, "metadata": {}},
+                       {"l2-vlan": second, "metadata": {}},
+                       {"l2-vlan": [], "metadata": {}}])
+        self.assertEqual(vlan_rows(client, **{"view-type": "LIBRARY"}), first + second)
+        self.assertEqual([p["limit"] for _, p in client.calls], [10, 10, 10])
+        self.assertEqual([p["offset"] for _, p in client.calls], [0, 10, 11])
+
+    def test_vlan_error_has_safe_parameters(self):
+        class Reject:
+            def get(self, path, **params):
+                raise APIError(path, 400)
+        with self.assertRaises(RuntimeError) as error:
+            vlan_rows(Reject(), **{"view-type": "LOCAL", "scope-id": "123456789"})
+        message = str(error.exception)
+        self.assertIn("limit=10, offset=0", message)
+        self.assertIn("LOCAL", message)
+        self.assertNotIn("123456789", message)
 
     def test_offset_pagination(self):
         client = Fake([{"items": [{"id": "1"}]}, {"items": [{"id": "2"}]}, {"items": []}])
