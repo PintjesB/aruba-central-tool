@@ -98,11 +98,21 @@ def vlan_explanation(local, reference, effective=None, evidence=None):
         if source is None and source_key == 'comparison':
             source = (evidence or {}).get('sources', {}).get('effective.' + '.'.join(map(str, path)))
         return e(json.dumps(value, ensure_ascii=False)) + (f'<small>{e(source)}</small>' if source else '')
+    def meaning(d):
+        if evidence is not None:
+            matches = [v for v in (evidence["differences"] or []) if v["path"] == d["path"]]
+            if evidence["conflicts"]:
+                return "Check conflicting observations"
+            if evidence["differences"] is not None and not matches:
+                return "Observed value matches reference"
+            if any(v["kind"] not in ("missing_local", "missing_reference") for v in matches):
+                return "Observed value differs from reference"
+        return ASSESSMENT_LABELS.get(d["assessment"], pretty(d["assessment"]))
     conflict = ('<p class="note">Conflicting observations: ' + e(', '.join(evidence['conflicts'])) + '. Resolve before changing configuration.</p>') if evidence and evidence['conflicts'] else ''
     return '<h3>Why these VLAN settings differ</h3>' + table(
         ("Setting", "Saved locally", "Effective at source / observed", "Global / reference", "Meaning"),
         [tr(e(".".join(map(str, d["path"]))), observed_cell(local, d["path"], "local"), observed_cell(effective, d["path"], "comparison"), cell(d, "reference_value"),
-            e(ASSESSMENT_LABELS.get(d["assessment"], pretty(d["assessment"]))))
+            e(meaning(d)))
          for d in assessment["differences"]]) + conflict + '<p class="note">Not returned does not mean disabled or equal to the default. Effective values use Central configuration and independently observed switch data where identified. They do not prove that an omitted setting was explicitly saved locally. Without switch evidence, Central effective settings are not a live switch CLI or traffic measurement.</p>'
 
 
@@ -213,7 +223,18 @@ def advisor_view(workspace, query):
                            str(len(p["additional_devices"])), str(len(p["unknown_membership"])), status(p["effective"]))
                           for p in f["placement_options"]]
         reference_label = "Library" if action == "reuse_library" else "Global" if action in ("remove_override", "default_review") else "Reference"
-        comparison = (vlan_explanation(f["local"], f["reference"], f["local"]) if action == "default_review" else "")
+        comparison = ""
+        if action == "default_review":
+            from central_tool import vlan_comparison_evidence
+            sections = []
+            for source in sources:
+                if source["kind"] != "device":
+                    continue
+                row = {"identity": f["identity"], "local": f["local"], "effective": f["local"],
+                       "global_reference": f["reference"]}
+                evidence = vlan_comparison_evidence(bundle, f["persona"], source["scope"], row)
+                sections.append(f'<h3>{e(source["name"])}</h3>' + vlan_explanation(f["local"], f["reference"], f["local"], evidence))
+            comparison = "".join(sections) or vlan_explanation(f["local"], f["reference"], f["local"])
         if not comparison:
             comparison = '<h3>Configuration comparison</h3>' + diff_table(f["differences"], "Local", reference_label)
         details = (
