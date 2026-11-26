@@ -40,6 +40,73 @@ def explicit_references(value, path=()):
             yield from explicit_references(item, path + (i,))
 
 
+def library_usage(bundle, module, identities, references):
+    """Separate assignments, observed shared deployments, and explicit references.
+
+    A matching local body is not proof that a Library profile is used.
+    Counts are lower bounds from captured evidence, not a complete usage graph.
+    """
+    library = bundle.get("library") or {}
+    view = library.get("modules", {}).get(module, {})
+    assignment_view = library.get("assignments") or {}
+    wanted = set(identities)
+    result = {}
+    for identity in sorted(wanted):
+        rows = [a for a in assignment_view.get("rows", [])
+                if a.get("profile-type") == module and str(a.get("profile-instance")) == identity]
+        unique = {(str(a.get("scope-id")), str(a.get("device-function"))) for a in rows
+                  if a.get("scope-id") is not None and a.get("device-function") is not None}
+        refs = [r for r in references if r["target_module"] == module and r["target"] == identity]
+        consumers = {(r["persona"], r["scope"], r["source_module"], r["source"]) for r in refs}
+        result[identity] = {"identity": identity, "assignment_count": len(unique),
+                            "assignment_status": assignment_view.get("status", "not_collected"),
+                            "assignments": rows, "reference_count": len(consumers),
+                            "reference_devices": len({(r["persona"], r["scope"]) for r in refs}),
+                            "references": refs, "shared_devices": [], "matching_other_devices": [],
+                            "different_devices": [], "unknown_devices": [], "compared_devices": 0,
+                            "coverage_complete": False}
+    for persona, entry in sorted(bundle["results"].items()):
+        if module not in entry["modules"]:
+            continue
+        views = effective_views(entry)[module]
+        for device in (s for s in entry["scopes"] if s["kind"] == "device"):
+            sid = device["id"]
+            record = {"persona": persona, "scope": sid, "name": device.get("name") or sid}
+            actual = views.get(sid, {})
+            for identity, usage in result.items():
+                if actual.get("status") != "list_parsed":
+                    usage["unknown_devices"].append(record)
+                    continue
+                usage["compared_devices"] += 1
+                profile = actual["profiles"].get(identity)
+                if profile is None:
+                    continue
+                expected = view.get("profiles", {}).get(identity)
+                if expected is None or canonical(profile_body(profile)) != canonical(profile_body(expected)):
+                    usage["different_devices"].append(record)
+                    continue
+                annotation = profile.get("@", {})
+                if isinstance(annotation, dict) and annotation.get("aruba-annotation:object_type") == "SHARED":
+                    usage["shared_devices"].append(record)
+                else:
+                    usage["matching_other_devices"].append(record)
+    return result
+
+
+def preferred_duplicate(usage):
+    """Suggest the least observed reference/assignment migration, not safe deletion."""
+    if not usage or any(u["assignment_status"] != "response_received" for u in usage.values()):
+        return None
+    # Do not add incomparable metrics together. Prefer more explicit consumers,
+    # then more observed shared deployments, then more assignments.
+    def score(u):
+        return (u["reference_count"], len(u["shared_devices"]), u["assignment_count"])
+    ordered = sorted(usage.values(), key=score, reverse=True)
+    if len(ordered) < 2 or score(ordered[0]) == score(ordered[1]) or score(ordered[0]) == (0, 0, 0):
+        return None
+    return ordered[0]["identity"]
+
+
 def advanced_analysis(bundle):
     result = {"port_groups": [], "shadowed": [], "library_duplicates": [],
               "references": [], "coverage": [], "reference_graph_complete": False,
@@ -211,7 +278,9 @@ def advanced_analysis(bundle):
                 groups[canonical(body)].append(identity)
         for signature, identities in groups.items():
             if len(identities) > 1:
+                usage = library_usage(bundle, module, identities, result["references"])
                 result["library_duplicates"].append({"module": module, "identities": sorted(identities),
+                    "usage": usage, "suggested_keep": preferred_duplicate(usage),
                     "assignments": [a for a in assignments if a.get("profile-type") == module
                                     and str(a.get("profile-instance")) in identities],
                     "observed_references": [r for r in result["references"]
