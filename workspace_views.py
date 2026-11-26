@@ -72,7 +72,7 @@ ASSESSMENT_LABELS = {
 }
 
 
-def vlan_explanation(local, reference):
+def vlan_explanation(local, reference, effective=None):
     from central_tool import assess_vlan_reference
     if local is None or reference is None:
         return ""
@@ -81,11 +81,21 @@ def vlan_explanation(local, reference):
         return ""
     def cell(d, key):
         return e(json.dumps(d[key], ensure_ascii=False)) if key in d else '<span class="muted">Not returned</span>'
+    def effective_cell(path):
+        value = effective
+        for key in path:
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            elif isinstance(value, list) and isinstance(key, int) and 0 <= key < len(value):
+                value = value[key]
+            else:
+                return '<span class="muted">Not returned</span>' if effective is not None else '<span class="muted">Not captured</span>'
+        return e(json.dumps(value, ensure_ascii=False))
     return '<h3>Why these VLAN settings differ</h3>' + table(
-        ("Setting", "Local", "Reference", "Meaning"),
-        [tr(e(".".join(map(str, d["path"]))), cell(d, "local_value"), cell(d, "reference_value"),
+        ("Setting", "Saved locally", "Effective at source", "Global / reference", "Meaning"),
+        [tr(e(".".join(map(str, d["path"]))), cell(d, "local_value"), effective_cell(d["path"]), cell(d, "reference_value"),
             e(ASSESSMENT_LABELS.get(d["assessment"], pretty(d["assessment"]))))
-         for d in assessment["differences"]]) + '<p class="note">Not returned does not mean disabled or equal to the default.</p>'
+         for d in assessment["differences"]]) + '<p class="note">Not returned does not mean disabled or equal to the default. Effective is the Central configuration view, not a live switch CLI or traffic measurement.</p>'
 
 
 def advisor_view(workspace, query):
@@ -135,7 +145,7 @@ def advisor_view(workspace, query):
                            str(len(p["additional_devices"])), str(len(p["unknown_membership"])), status(p["effective"]))
                           for p in f["placement_options"]]
         reference_label = "Library" if action == "reuse_library" else "Global" if action in ("remove_override", "default_review") else "Reference"
-        comparison = (vlan_explanation(f["local"], f["reference"]) if action == "default_review" else "")
+        comparison = (vlan_explanation(f["local"], f["reference"], f["local"]) if action == "default_review" else "")
         if not comparison:
             comparison = '<h3>Configuration comparison</h3>' + diff_table(f["differences"], "Local", reference_label)
         details = (
@@ -263,6 +273,28 @@ filter();selection();
 """
 
 
+def usage_cells(usage):
+    assignments = (str(usage["assignment_count"]) if usage["assignment_status"] == "response_received" else "Unknown")
+    return (e(assignments), str(len(usage["shared_devices"])), str(usage["reference_count"]),
+            str(len(usage["unknown_devices"])))
+
+
+def usage_detail(usage):
+    return ('<h3>Observed usage</h3>'
+            + table(("Measure", "Count"), [
+                tr("Distinct scope/function assignments", usage_cells(usage)[0]),
+                tr("Devices with matching shared profile", usage_cells(usage)[1]),
+                tr("Distinct configuration objects referencing this name", usage_cells(usage)[2]),
+                tr("Devices with incomplete module reads", usage_cells(usage)[3]),
+                tr("Devices with matching settings but unverified Library source", str(len(usage["matching_other_devices"])))])
+            + '<h3>Assigned at</h3>' + table(("Scope", "Device function"), [
+                tr(e(a.get("scope-name", a.get("scope-id", "Unknown"))), e(persona_label(a.get("device-function", "")))) for a in usage["assignments"]])
+            + '<h3>Devices with matching shared configuration</h3>' + list_items([d["name"] for d in usage["shared_devices"]])
+            + '<h3>Configuration references</h3>' + table(("Device", "Module", "Object"), [
+                tr(e(r["device"]), e(module_label(r["source_module"])), e(r["source"])) for r in usage["references"]])
+            + '<p class="note">These are separate observations, not traffic usage. Zero observed references does not prove a profile is unused. Reference coverage is incomplete.</p>')
+
+
 def engineering_view(workspace, query):
     from advanced_review import advanced_analysis
     from central_tool import field_differences
@@ -317,12 +349,23 @@ def engineering_view(workspace, query):
           ("Profile", "Applied from", "Higher-scope definition", "Devices", "Settings compared", ""), rows, len(rows))
     rows = []
     for r in data["library_duplicates"]:
-        refs = r.get("observed_references", [])
-        detail = '<h3>Matching definitions</h3>' + list_items(r["identities"]) + '<h3>Observed references</h3>' + table(("Device", "Source", "Target"), [tr(e(v["device"]), e(v["source"]), e(v["target"])) for v in refs]) + '<p class="note">Identity semantics and complete reverse references must be verified before merging.</p>' + raw(r)
-        rows.append(tr(e(module_label(r["module"])), e(", ".join(r["identities"])), str(len(r["assignments"])), str(len(refs)),
-                       str(r.get("unresolved_reference_count", 0)), inspect(", ".join(r["identities"]), detail)))
-    panel("duplicates", "Duplicate Library profiles", "Matching bodies after excluding the identity field; not proof that names are interchangeable.",
-          ("Module", "Matching profile names", "Observed assignments", "Observed references", "Unresolved references", ""), rows, len(rows))
+        keep = r["suggested_keep"]
+        usage = r["usage"]
+        comparison = [tr(e(identity), *usage_cells(u),
+                         badge("Suggested to keep", "info") if identity == keep else "Review")
+                      for identity, u in usage.items()]
+        detail = ('<h3>Choose the profile to retain</h3>'
+                  + '<p>Prefer the profile with more observed referencing objects, then shared device deployments, then scope assignments. This can reduce migration work; it is not permission to delete another profile.</p>'
+                  + table(("Profile", "Assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Suggestion"), comparison)
+                  + "".join(f'<details><summary>{e(identity)} · Where it is used</summary>{usage_detail(u)}</details>' for identity, u in usage.items())
+                  + '<h3>Before consolidating</h3><ol><li>Choose the canonical name based on usage and naming standards.</li><li>Move assignments and references to that name.</li><li>Verify effective configuration and complete reverse references before deleting the old profile.</li></ol>'
+                  + raw(r))
+        for identity, u in usage.items():
+            rows.append(tr(e(module_label(r["module"])), f'<strong>{e(identity)}</strong><small>Matches {e(", ".join(i for i in r["identities"] if i != identity))}</small>',
+                           *usage_cells(u), badge("Suggested to keep", "info") if identity == keep else "Review",
+                           inspect(", ".join(r["identities"]), detail, "Compare usage")))
+    panel("duplicates", "Duplicate Library profiles", "Compare each matching profile name separately. Choose which to retain based on observed assignments, shared device deployments and referencing configuration objects. Counts are not complete usage evidence.",
+          ("Module", "Profile", "Assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Suggested action", ""), rows, len(rows))
     for key, label, records in (("references", "Reference review", [r for r in data["references"] if r["status"] != "observed"]),
                                 ("resolved", "Observed references", [r for r in data["references"] if r["status"] == "observed"])):
         rows = [tr(e(r["device"]), f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
@@ -337,6 +380,7 @@ def engineering_view(workspace, query):
 
 def library_view(workspace, query):
     from config_app import library_profile_comparison
+    from advanced_review import advanced_analysis, library_usage
     loaded, empty = load(workspace, query, "Library", "library")
     if empty:
         return empty
@@ -365,6 +409,7 @@ def library_view(workspace, query):
     else:
         view = modules[module]
         comparison = library_profile_comparison(bundle, module)
+        usage = library_usage(bundle, module, view["profiles"], advanced_analysis(bundle)["references"])
         rows = []
         for identity, profile in sorted(view["profiles"].items()):
             review = comparison.get(identity, {})
@@ -376,10 +421,10 @@ def library_view(workspace, query):
             for v in variants:
                 if v["differences"]:
                     detail += f'<h3>{e(v["scope_name"])} differences</h3>' + diff_table(v["differences"], "Local", "Library")
-            detail += raw({"profile": profile, **review})
-            rows.append(tr(f'<strong>{e(title_profile(identity, profile))}</strong>', str(len(matches)), str(len(variants)),
+            detail += usage_detail(usage[identity]) + raw({"profile": profile, **review})
+            rows.append(tr(f'<strong>{e(title_profile(identity, profile))}</strong>', *usage_cells(usage[identity]), str(len(variants)),
                            badge(str(conflict), "warn" if conflict else "neutral"), inspect(identity, detail)))
-        body += f'<section><h2>{e(module_label(module))} · {len(rows)} profiles</h2>' + table(("Profile", "Observed assignments", "Local instances", "Different bodies", ""), rows, search=True) + '</section>'
+        body += f'<section><h2>{e(module_label(module))} · {len(rows)} profiles</h2>' + table(("Profile", "Observed assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Local instances", "Different bodies", ""), rows, search=True) + '</section>'
     body += '<p class="note">Assignments link a Library profile to a scope and device function. A zero count means no assignment was observed in this snapshot, not that the profile is unused.</p>' + raw(assignments, "Assignment capture diagnostics")
     return page("Library", body, workspace.nav(name))
 
