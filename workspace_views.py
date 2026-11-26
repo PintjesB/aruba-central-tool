@@ -358,9 +358,12 @@ def engineering_view(workspace, query):
         comparison = [tr(e(identity), *usage_cells(u),
                          badge("Suggested to keep", "info") if identity == keep else "Review")
                       for identity, u in usage.items()]
+        choose_keep = '<label>Profile to retain<select data-keep>' + '<option value="">Choose a profile</option>' + "".join(f'<option value="{e(identity)}"{" selected" if identity == keep else ""}>{e(identity)}</option>' for identity in usage) + '</select></label>'
+        preview_data = {identity: {"assignments": usage_cells(u)[0], "shared_devices": len(u["shared_devices"]), "referencing_objects": u["reference_count"], "unknown_reads": len(u["unknown_devices"])} for identity, u in usage.items()}
         detail = ('<h3>Choose the profile to retain</h3>'
                   + '<p>Prefer the profile with more observed referencing objects, then shared device deployments, then scope assignments. This can reduce migration work; it is not permission to delete another profile.</p>'
                   + table(("Profile", "Assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Suggestion"), comparison)
+                  + f'<div data-duplicate-preview data-usage="{e(json.dumps(preview_data))}">{choose_keep}<div data-migration-summary aria-live="polite">Choose a profile to preview the observed migration workload.</div><p class="note">Review only. No assignments, references or profiles will be changed.</p></div>'
                   + "".join(f'<details><summary>{e(identity)} · Where it is used</summary>{usage_detail(u)}</details>' for identity, u in usage.items())
                   + '<h3>Before consolidating</h3><ol><li>Choose the canonical name based on usage and naming standards.</li><li>Move assignments and references to that name.</li><li>Verify effective configuration and complete reverse references before deleting the old profile.</li></ol>'
                   + raw(r))
@@ -379,7 +382,40 @@ def engineering_view(workspace, query):
               ("Device", "Source", "Target", "State", "Suggested next step", ""), rows, len(rows))
     tabs = '<div class="tabs" data-tabs="engineering">' + "".join(f'<button type="button" data-tab="{k}" aria-selected="false">{e(label)} <span>{n}</span></button>' for k, label, n, _ in panels) + '</div>'
     return page("Engineering review", intro("Engineering review", "Review reusable ports, scope precedence, Library duplication and references.", picker)
-                + tabs + "".join(p[3] for p in panels), workspace.nav(name))
+                + tabs + "".join(p[3] for p in panels) + '<script>' + DUPLICATE_JS + '</script>', workspace.nav(name))
+
+
+
+DUPLICATE_JS = r"""
+(()=>{
+function update(panel){
+ const keep=panel.querySelector('[data-keep]').value;
+ const target=panel.querySelector('[data-migration-summary]');
+ const usage=JSON.parse(panel.dataset.usage);
+ target.replaceChildren();
+ const heading=document.createElement('p');
+ heading.textContent=keep?'Retain '+keep+'. Review migration from these other names:':'Choose a profile to preview the observed migration workload.';
+ target.append(heading);
+ if(!keep)return;
+ const list=document.createElement('ul');
+ for(const [name,u] of Object.entries(usage)){
+  if(name===keep)continue;
+  const item=document.createElement('li');
+  item.textContent=name+': '+u.assignments+' observed assignments, '+u.shared_devices+' matching shared devices, '+u.referencing_objects+' referencing objects, '+u.unknown_reads+' incomplete device reads.';
+  list.append(item);
+ }
+ target.append(list);
+}
+document.addEventListener('change',event=>{
+ if(event.target.matches('[data-keep]'))update(event.target.closest('[data-duplicate-preview]'));
+});
+document.addEventListener('click',event=>{
+ if(event.target.closest('[data-inspect]'))requestAnimationFrame(()=>{
+  for(const panel of document.querySelectorAll('#workspace-inspector-body [data-duplicate-preview]'))update(panel);
+ });
+});
+})();
+"""
 
 
 def library_view(workspace, query):
