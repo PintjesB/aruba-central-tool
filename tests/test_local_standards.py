@@ -57,6 +57,33 @@ class LocalStandardTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Baseline snapshot changed"):
             evaluate_standard(self.directory, standard, self.current, confirmed=True)
 
+    def test_revocation_preserves_history_and_reopens_deviation(self):
+        from local_standards import revoke_exception, exception_history
+        standard = self.standard()
+        current, result = evaluate_standard(self.directory, standard, self.current, confirmed=True)
+        candidates = exception_candidates(current, standard, result)
+        key = next(iter(candidates))
+        expiry = (date.today() + timedelta(days=7)).isoformat()
+        approval = approve_exception(self.directory, standard["id"], self.current, key,
+                                     "Approved difference", expiry, confirmed=True)
+        self.assertEqual(exception_history(self.directory, standard["id"], candidates)[0]["state"], "active")
+        self.assertEqual(exception_history(self.directory, standard["id"], {})[0]["state"], "not_observed")
+        other = self.standard()
+        with self.assertRaises(ValueError):
+            revoke_exception(self.directory, other["id"], approval["id"], "Wrong standard")
+        revoked = revoke_exception(self.directory, standard["id"], approval["id"], "Policy updated")
+        self.assertFalse(active_exceptions(self.directory, standard["id"], candidates))
+        history = exception_history(self.directory, standard["id"], candidates)
+        self.assertEqual(history[0]["state"], "revoked")
+        self.assertEqual(history[0]["revocations"], [revoked])
+        self.assertEqual(read_record(self.directory, "exception", approval["id"]), approval)
+        from config_app import Workspace
+        html = Workspace(self.directory).standards({"snapshot": self.current, "standard": standard["id"], "confirmed": "yes"})
+        self.assertIn("Exception history", html)
+        self.assertIn("Revoked", html)
+        self.assertIn("Policy updated", html)
+        self.assertIn("Approve exact deviation", html)
+
     def test_standard_ui(self):
         from config_app import Workspace
         standard = self.standard()
