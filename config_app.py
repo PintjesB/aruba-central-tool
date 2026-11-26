@@ -472,7 +472,7 @@ filter();selection();
         sections = []
         for key, label, hint in (
             ("port_groups", "Repeated switch port settings", "Identical captured settings excluding port identity and description. Preserve mapping, descriptions and topology. Unsupported fields block conversion."),
-            ("shadowed", "Higher-scope profiles shadowed by direct device configuration", "Only observed direct device winners and known member scopes; this is not permission to delete a shared profile."),
+            ("shadowed", "Shadowed profiles at known member scopes", "Observed direct winning sources and known member scopes; this is not permission to delete a shared profile."),
             ("library_duplicates", "Library identity-independent body matches", "Only identity field excluded. Different names may have different references or semantic meaning."),
             ("references", "Dependency and reference evidence", "Not observed is not confirmed broken. Unqualified target views and aliases remain unresolved."),
             ("coverage", "Effective view coverage", "Missing or rejected responses do not establish absence.")):
@@ -482,7 +482,7 @@ filter();selection();
                 if key == "port_groups":
                     title = f'{record["persona"]}: {len(record["ports"])} ports'
                 elif key == "shadowed":
-                    title = f'{record["device"]}: {record["module"]}/{record["identity"]} shadows {record["higher_scope"]}'
+                    title = f'{record["device"]}: {record["module"]}/{record["identity"]} at {record["winning_scope"]} shadows {record["higher_scope"]}'
                 elif key == "library_duplicates":
                     title = f'{record["module"]}: {", ".join(record["identities"])}'
                 elif key == "references":

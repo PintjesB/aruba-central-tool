@@ -10,8 +10,10 @@ PORT_FIELDS = {"enable", "switchport", "poe", "lldp", "speed-duplex", "mtu",
                "broadcast-limit", "routing"}
 PORT_IDENTITY = {"name", "description"}
 PORT_TOPOLOGY = {"lag", "lacp", "ip", "ipv4", "ipv6", "vrrp", "vrf-forwarding",
-                 "virtual-router", "sw-profile", "sw-profile-alias"}
-NAMED_REFERENCES = {"sw-profile": "sw-port-profiles"}
+                 "virtual-router", "sw-profile", "sw-profile-alias", "portchannel-lag",
+                 "ap-profile", "gw-profile", "br-profile", "retain-profile-configs", "port-monitor", "vsx"}
+NAMED_REFERENCES = {"sw-profile": "sw-port-profiles", "ap-profile": "ap-port-profiles",
+                    "gw-profile": "gw-port-profiles", "portchannel-lag": "portchannels"}
 ADDITIVE = {"layer2-vlan", "roles", "wlan-ssids", "auth-servers"}
 PRECEDENCE = ("group", "site", "collection", "global")
 
@@ -43,6 +45,7 @@ def advanced_analysis(bundle):
               "references": [], "coverage": [], "reference_graph_complete": False,
               "safe_to_apply": False}
     library = bundle.get("library") or {}
+    library_modules = library.get("modules", {})
     assignments = (library.get("assignments") or {}).get("rows", [])
     for persona, entry in sorted(bundle["results"].items()):
         views = effective_views(entry)
@@ -94,8 +97,9 @@ def advanced_analysis(bundle):
                         signature = canonical({k: v for k, v in body.items() if k not in PORT_IDENTITY})
                         port_groups[signature].append({"scope": sid, "device": names[sid],
                             "port": identity, "description": body.get("description"),
-                            "portable": portable, "unsupported": unsupported})
-            for module in ADDITIVE & views.keys():
+                            "portable": portable, "unsupported": unsupported,
+                            "before": body})
+            for module in sorted(ADDITIVE & views.keys()):
                 device_view = get(module)
                 if device_view.get("status") != "list_parsed":
                     continue
@@ -103,18 +107,48 @@ def advanced_analysis(bundle):
                     annotation = raw.get("@", {})
                     if not isinstance(annotation, dict) or annotation.get("aruba-annotation:is_default") is True:
                         continue
-                    # A direct device LOCAL or SHARED profile is observed as winner.
-                    if annotation.get("aruba-annotation:inherited") is not False or annotation.get("aruba-annotation:object_type") not in ("LOCAL", "SHARED"):
+                    # A direct winner must have explicit annotations at a known
+                    # member scope, and agree exactly with the device effective body.
+                    actual = profile_body(raw)
+                    chain = [("device", sid)] + [(kind, members[sid][kind]) for kind in PRECEDENCE]
+                    winner = None
+                    unknown_higher = False
+                    for index, (kind, scope_id) in enumerate(chain):
+                        if scope_id is None:
+                            # Optional absent membership is not proven by a missing ID.
+                            if any(s["kind"] == kind for s in entry["scopes"]):
+                                unknown_higher = True
+                            continue
+                        effective = views[module].get(scope_id, {})
+                        if effective.get("status") != "list_parsed":
+                            unknown_higher = True
+                            continue
+                        candidate = effective["profiles"].get(identity)
+                        if candidate is None:
+                            continue
+                        ann = candidate.get("@", {})
+                        if not isinstance(ann, dict) or ann.get("aruba-annotation:inherited") is not False or ann.get("aruba-annotation:object_type") not in ("LOCAL", "SHARED") or ann.get("aruba-annotation:is_default") is True:
+                            continue
+                        if canonical(profile_body(candidate)) == canonical(actual):
+                            if not unknown_higher:
+                                winner = (index, kind, scope_id)
+                            break
+                        # A direct higher-precedence body conflicts with the observed device.
+                        unknown_higher = True
+                    if winner is None:
                         continue
-                    for kind in PRECEDENCE:
-                        ancestor = members[sid][kind]
+                    index, winning_kind, winning_scope = winner
+                    for kind, ancestor in chain[index + 1:]:
+                        if not ancestor:
+                            continue
                         upstream = views[module].get(ancestor, {})
                         if upstream.get("status") != "list_parsed" or identity not in upstream["profiles"]:
                             continue
                         other = profile_body(upstream["profiles"][identity])
-                        actual = profile_body(raw)
                         result["shadowed"].append({"persona": persona, "module": module,
                             "identity": identity, "device": names[sid], "scope": sid,
+                            "winning_scope": names[winning_scope], "winning_scope_id": winning_scope,
+                            "winning_scope_kind": winning_kind,
                             "higher_scope": names[ancestor], "higher_scope_id": ancestor,
                             "relationship": "same_body" if canonical(other) == canonical(actual) else "different_body",
                             "effective": actual, "higher_body": other,
@@ -122,9 +156,44 @@ def advanced_analysis(bundle):
         for ports in port_groups.values():
             if len(ports) < 2:
                 continue
+            settings = ports[0]["portable"]
+            profile_view = library_modules.get("sw-port-profiles", {})
+            library_matches = []
+            if profile_view.get("status") == "list_parsed":
+                for name, profile in sorted(profile_view["profiles"].items()):
+                    body = profile_body(profile)
+                    # A profile description describes the reusable object, not
+                    # necessarily the physical port; do not ignore extra settings.
+                    content = {k: v for k, v in body.items() if k not in ("profile-name", "description")}
+                    if canonical(content) != canonical(settings):
+                        continue
+                    visibility = []
+                    for sid in sorted({p["scope"] for p in ports}):
+                        v = views.get("sw-port-profiles", {}).get(sid, {})
+                        actual = v.get("profiles", {}).get(name) if v.get("status") == "list_parsed" else None
+                        status = ("unknown" if v.get("status") != "list_parsed" else
+                                  "not_observed" if actual is None else
+                                  "matching" if canonical({k: val for k, val in profile_body(actual).items()
+                                                           if k not in ("profile-name", "description")}) == canonical(settings)
+                                  else "different")
+                        visibility.append({"scope": sid, "device": names[sid], "status": status})
+                    library_matches.append({"identity": name, "visibility": visibility})
+            port_ids = {(p["scope"], p["port"]) for p in ports}
+            dependencies = [r for r in result["references"] if r["persona"] == persona
+                            and r["source_module"] == "ethernet-interfaces"
+                            and (r["scope"], r["source"]) in port_ids]
             result["port_groups"].append({"persona": persona, "ports": ports,
-                "portable_settings": ports[0]["portable"], "unsupported_fields": ports[0]["unsupported"],
-                "recommendation": "Review shared switch port profile; preserve mapping and descriptions",
+                "portable_settings": settings, "unsupported_fields": ports[0]["unsupported"],
+                "matching_library_profiles": library_matches, "library_status": profile_view.get("status", "not_collected"),
+                "dependencies": dependencies,
+                "recommendation": "Review existing matching Library profile" if library_matches else
+                                  "Review creation of a reusable switch port profile",
+                "proposed_mapping": [{"scope": p["scope"], "port": p["port"],
+                                      "retain_description": p["description"],
+                                      "candidate_profile_reference_field": "sw-profile"} for p in ports],
+                "blockers": ["Confirm hardware and port role compatibility, including uplinks and LAG membership.",
+                             "Confirm profile assignment and retain/remove semantics in lab.",
+                             "Verify all dependencies and complete effective port configuration."],
                 "safe_to_apply": False})
     for module, view in sorted(library.get("modules", {}).items()):
         # Identity is semantic for numeric VLAN IDs and SSIDs. Report equivalent
@@ -145,6 +214,9 @@ def advanced_analysis(bundle):
                 result["library_duplicates"].append({"module": module, "identities": sorted(identities),
                     "assignments": [a for a in assignments if a.get("profile-type") == module
                                     and str(a.get("profile-instance")) in identities],
+                    "observed_references": [r for r in result["references"]
+                                            if r["target_module"] == module and r["target"] in identities],
+                    "unresolved_reference_count": sum(r["target_module"] == module and r["status"] == "unresolved" for r in result["references"]),
                     "recommendation": "Review identity-independent body match and all references before merging",
                     "safe_to_apply": False})
     return result
