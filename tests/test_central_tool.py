@@ -598,6 +598,41 @@ class Tests(unittest.TestCase):
         self.assertIsNone(result["catalog_scope_coverage"]["all_function_scopes_not_surveyed"])
         self.assertEqual(result["catalog_scope_coverage"]["unfiltered_scopes_not_surveyed"], 0)
 
+    def test_configuration_health_preserves_issues_and_checks_inventory(self):
+        from central_tool import capture_configuration_health
+        fake = Fake([{"devices": [{"serial": "A", "configStatus": "Failure",
+                                   "activeIssues": 1}], "total": 2},
+                     {"devices": [{"serialNumber": "B", "activeIssues": 0}], "total": 2},
+                     {"issues": [{"message": "deployment failed"}]}, {"issues": []}, {"issues": []}])
+        inventory = [{"inventory": {"serialNumber": "A"}}, {"inventory": {"serialNumber": "C"}},
+                     {"inventory": {}}]
+        result = capture_configuration_health(fake, inventory, workers=1)
+        self.assertTrue(result["count_confirmed"])
+        self.assertEqual([p["raw"]["total"] for p in result["summary_pages"]], [2, 2])
+        self.assertEqual(fake.calls[1][1]["offset"], 1)
+        self.assertEqual(set(result["active_issues"]), {"A", "B", "C"})
+        self.assertEqual(result["inventory_serials_missing_from_summary"], ["C"])
+        self.assertEqual(result["inventory_entries_without_serial"], 1)
+        self.assertEqual(result["active_issues"]["A"]["raw"]["issues"][0]["message"], "deployment failed")
+        self.assertFalse(result["safe_to_apply"])
+
+    def test_configuration_health_does_not_accept_repeated_pages(self):
+        from central_tool import capture_configuration_health
+        page = {"devices": [{"serial": "A"}]}
+        fake = Fake([page, page, {"issues": []}])
+        result = capture_configuration_health(fake, [], workers=1)
+        self.assertEqual(result["summary_status"], "identity_unqualified")
+        self.assertFalse(result["count_confirmed"])
+        self.assertEqual(len(result["summary_pages"]), 2)
+        self.assertEqual(len(result["devices"]), 1)
+
+    def test_configuration_health_unverified_count_with_no_total(self):
+        from central_tool import capture_configuration_health
+        fake = Fake([{"devices": [{"serial": "A"}]}, {"devices": []}, {"issues": []}])
+        result = capture_configuration_health(fake, [], workers=1)
+        self.assertEqual(result["summary_status"], "pagination_exhausted")
+        self.assertFalse(result["count_confirmed"])
+
     def test_configuration_audit_uses_persona_catalog(self):
         from central_tool import configuration_audit
         from unittest.mock import patch
