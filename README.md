@@ -66,7 +66,7 @@ Use a separate directory per customer. The application does not independently ve
 
 ### Deep catalog collection
 
-The browser's Connect and refresh form defaults to Deep catalog. This adds committed and effective unfiltered reads at every discovered scope for documented profile collections without a qualified adapter, including modules not observed in assignments or Global configuration. Standard collection remains available for faster refreshes. For command-line audits, add `--deep-catalog` to `config-audit`; for environment-credential workspace refreshes, add it to `app`. Large tenants may require substantially longer refreshes. The terminal estimates additional requests before pagination, and Coverage distinguishes attempted scope surveys from count-confirmed responses. A rejected or unqualified read is not evidence of absence. Deep collection is not yet resumable, does not qualify new write adapters, and does not cover every keyed or specialized API operation.
+The browser's Connect and refresh form defaults to Deep catalog. This adds committed and effective unfiltered reads at every discovered scope for documented profile collections without a qualified adapter, including modules not observed in assignments or Global configuration. Standard collection remains available for faster refreshes. For command-line audits, add `--deep-catalog` to `config-audit`; for environment-credential workspace refreshes, add it to `app`. Large tenants may require substantially longer refreshes. The terminal estimates additional requests before pagination, and Coverage distinguishes attempted scope surveys from count-confirmed responses. A rejected or unqualified read is not evidence of absence. Deep collection supports checkpoint recovery for qualified structured scope pairs, Library collections, raw catalog collections and keyed profile details. It does not qualify new write adapters or cover every keyed or specialized API operation.
 
 ### Additional module qualification and Library inventory
 
@@ -98,12 +98,20 @@ Open a device result to approve an exact, complete observed profile deviation wi
 
 Bulk consolidation previews summarize selected proposals, source and destination recipients, scope/Library overlaps and preparation, verification and cleanup phases. Resolve overlaps and select destinations before export. Duplicate Library migration previews show assignment and reference worklists plus the retained profile's visibility for affected devices. These are review-only plans, not executable API operations.
 
+### Interrupted collection recovery
+
+The browser offers a new resumable collection, a fresh collection without checkpoints, or an eligible interrupted collection. Select the same collection depth and enter credentials again to resume. For CLI use, add `--checkpoint <private-path.db>` to `config-audit`, then repeat with `--resume` and a new output filename if interrupted. Checkpoint files contain private customer configuration, never credentials. Recovery is limited to 24 hours and checks region, inventory identities, firmware, scopes, membership, and the collection catalog. Failed or unqualified reads are retried; inventory, operational monitoring and configuration health are always collected live. Completed checkpoints are sealed after snapshot publication. Keep checkpoint files private and remove them manually when no longer needed.
+
+Recovered evidence may have mixed capture times. Such captures cannot qualify fresh remediation verification. They are suitable only for inspection with the stated evidence limits.
+
 ### Engineering evidence workflows
 
 - **Configuration sources:** select a device, module and effective profile to compare saved and effective definitions through the scope chain and inspect Library assignment observations. A matching body alone does not prove the winning source.
 - **Library assignments:** filter captured assignment tuples and inspect known recipients, uncertain membership, effective visibility and observed overlaps. Overlap may be intentional; it does not establish a policy conflict.
 - **Port consolidation:** compare saved and effective per-port settings, candidate shared fields and fields to retain locally before considering a reusable profile. No executable conversion is generated.
 - **Policy variants:** group same-identity effective configuration bodies within one device function and compare device populations and differing fields. The largest group is not automatically the correct standard.
+- **Policy rule review:** compare the documented default security-policy rule subset (explicit ordered RULE_ANY with ADDRESS_ANY or ADDRESS_ROLE). Show equal or broader earlier match candidates and different action bodies; preserve unknown rules. Role ACLs receive exact structural duplicate review only. Inspect captured policy-group order and same-context target visibility; cross-policy overlap does not establish resultant behavior.
+- **Configuration assessment:** open the consolidated coverage, optimization, policy and recovery worklists; export a private assessment report. Counts can overlap and are not a health score.
 - **Remediation verification:** compare a prior qualified override candidate or duplicate Library group with a strictly newer same-tenant capture. Export prior bodies and observed assignments for rollback review, not executable restoration.
 - **Compliance trends:** assess up to 20 saved captures against one frozen standard using approvals effective at the capture time. Baseline-driven templates select modules, and optional field rules select exact captured paths.
 
@@ -111,7 +119,7 @@ All these browser workflows are read-only with respect to Central. Complete refe
 
 ### Consolidation advisor
 
-Open Consolidation advisor for any saved configuration audit. It groups qualified reusable local bodies and recommends review of Global-matching overrides, exact repeated locals, existing Library reuse, conflicting definitions, VLAN default differences and possible Library placement. It also flags profiles with no observed assignments when assignment evidence exists. Inspect captured device and higher-scope coverage, select recommendations and export a private, non-executable change preview. Device-specific system settings and topology objects are excluded from generic promotion. All recommendations are blocked from automatic application pending inheritance, target support, dependency and rollback validation; the application performs no configuration writes.
+Open Consolidation advisor for any saved configuration audit. It groups qualified reusable local bodies and recommends review of Global-matching overrides, exact repeated locals, existing Library reuse, conflicting definitions, VLAN default differences and possible Library placement. It also flags profiles with no observed assignments when assignment evidence exists. Inspect captured device and higher-scope coverage, select recommendations and export a private, non-executable change preview. The preview includes observed dependency evidence and sequences selected prerequisites before consumers, with reverse cleanup review and cycle detection. Device-specific system settings and topology objects are excluded from generic promotion. All recommendations are blocked from automatic application pending inheritance, target support, dependency and rollback validation; the application performs no configuration writes.
 
 ### Laboratory VLAN change engine
 
