@@ -1,7 +1,7 @@
 """Decision-oriented drift and standards views for private saved snapshots."""
 from collections import Counter
 import json
-from configuration_history import configuration_drift, reference_compliance, snapshot_identity_checks, STANDARD_MODULES
+from configuration_history import configuration_drift, reference_compliance, snapshot_identity_checks, STANDARD_MODULES, STANDARD_TEMPLATES
 from workspace_ui import e, page, intro, metrics, badge, raw, table, tr, inspect, diff_table, property_table, module_label, persona_label, pretty
 from workspace_views import load, select, scope_filter_form
 
@@ -157,12 +157,15 @@ def standards_view(workspace, query):
         return [("", "Choose reference device")] + sorted((s["id"], s.get("name") or s["id"]) for s in base_entry(entry).get("scopes", []) if s["kind"] == "device")
     def modules(entry):
         available = STANDARD_MODULES & (entry["modules"].keys() | base_entry(entry).get("modules", {}).keys())
-        return [("", "Choose module"), ("all", "All standard modules")] + [(m, module_label(m)) for m in sorted(available)]
+        return ([("", "Choose module or template"), ("all", "All standard modules")]
+                + [(key, "Template: " + label + " (" + str(len(available & names)) + " observed modules)")
+                   for key, (label, names) in STANDARD_TEMPLATES.items() if available & names]
+                + [(m, module_label(m)) for m in sorted(available)])
     def targets(entry):
         return [("", "Choose target scope")] + [(s["id"], pretty(s["kind"]) + " / " + (s.get("name") or s["id"])) for s in entry["scopes"]]
     controls = scope_filter_form(root, "standards", name, bundle, persona, (
         ("reference", "Approved reference device", reference, references),
-        ("module", "Configuration module", module, modules),
+        ("module", "Module or standard template", module, modules),
         ("target", "Target device or scope", target, targets)), submit="Check standard")
     hidden = f'<input type="hidden" name="baseline" value="{e(baseline_name)}">'
     if confirmed:
