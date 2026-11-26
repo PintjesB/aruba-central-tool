@@ -268,3 +268,26 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("false", html)
         self.assertIn("Not returned", html)
         self.assertIn("not a live switch CLI", html)
+
+    def test_operational_vlan_context_does_not_infer_configured_enable(self):
+        from central_tool import configuration_operational_vlan
+        from workspace_views import operational_vlan_context
+        data = {"operational_vlans": {"ACCESS_SWITCH": {"1": {
+            "status": "response_received", "captured_at": "test",
+            "payload": {"vlans": [{"id": 1, "name": "DEFAULT_VLAN_1", "status": "Up",
+                                  "taggedPorts": ["1/1/1"], "untaggedPorts": []}]}}}}}
+        obs = configuration_operational_vlan(data, "ACCESS_SWITCH", "1", "1")
+        self.assertEqual(obs["status"], "observed")
+        self.assertEqual(obs["fields"]["name"], "DEFAULT_VLAN_1")
+        self.assertNotIn("enable", obs["fields"])
+        self.assertEqual(configuration_operational_vlan(data, "ACCESS_SWITCH", "1", "2")["status"], "not_observed")
+        self.assertEqual(configuration_operational_vlan({}, "ACCESS_SWITCH", "1", "1")["status"], "not_collected")
+        sources = [{"kind": "device", "scope": "1", "name": "Switch A"}]
+        html = operational_vlan_context(data, "ACCESS_SWITCH", sources, "1")
+        self.assertIn("DEFAULT_VLAN_1", html)
+        self.assertIn("Up", html)
+        self.assertIn("1/1/1", html)
+        self.assertIn("not the same field as configured enable", html)
+        self.assertIn("Not collected in this snapshot", operational_vlan_context({}, "ACCESS_SWITCH", sources, "1"))
+        data["operational_vlans"]["ACCESS_SWITCH"]["1"]["payload"]["vlans"].append({"id": 1})
+        self.assertEqual(configuration_operational_vlan(data, "ACCESS_SWITCH", "1", "1")["status"], "identity_unresolved")
