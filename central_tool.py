@@ -1865,6 +1865,46 @@ def vlan_comparison_evidence(bundle, persona, sid, row):
             "differences": differences, "safe_to_apply": False}
 
 
+def vlan_evidence_summary(bundle):
+    """Anonymous diagnostics: field names and counts only; no tenant values."""
+    states, fields, sources, cli, details, monitoring = (Counter() for _ in range(6))
+    for persona, entry in bundle["results"].items():
+        if persona not in PERSONAS:
+            continue
+        for scope in entry["modules"].get("layer2-vlan", {}).get("scope_results", []):
+            if scope["scope_kind"] != "device" or not scope["review"]["qualified"]:
+                continue
+            sid = scope["scope"]
+            for row in scope["review"]["profiles"]:
+                if row["local"] is None or row["global_reference"] is None or row["identity"] == "1":
+                    continue
+                evidence = vlan_comparison_evidence(bundle, persona, sid, row)
+                sources.update(evidence["sources"].values())
+                if evidence["conflicts"]:
+                    states["conflicting_observations"] += 1
+                elif evidence["differences"] == []:
+                    states["observed_match"] += 1
+                elif evidence["differences"] is not None:
+                    missing = [d for d in evidence["differences"] if d["kind"] in ("missing_local", "missing_reference")]
+                    states["unresolved_fields" if missing else "explicit_difference"] += 1
+                    fields.update(safe_difference_path(d["path"]) for d in missing)
+                else:
+                    states["not_comparable"] += 1
+    for scopes in bundle.get("switch_vlan_cli", {}).values():
+        for value in scopes.values():
+            cli[value["status"]] += 1
+    for scopes in bundle.get("operational_vlans", {}).values():
+        for value in scopes.values():
+            monitoring[value["status"]] += 1
+    for scopes in bundle.get("vlan_instance_details", {}).values():
+        for instances in scopes.values():
+            for views in instances.values():
+                details.update(v["status"] for v in views.values())
+    return {"comparisons": dict(states), "remaining_fields": dict(fields),
+            "recovered_values": dict(sources), "individual_vlan_reads": dict(details),
+            "switch_cli": dict(cli), "monitoring": dict(monitoring)}
+
+
 def configuration_operational_vlan(bundle, persona, sid, vid):
     """Return the exact reported monitoring fields for one uniquely observed VLAN."""
     evidence = bundle.get("operational_vlans", {}).get(persona, {}).get(sid, {})
@@ -1980,12 +2020,15 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     cli = capture_switch_vlan_cli(client, results, details, workers, progress)
     print(f"Configuration audit coverage: personas reviewed={len(results)}; "
           f"personas without adapter={len(unqualified)}; migration authorized=no")
-    return {"schema": 1, "kind": "configuration_audit", "region": client.base,
+    bundle = {"schema": 1, "kind": "configuration_audit", "region": client.base,
             "captured_at": datetime.now(timezone.utc).isoformat(), "inventory": records,
             "results": results, "unqualified_personas": unqualified, "library": library,
             "profile_type_discovery": profile_types, "unadapted_profiles": unadapted,
             "operational_vlans": operational, "vlan_instance_details": details, "switch_vlan_cli": cli,
             "catalog_exhaustive": False, "safe_to_apply": False}
+
+    print("VLAN evidence coverage: " + canonical(vlan_evidence_summary(bundle)), flush=True)
+    return bundle
 
 
 def configuration_view_shape(view):
