@@ -17,7 +17,9 @@ def safe_status(value):
         "not_collected", "not_attempted", "no_response", "mixed_outcomes",
         "unqualified_adapter", "qualified", "partial", "unqualified",
         "identity_observed", "pagination_unresolved", "cursor_unresolved",
-        "complete", "incomplete", "unknown",
+        "complete", "incomplete", "unknown", "count_confirmed", "pagination_exhausted",
+        "page_limit_reached", "schema_unqualified", "ambiguous_registration_envelope",
+        "duplicate_or_unqualified_registration_identity", "cursor_unqualified", "cursor_repeated_or_empty",
     }
     return value if isinstance(value, str) and value in allowed else "other"
 
@@ -68,7 +70,7 @@ def diagnostics(bundle):
     nac["mac-registrations"] = {
         "status": safe_status(registration.get("status")),
         "count_confirmed": registration.get("count_confirmed") is True,
-        "records": len(registration.get("records", [])),
+        "records": len(registration.get("rows", [])),
     }
     raw = Counter()
     for module, entry in bundle.get("unadapted_profiles", {}).items():
