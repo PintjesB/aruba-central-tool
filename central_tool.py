@@ -1443,6 +1443,62 @@ def profile_inventory_view(client, endpoint, envelope):
         return {"status": "schema_unresolved", "rows": []}
 
 
+def collect_scoped_assignments(client, initial, scopes_by_persona, workers=1, progress=None):
+    """Cross-check tenant-wide assignments against documented scope/function reads.
+
+    A scoped response is only evidence for the exact requested scope/function.
+    Missing or conflicting evidence never proves an assignment is absent.
+    """
+    tasks = sorted({(persona, str(scope["id"])) for persona, scopes in scopes_by_persona.items()
+                    for scope in scopes if persona in NETWORK_PERSONAS and str(scope["id"]).isdigit()})
+    def read(task):
+        persona, sid = task
+        try:
+            raw = client.get(ALPHA + "/config-assignments", **{"scope-id": sid, "device-function": persona})
+            records = rows(raw, ("config-assignment",))
+            if any(str(r.get("scope-id")) != sid or r.get("device-function") != persona
+                   or not isinstance(r.get("profile-type"), str)
+                   or type(r.get("profile-instance")) not in (str, int) for r in records):
+                return task, {"status": "selector_mismatch", "raw": raw}, []
+            meta = raw.get("metadata", {})
+            if (not isinstance(meta, dict) or
+                    any(type(meta[key]) is not int or meta[key] != len(records) for key in ("total", "count") if key in meta)):
+                return task, {"status": "count_mismatch", "raw": raw}, []
+            return task, {"status": "response_received", "raw": raw}, records
+        except APIError as exc:
+            if exc.status == 401:
+                raise
+            return task, {"status": "request_rejected", "http_error": exc.status}, []
+        except (RuntimeError, OSError, ValueError):
+            return task, {"status": "read_failed"}, []
+    def identity(row):
+        return (str(row.get("scope-id")), row.get("device-function"),
+                row.get("profile-type"), str(row.get("profile-instance")))
+    initial_rows = initial.get("rows", [])
+    merged = {identity(row): row for row in initial_rows}
+    original = set(merged)
+    scoped, outcomes = {}, Counter()
+    audit_progress(progress, "Assignment coverage", 0, len(tasks), "Checking profile assignments by scope")
+    for (persona, sid), result, records in ordered_parallel(tasks, read, workers,
+            completed=lambda done, total: audit_progress(progress, "Assignment coverage", done, total, "Checking profile assignments")):
+        scoped_keys = {identity(row) for row in records}
+        expected = {key for key in original if key[:2] == (sid, persona)}
+        if result["status"] == "response_received" and expected - scoped_keys:
+            result["status"] = "tenant_scope_disagreement"
+        scoped.setdefault(persona, {})[sid] = result
+        outcomes[result["status"]] += 1
+        # Keep all positive observations from either read. Do not delete a
+        # tenant-wide assignment simply because a scoped read did not return it.
+        for row in records:
+            merged.setdefault(identity(row), row)
+    return {**initial, "rows": list(merged.values()),
+            "status": "response_received" if initial.get("status") == "response_received" else
+                      "partial_response" if merged else initial.get("status", "not_collected"),
+            "scope_reads": scoped, "scope_read_outcomes": dict(outcomes),
+            "additional_assignments": len(set(merged) - original),
+            "coverage_verified": False}
+
+
 def discover_profile_types(assignments, scope_maps):
     """Collect explicit module/function observations without inferring inheritance."""
     result = defaultdict(set)
@@ -1620,7 +1676,8 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                   "library": capture(module, {"view-type": "LIBRARY", "detailed": "true"}),
                   "safe_to_apply": False}
         result["identity_evidence"] = qualify_observed_identities(result)
-        print(f"  Unadapted profile type: source views={len(evidence)}", flush=True)
+        print(f"  Unadapted profile type {module}: source views={len(evidence)}; "
+              f"Library={result['library']['status']}", flush=True)
         return module, result
     audit_progress(progress, "Additional profile types", 0, len(unknown), "Inspecting discovered modules")
     return dict(ordered_parallel(sorted(unknown), inspect, workers,
@@ -2124,6 +2181,18 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     # The vendor SDK still uses deprecated scope-maps as read-only evidence
     # for local profiles. Its absence never means there are no local profiles.
     scope_maps = profile_inventory_view(client, "scope-maps", "scope-map")
+    # Enumerate scopes once, then supplement the assignment inventory before
+    # choosing the module catalog so newly discovered types are included.
+    scopes_by_persona = {}
+    for persona in personas:
+        if persona not in NETWORK_PERSONAS:
+            continue
+        audit_progress(progress, "Discovery", 0, 0, f"Discovering {persona} scopes")
+        scopes_by_persona[persona], _ = discover_scopes(client, persona, devices)
+    assignments = collect_scoped_assignments(client, assignments, scopes_by_persona, workers, progress)
+    print("Assignment evidence coverage: " + canonical({
+        "additional_assignments": assignments["additional_assignments"],
+        "scope_reads": assignments["scope_read_outcomes"]}), flush=True)
     profile_types = discover_profile_types(assignments, scope_maps)
     print(f"Observed profile types: {len(profile_types['modules'])}; "
           f"without adapter: {len(profile_types['unknown_adapter_modules'])}", flush=True)
@@ -2137,8 +2206,9 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
         if not modules:
             unqualified.append(persona)
             continue
-        audit_progress(progress, "Discovery", 0, 0, f"Discovering {persona} scopes")
-        scopes, _ = discover_scopes(client, persona, devices)
+        scopes = scopes_by_persona.get(persona)
+        if scopes is None:
+            scopes, _ = discover_scopes(client, persona, devices)
         plans.append((persona, modules, scopes))
     total_scopes = sum(sum(not spec[2] or s["kind"] == "device" for s in scopes)
                        for _, modules, scopes in plans for spec in modules.values())
