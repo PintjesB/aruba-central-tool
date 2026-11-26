@@ -195,3 +195,23 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(list(explicit_references({"profile-name": "fingerprint"}, module="devicefingerprinting-interface")),
                          [("devicefingerprinting-profile", "fingerprint", ("profile-name",))])
         self.assertFalse(list(explicit_references({"aaa-profile": "dot1x"}, module="unqualified")))
+
+
+    def test_aaa_references_preserve_list_members_and_unresolved_values(self):
+        from advanced_review import explicit_references
+        body = {"authentication": {"dpp-netaccess-default-role": "guest",
+                                  "dpp-netaccess-server-group": "radgrp",
+                                  "rfc3576-server-list": ["coa-a", "coa-b", None]},
+                "authorization": {"acct-server-group": "acctgrp"},
+                "rfc3576-profile": "legacy-coa"}
+        references = list(explicit_references(body, module="aaa-profile"))
+        self.assertIn(("roles", "guest", ("authentication", "dpp-netaccess-default-role")), references)
+        self.assertIn(("server-groups", "radgrp", ("authentication", "dpp-netaccess-server-group")), references)
+        self.assertIn(("server-groups", "acctgrp", ("authorization", "acct-server-group")), references)
+        self.assertIn(("auth-servers", "coa-a", ("authentication", "rfc3576-server-list", 0)), references)
+        self.assertIn(("auth-servers", "coa-b", ("authentication", "rfc3576-server-list", 1)), references)
+        self.assertIn(("auth-servers", None, ("authentication", "rfc3576-server-list", 2)), references)
+        self.assertIn(("auth-servers", "legacy-coa", ("rfc3576-profile",)), references)
+        self.assertEqual(list(explicit_references({"rfc3576-server-list": "unexpected"}, module="aaa-profile")),
+                         [("auth-servers", None, ("rfc3576-server-list",))])
+        self.assertFalse(list(explicit_references({"rfc3576-server-list": ["coa"]}, module="unqualified")))

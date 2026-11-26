@@ -29,7 +29,12 @@ PORT_SECURITY_REFERENCES = {"macsec-policy": "macsec", "mka-policy": "mka",
                             "fault-monitor-profile": "fault-monitor"}
 SWITCH_PORT_REFERENCES = {**PORT_SECURITY_REFERENCES, "aaa-profile": "aaa-profile",
                           "dfp-profile": "devicefingerprinting-profile", "nd-snooping-profile": "nd-snooping"}
+# https://developer.arubanetworks.com/new-central-config/reference/replaceaaaprofileprofilebyid
+AAA_REFERENCES = {"dpp-netaccess-default-role": "roles", "dpp-netaccess-server-group": "server-groups",
+                  "acct-server-group": "server-groups", "rfc3576-profile": "auth-servers"}
+LIST_REFERENCES = {"aaa-profile": {"rfc3576-server-list": "auth-servers"}}
 MODULE_REFERENCES = {"wlan-ssids": AUTH_REFERENCES, "ap-port-profiles": AUTH_REFERENCES,
+                     "aaa-profile": AAA_REFERENCES,
                      "ethernet-interfaces": PORT_SECURITY_REFERENCES,
                      "sw-port-profiles": SWITCH_PORT_REFERENCES,
                      "devicefingerprinting-interface": {"profile-name": "devicefingerprinting-profile"},
@@ -51,7 +56,14 @@ def explicit_references(value, path=(), module=None):
             if key in ("@", "metadata"):
                 continue
             here = path + (key,)
-            if key in named:
+            list_target = LIST_REFERENCES.get(module, {}).get(key)
+            if list_target:
+                if isinstance(item, list):
+                    for i, member in enumerate(item):
+                        yield list_target, member if isinstance(member, str) and member else None, here + (i,)
+                else:
+                    yield list_target, None, here
+            elif key in named:
                 yield named[key], item if isinstance(item, str) and item else None, here
             elif key == "sw-profile-alias":
                 yield "sw-port-profiles", None, here

@@ -1301,7 +1301,7 @@ CONFIG_MODULES = {
     "object-groups": ("name", NETWORK_PERSONAS, False),
     "macsec": ("name", PERSONAS, False),
     "mka": ("name", PERSONAS, False),
-    "aaa-profile": ("name", PERSONAS, False),
+    "aaa-profile": ("name", NETWORK_PERSONAS, False),
     "fault-monitor": ("name", PERSONAS, False),
     "nd-snooping": ("name", PERSONAS, False),
     "devicefingerprinting-profile": ("name", PERSONAS, False),
