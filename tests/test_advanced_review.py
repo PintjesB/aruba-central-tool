@@ -99,3 +99,29 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(preferred_duplicate(usage), "a")
         data["library"]["assignments"]["status"] = "request_rejected"
         self.assertIsNone(preferred_duplicate(library_usage(data, "sw-port-profiles", profiles, refs)))
+
+
+    def test_saved_and_library_dependencies_count_even_without_deployments(self):
+        roles = view({"employee": {"name": "employee"}})
+        wlan = view({"wifi": {"ssid": "wifi", "default-role": "employee",
+                             "auth-server-group": "radgrp", "primary-auth-server": "rad1"}})
+        groups = view({"radgrp": {"name": "radgrp"}})
+        auth = view({"rad1": {"name": "rad1"}})
+        data = {"results": {"CAMPUS_AP": {"scopes": [
+            {"id": "1", "kind": "global", "name": "Global"}], "modules": {
+            "wlan-ssids": {"scope_results": [{"scope": "1", "local_view": wlan, "effective_view": wlan}]},
+            "roles": {"scope_results": [{"scope": "1", "effective_view": roles}]},
+            "server-groups": {"scope_results": [{"scope": "1", "effective_view": groups}]},
+            "auth-servers": {"scope_results": [{"scope": "1", "effective_view": auth}]}
+        }}}, "library": {"modules": {"roles": roles, "wlan-ssids": wlan,
+                                     "server-groups": groups, "auth-servers": auth}}}
+        findings = advanced_analysis(data)
+        references = findings["references"]
+        self.assertEqual(len(references), 6)
+        self.assertEqual({r["source_scope_kind"] for r in references}, {"global", "library"})
+        self.assertTrue(all(r["status"] == "definition_observed" for r in references))
+        from advanced_review import library_usage
+        usage = library_usage(data, "roles", ["employee"], references)["employee"]
+        self.assertEqual(usage["reference_count"], 2)
+        self.assertEqual(usage["reference_devices"], 0)
+        self.assertFalse(usage["coverage_complete"])

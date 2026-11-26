@@ -1297,6 +1297,9 @@ CONFIG_MODULES = {
     "gw-system": ("name", GATEWAY_PERSONAS, False),
     "stp-gw": ("name", GATEWAY_PERSONAS, False),
     "auth-servers": ("name", NETWORK_PERSONAS, False),
+    "server-groups": ("name", NETWORK_PERSONAS, False),
+    "object-groups": ("name", NETWORK_PERSONAS, False),
+    "macsec": ("name", PERSONAS, False),
     # Named resources documented by HPE; capture read-only across applicable
     # functions. Actual applicability and response qualification remain separate.
     "aliases": ("name", NETWORK_PERSONAS, False),
