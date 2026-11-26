@@ -149,7 +149,7 @@ def device_override_rows(bundle, persona):
                 findings.append({"device": sid, "device_name": names[sid], "module": module,
                                  "identity": identity, "result": state, "profile": row, "chain": chain,
                                  "direct_confirmed": direct, "evidence": evidence, "assessment": assessment,
-                                 "candidate": state == "identical" and module in REUSABLE and direct,
+                                 "candidate": state in ("identical", "nearest_match") and module in REUSABLE and direct,
                                  "review_candidate": state in ("identical", "effective_match", "partial_match", "nearest_match"),
                                  "fallback": fallback,
                                  "removal": removal,
