@@ -39,20 +39,7 @@ def read_audit(directory, name):
     return data
 
 
-def page(title, content, nav=""):
-    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>""" + e(title) + """</title>
-<style>
-:root{font:14px/1.5 system-ui,sans-serif;color-scheme:light dark;--surface:#fff;--text:#19304a;--line:#d8e1ee;--bg:#f3f6fb}
-@media(prefers-color-scheme:dark){:root{--surface:#182538;--text:#e8effa;--line:#3b4b62;--bg:#101a2a}}
-body{margin:0;background:var(--bg);color:var(--text)}header{padding:18px 30px;background:#18304c;color:white}
-header a{color:#b8dcff;margin-right:20px}main{max-width:1250px;margin:auto;padding:25px}
-h1{font-size:23px;margin:0 0 10px}h2{font-size:18px}section{background:var(--surface);border:1px solid var(--line);border-radius:10px;margin:18px 0;padding:20px}
-table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
-button,select,input{font:inherit;padding:8px 12px;margin:4px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:inherit}
-a{color:#1674c8}@media(prefers-color-scheme:dark){a{color:#8dc2ff}}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
-progress{width:100%;height:18px;accent-color:#1683dc}.audit-state{border-left:4px solid #1683dc;padding:12px 16px;background:var(--bg);border-radius:7px}.audit-state[data-state=complete]{border-color:#249761}.audit-state[data-state=failed]{border-color:#cc5246}.audit-state h3{margin:0 0 6px}.audit-state p{margin:6px 0}label{display:inline-block;margin:6px}small{opacity:.8}.pill{padding:4px 8px;border-radius:6px;background:#fff0d7;color:#804a0b}
-</style></head><body><header><h1>Central Configuration Workspace</h1>""" + nav + "</header><main>" + content + "</main></body></html>"
+from workspace_ui import page, navigation, intro, snapshot_picker, metrics, e as ui_escape
 
 
 def options(items, selected=None):
@@ -242,19 +229,20 @@ class Workspace:
         threading.Thread(target=run, daemon=True).start()
         return True
 
-    def nav(self):
-        root = "/" + self.token + "/"
-        return f'<a href="{root}">Snapshots</a><a href="{root}advisor">Consolidation advisor</a><a href="{root}advanced">Engineering review</a><a href="{root}coverage">Module coverage</a><a href="{root}library">Library</a><a href="{root}scopes">Scopes</a><a href="{root}compare">Compare devices</a>'
+    def nav(self, snapshot=None):
+        return navigation("/" + self.token + "/", snapshot)
 
-    def home(self):
+    def home(self, query=None):
         root = "/" + self.token + "/"
         files = audit_files(self.directory)
+        name = (query or {}).get("snapshot", files[0].name if files else None)
+        bundle = read_audit(self.directory, name) if name else None
         status = self.status()
         state = status["state"]
         from central_tool import EU_REGIONS
         disabled = " disabled" if state == "running" else ""
         hidden = f'<input type="hidden" name="csrf" value="{e(self.csrf)}">'
-        refresh = (f'<form method="post" action="{root}credentials" autocomplete="off">' + hidden +
+        refresh = (f'<form class="connection-form" method="post" action="{root}credentials" autocomplete="off">' + hidden +
                    '<label>API region<select name="region">'
                    + options([("", "Detect EU region")] + [(r, urlsplit(r).hostname.split(".")[0].upper()) for r in EU_REGIONS])
                    + '</select></label><label>Client ID<input name="client_id" type="text" required maxlength="1024" autocomplete="off"></label>'
@@ -317,248 +305,48 @@ async function poll(){
 }
 if(panel.dataset.state==='running')poll();
 </script>"""
-        return page("Snapshots", '<p>Private local workspace. Select a saved configuration capture. '
-                    'Use a separate directory for each customer; tenant identity is not independently verified.</p>'
-                    f'<section><h2>Audit refresh</h2>{progress_html}{refresh}'
-                    f'<p><a href="{root}">Reload status</a></p></section><section><h2>Saved snapshots ({len(files)})</h2>'
-                    '<table><thead><tr><th>Capture file</th><th>Action</th></tr></thead><tbody>' +
-                    "".join(f'<tr><td>{e(p.name)}</td><td><a href="{root}report?{e(urlencode({"snapshot": p.name}))}">Open explorer</a>'
-                            f' · <a href="{root}advisor?{e(urlencode({"snapshot": p.name}))}">Consolidation advisor</a>'
-                            f' · <a href="{root}coverage?{e(urlencode({"snapshot": p.name}))}">Module coverage</a>'
-                            f' · <a href="{root}scopes?{e(urlencode({"snapshot": p.name}))}">Browse scopes</a>' 
-                            f' · <a href="{root}compare?{e(urlencode({"snapshot": p.name}))}">Compare devices</a></td></tr>'
-                            for p in files) + '</tbody></table></section>' + script, self.nav())
+        summary = ""
+        if bundle:
+            coverage = module_coverage(bundle)
+            devices = {s["id"] for entry in bundle["results"].values() for s in entry["scopes"] if s["kind"] == "device"}
+            qualified = sum(r["status"] == "qualified" for r in coverage)
+            partial = sum(r["status"] == "partial" for r in coverage)
+            library = (bundle.get("library") or {}).get("modules", {})
+            observed = sum(len(v["profiles"]) for v in library.values() if v["status"] == "list_parsed")
+            summary = metrics([("Devices", len(devices), "Captured inventory"),
+                               ("Qualified module views", qualified, f"{partial} partially qualified"),
+                               ("Library profiles", observed, "Observed definitions")])
+            cards = []
+            for route, title, desc in (
+                ("advisor", "Consolidate configuration", "Find repeated profiles, compare overrides and choose destinations."),
+                ("advanced", "Review engineering findings", "Find reusable ports, shadowed settings and duplicate Library profiles."),
+                ("report", "Explore configuration", "Inspect individual scope settings and their sources."),
+                ("compare", "Compare devices", "Review exact configuration differences between devices.")):
+                href = root + route + "?" + urlencode({"snapshot": name})
+                cards.append(f'<a class="workflow-card" href="{e(href)}"><strong>{e(title)}</strong><span>{e(desc)}</span><span class="arrow">Open workspace →</span></a>')
+            summary += '<h2>Workflows</h2><div class="workflow-grid">' + "".join(cards) + '</div>'
+        else:
+            summary = '<section><h2>Collect your first snapshot</h2><p>Connect to Central to start a read-only configuration audit.</p></section>'
+        picker = snapshot_picker(root, "", files, name) if files else ""
+        captures = (f'<section><div class="section-head"><h2>Saved snapshots ({len(files)})</h2></div>'
+                    + picker + (f'<p class="muted">Captured: {e(bundle.get("captured_at", "unknown"))}</p>' if bundle else "")
+                    + '<p class="note">Use a separate workspace directory for each customer. Tenant identity is not independently verified.</p></section>')
+        return page("Snapshots", intro("Overview", "Review captured configuration and plan improvements.")
+                    + summary + '<div class="split">' + captures
+                    + f'<section><h2>Connect to Central</h2>{progress_html}{refresh}</section></div>'
+                    + script, self.nav(name))
 
     def advisor(self, query):
-        from central_tool import refresh_configuration_review
-        from consolidation import LABELS, profile_recommendations
-        from collections import Counter
-        root = "/" + self.token + "/"
-        files = audit_files(self.directory)
-        if not files:
-            return page("Consolidation advisor", "<p>No snapshots available.</p>", self.nav())
-        name = query.get("snapshot", files[0].name)
-        bundle = refresh_configuration_review(read_audit(self.directory, name))
-        findings = profile_recommendations(bundle)
-        counts = Counter(f["action"] for f in findings)
-        cards = "".join(
-            f'<button type="button" class="advisor-card" data-action="{e(k)}"><strong>{counts[k]}</strong><span>{e(v)}</span></button>'
-            for k, v in LABELS.items())
-        modules = sorted({f["module"] for f in findings})
-        people = sorted({f["persona"] for f in findings})
-        rows = []
-        for f in findings:
-            sources = ", ".join(s["name"] for s in f["sources"]) or "Library"
-            observed = f["observed_devices"]
-            coverage = " / ".join(f"{len(observed.get(k, []))} {k}" for k in
-                                  ("matching", "different", "absent", "unknown")) if observed else "Not assessed"
-            details = {"source_profiles": f["sources"], "local": f["local"], "reference": f["reference"],
-                       "differences": f["differences"], "observed_devices": observed,
-                       "scope_references": f["scope_references"], "placement_options": f["placement_options"]}
-            placement = ""
-            if f["action"] == "promote_local":
-                choices = [("", "Choose destination for review"), ("library", "Library / exact source scopes")]
-                for p in f["placement_options"]:
-                    choices.append((p["scope"], f'{p["kind"]} / {p["name"]} ({len(p["additional_devices"])} extra, {len(p["unknown_membership"])} unknown; {p["effective"]})'))
-                placement = '<br><label>Destination<select class="destination">' + options(choices) + '</select></label>'
-            rows.append(
-                f'<tr data-action="{e(f["action"])}" data-module="{e(f["module"])}" data-persona="{e(f["persona"])}">'
-                f'<td><input type="checkbox" class="choose" aria-label="Select recommendation" data-plan="{e(json.dumps(f, ensure_ascii=False))}"></td>'
-                f'<td><strong>{e(LABELS[f["action"]])}</strong><br><small>{e(f["persona"])}</small></td>'
-                f'<td>{e(f["module"])}<br><strong>{e(f["identity"])}</strong></td>'
-                f'<td>{len(f["sources"])} local scopes<br>{e(sources)}</td>'
-                f'<td>{e(f["target"])}{placement}</td><td>{e(coverage)}</td>'
-                '<td><span class="pill">Review required</span>'
-                '<details><summary>Evidence and steps</summary>'
-                + '<ol>' + "".join(f'<li>{e(step)}</li>' for step in f["steps"]) + '</ol>'
-                + '<ul>' + "".join(f'<li>{e(b)}</li>' for b in f["blockers"]) + '</ul>'
-                + f'<pre>{e(json.dumps(details, indent=2, ensure_ascii=False))}</pre></details></td></tr>')
-        controls = (
-            f'<form method="get" action="{root}advisor"><label>Snapshot<select name="snapshot">'
-            + options([(p.name, p.name) for p in files], name)
-            + '</select></label><button>Open</button></form>'
-            '<div class="advisor-cards">' + cards + '</div>'
-            '<div class="advisor-filters"><label>Action<select id="action">'
-            + options([("", "All recommendations")] + list(LABELS.items()))
-            + '</select></label><label>Module<select id="module">'
-            + options([("", "All modules")] + [(m, m) for m in modules])
-            + '</select></label><label>Device function<select id="persona">'
-            + options([("", "All functions")] + [(p, p) for p in people])
-            + '</select></label><label>Search<input id="search" type="search" placeholder="Profile or device"></label>'
-            '<button type="button" id="clear">Clear filters</button></div>')
-        plan = (
-            '<section><h2>Selected change preview</h2><p id="selected" aria-live="polite">0 selected</p>'
-            '<p>Review-only. These steps are not executable API operations. Unknown inheritance, destination scope, '
-            'dependencies and rollback must be resolved before any write.</p>'
-            '<button id="select-visible" type="button">Select visible</button>'
-            '<button id="clear-selection" type="button">Clear selection</button>'
-            '<button id="export-plan" type="button" disabled>Export private preview JSON</button>'
-            '<pre id="preview">Select recommendations to inspect the proposed workflow.</pre></section>')
-        script = """
-<style>
-.advisor-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:12px 0}
-.advisor-card{display:grid;text-align:left;gap:5px;padding:14px;margin:0;border-top:3px solid #1683dc;cursor:pointer}
-.advisor-card strong{font-size:25px}.advisor-card span{font-size:12px}
-.advisor-filters{display:flex;flex-wrap:wrap;align-items:center}.advisor-table{overflow:auto}
-.advisor-table td{min-width:90px}.advisor-table td:first-child{min-width:30px}.advisor-table details pre{max-width:450px;max-height:320px;overflow:auto}
-.advisor-table tr[hidden]{display:none}.advisor-table summary{cursor:pointer;color:#1683dc;margin:8px 0}
-#preview{max-height:500px;overflow:auto;background:var(--bg);padding:12px}
-</style>
-<script>
-'use strict';
-const $=id=>document.getElementById(id);
-const rows=Array.from(document.querySelectorAll('.advisor-table tbody tr'));
-const checks=rows.map(r=>r.querySelector('.choose'));
-const keys=['action','module','persona'];
-function filter(){
- const q=$('search').value.trim().toLowerCase();
- for(const row of rows)row.hidden=!keys.every(k=>!$(k).value||row.dataset[k]===$(k).value)||!row.textContent.toLowerCase().includes(q);
- $('visible-count').textContent=rows.filter(r=>!r.hidden).length+' of '+rows.length+' recommendations';
-}
-function selection(){
- const chosen=checks.filter(c=>c.checked).map(c=>{
-   const f=JSON.parse(c.dataset.plan);
-   const field=c.closest('tr').querySelector('.destination');
-   if(field){
-     const value=field.value;
-     f.selected_destination=value==='library'?{kind:'library',assignment_scopes:f.sources.map(s=>s.scope)}:
-       f.placement_options.find(p=>p.scope===value)||null;
-     if(value==='library')f.target='Library / exact source scopes';
-     else if(f.selected_destination)f.target=f.selected_destination.kind+' / '+f.selected_destination.name+
-       ' ('+f.selected_destination.additional_devices.length+' additional, '+f.selected_destination.unknown_membership.length+' unknown members)';
-     else f.target='Destination not selected';
-   }
-   return f;
- });
- $('selected').textContent=chosen.length+' selected (including any hidden by filters)';
- $('export-plan').disabled=!chosen.length;
- $('preview').textContent=chosen.length?chosen.map(f=>f.module+' / '+f.identity+' — '+f.action+'\\nTarget: '+f.target+'\\n'+f.steps.map((s,i)=>(i+1)+'. '+s).join('\\n')+'\\nBlocked: '+f.blockers.join(' ')).join('\\n\\n'):'Select recommendations to inspect the proposed workflow.';
- return chosen;
-}
-for(const k of keys)$(k).addEventListener('change',filter);
-$('search').addEventListener('input',filter);
-$('clear').addEventListener('click',()=>{for(const k of keys)$(k).value='';$('search').value='';filter();});
-for(const b of document.querySelectorAll('.advisor-card'))b.addEventListener('click',()=>{$('action').value=b.dataset.action;filter();});
-for(const c of checks)c.addEventListener('change',selection);
-for(const field of document.querySelectorAll('.destination'))field.addEventListener('change',selection);
-$('select-visible').addEventListener('click',()=>{for(const r of rows)if(!r.hidden)r.querySelector('.choose').checked=true;selection();});
-$('clear-selection').addEventListener('click',()=>{for(const c of checks)c.checked=false;selection();});
-$('export-plan').addEventListener('click',()=>{
- const content=JSON.stringify({schema:1,kind:'consolidation_preview',safe_to_apply:false,snapshot:$('snapshot-label').dataset.snapshot,recommendations:selection()},null,2);
- const url=URL.createObjectURL(new Blob([content],{type:'application/json'}));
- const a=document.createElement('a');a.href=url;a.download='consolidation-preview.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-});
-filter();selection();
-</script>"""
-        return page("Consolidation advisor",
-                    f'<section><h2>Consolidation advisor</h2><p id="snapshot-label" data-snapshot="{e(name)}">Captured: {e(bundle.get("captured_at", "unknown"))}</p>'
-                    '<p>Qualified reusable profiles only. Repeated profiles are grouped by exact identity and body. '
-                    'Device counts are observed effective configuration, not traffic usage or a verified blast radius. '
-                    'Device-specific system settings and physical/routed topology are excluded from generic promotion.</p>'
-                    + controls + '<p id="visible-count" aria-live="polite"></p>'
-                    '<div class="advisor-table"><table><thead><tr><th>Select</th><th>Recommendation</th><th>Profile</th>'
-                    '<th>Local scopes</th><th>Proposed placement</th><th>Observed devices</th><th>Review</th></tr></thead><tbody>'
-                    + "".join(rows) + '</tbody></table></div></section>' + plan + script, self.nav())
+        from workspace_views import advisor_view
+        return advisor_view(self, query)
 
     def advanced(self, query):
-        from central_tool import refresh_configuration_review
-        from advanced_review import advanced_analysis
-        root = "/" + self.token + "/"
-        files = audit_files(self.directory)
-        if not files:
-            return page("Engineering review", "<p>No snapshots available.</p>", self.nav())
-        name = query.get("snapshot", files[0].name)
-        data = advanced_analysis(refresh_configuration_review(read_audit(self.directory, name)))
-        sections = []
-        for key, label, hint in (
-            ("port_groups", "Repeated switch port settings", "Identical captured settings excluding port identity and description. Preserve mapping, descriptions and topology. Unsupported fields block conversion."),
-            ("shadowed", "Shadowed profiles at known member scopes", "Observed direct winning sources and known member scopes; this is not permission to delete a shared profile."),
-            ("library_duplicates", "Library identity-independent body matches", "Only identity field excluded. Different names may have different references or semantic meaning."),
-            ("references", "Dependency and reference evidence", "Not observed is not confirmed broken. Unqualified target views and aliases remain unresolved."),
-            ("coverage", "Effective view coverage", "Missing or rejected responses do not establish absence.")):
-            records = data[key]
-            rows = []
-            for record in records:
-                if key == "port_groups":
-                    title = f'{record["persona"]}: {len(record["ports"])} ports'
-                elif key == "shadowed":
-                    title = f'{record["device"]}: {record["module"]}/{record["identity"]} at {record["winning_scope"]} shadows {record["higher_scope"]}'
-                elif key == "library_duplicates":
-                    title = f'{record["module"]}: {", ".join(record["identities"])}'
-                elif key == "references":
-                    title = f'{record["device"]}: {record["source_module"]}/{record["source"]} → {record["target_module"]}/{record["target"]} ({record["status"]})'
-                else:
-                    title = f'{record["persona"]}: {record["module"]} / {record["scope"]} ({record["status"]})'
-                rows.append(f'<details data-status="{e(record.get("status", ""))}"><summary>{e(title)}</summary><pre>{e(json.dumps(record, indent=2, ensure_ascii=False))}</pre></details>')
-            sections.append(f'<section class="engineering"><h2>{e(label)} ({len(records)})</h2><p>{e(hint)}</p>'
-                            + "".join(rows) + '</section>')
-        selector = (f'<form method="get" action="{root}advanced"><label>Snapshot<select name="snapshot">'
-                    + options([(p.name,p.name) for p in files], name)
-                    + '</select></label><button>Open</button></form>')
-        script = """<script>
-const search=document.getElementById('engineering-search');
-const unresolved=document.getElementById('unresolved-only');
-function filter(){
- for(const row of document.querySelectorAll('.engineering details')){
-  row.hidden=!row.textContent.toLowerCase().includes(search.value.toLowerCase())||
-    (unresolved.checked&&row.dataset.status==='observed');
- }
-}
-search.addEventListener('input',filter);unresolved.addEventListener('change',filter);filter();
-</script><style>.engineering summary{cursor:pointer;margin:8px 0}.engineering pre{max-height:350px;overflow:auto}.engineering details[hidden]{display:none}</style>"""
-        return page("Engineering review", '<p>Read-only engineering evidence. Reference coverage is not exhaustive; no changes are authorized.</p>'
-                    + selector + '<label>Search<input id="engineering-search" type="search"></label>'
-                    '<label><input type="checkbox" id="unresolved-only"> Hide resolved references</label>'
-                    + "".join(sections) + script, self.nav())
+        from workspace_views import engineering_view
+        return engineering_view(self, query)
 
     def library(self, query):
-        root = "/" + self.token + "/"
-        files = audit_files(self.directory)
-        if not files:
-            return page("Library", "<p>No snapshots available.</p>", self.nav())
-        name = query.get("snapshot", files[0].name)
-        from central_tool import refresh_configuration_review
-        bundle = refresh_configuration_review(read_audit(self.directory, name))
-        library = bundle.get("library")
-        select = (f'<form method="get" action="{root}library"><label>Snapshot<select name="snapshot">'
-                  + options([(p.name, p.name) for p in files], name)
-                  + '</select></label><button>Open</button></form>')
-        if not library:
-            return page("Library", select + "<p>This capture predates Library discovery. Refresh from Central to collect it.</p>", self.nav())
-        module = query.get("module", "")
-        modules = library.get("modules", {})
-        if module and module not in modules:
-            raise ValueError("Unknown Library module")
-        assignments = library.get("assignments", {})
-        assignment_rows = assignments.get("rows", [])
-        body = ""
-        for key, view in sorted(modules.items()):
-            if module and key != module:
-                continue
-            link = root + "library?" + urlencode({"snapshot": name, "module": key})
-            body += (f'<tr><td><a href="{e(link)}">{e(key)}</a></td><td>{e(view["status"])}</td>'
-                     f'<td>{len(view["profiles"])}</td></tr>')
-        detail = ""
-        if module:
-            view = modules[module]
-            detail = f'<section><h2>{e(module)}</h2><p>Observed profiles: {len(view["profiles"])}</p>'
-            comparison = library_profile_comparison(bundle, module)
-            for identity, profile in sorted(view["profiles"].items()):
-                review = comparison.get(identity, {})
-                matches = review.get("assignments", [])
-                variants = review.get("local_variants", [])
-                conflicts = sum(v["classification"] == "different_body" for v in variants)
-                detail += (f'<details><summary>{e(identity)} · {len(matches)} observed assignments · '
-                           f'{len(variants)} local instances · {conflicts} different bodies</summary>'
-                           '<p>Zero observed assignments does not establish that a profile is unused.</p>'
-                           f'<pre>{e(json.dumps({"profile": profile, **review}, indent=2, ensure_ascii=False))}</pre></details>')
-            detail += "</section>"
-        assignment_detail = (f'<section><h2>Observed assignment response</h2><p>{e(assignments.get("status", "unknown"))} · '
-                             f'{len(assignment_rows)} records. Assignment completeness is not verified.</p>'
-                             f'<details><summary>Inspect raw assignment records</summary><pre>{e(json.dumps(assignment_rows, indent=2, ensure_ascii=False))}</pre></details></section>')
-        return page("Library", select + '<section><h2>Tenant Library</h2><p>Read-only shared profile inventory; counts are observed, not proof of completeness.</p>'
-                    '<table><thead><tr><th>Module</th><th>Response status</th><th>Observed profiles</th></tr></thead><tbody>'
-                    + body + '</tbody></table></section>' + detail + assignment_detail, self.nav())
+        from workspace_views import library_view
+        return library_view(self, query)
 
     def unadapted(self, query):
         root = "/" + self.token + "/"
@@ -582,144 +370,23 @@ search.addEventListener('input',filter);unresolved.addEventListener('change',fil
             body += (f'<details><summary>{e(view["persona"])} / Scope {e(view["scope"])} · '
                      f'{len(view["observed_instances"])} observed instances</summary>'
                      f'<pre>{e(json.dumps(view, indent=2, ensure_ascii=False))}</pre></details>')
-        return page("Profile evidence", body + "</section>", self.nav())
+        return page("Profile evidence", intro("Profile evidence", "Raw diagnostic capture.") + body + "</section>", self.nav(query["snapshot"]))
 
     def coverage(self, query):
-        from central_tool import refresh_configuration_review
-        root = "/" + self.token + "/"
-        files = audit_files(self.directory)
-        if not files:
-            return page("Module coverage", "<p>No snapshots available.</p>", self.nav())
-        name = query.get("snapshot", files[0].name)
-        bundle = refresh_configuration_review(read_audit(self.directory, name))
-        rows = module_coverage(bundle)
-        order = {"qualified": 0, "partial": 1, "unqualified": 2}
-        rows.sort(key=lambda r: (order[r["status"]], r["persona"], r["module"]))
-        body = ""
-        for row in rows:
-            href = root + "report?" + urlencode({"snapshot": name, "persona": row["persona"], "module": row["module"]})
-            body += (f'<tr><td>{e(row["persona"])}</td><td>{e(row["module"])}</td>'
-                     f'<td>{row["qualified"]}/{row["total"]}</td><td>{e(row["status"])}</td>'
-                     f'<td><a href="{e(href)}">Inspect evidence</a></td></tr>')
-        observed = bundle.get("profile_type_discovery")
-        discovery = ""
-        if observed is not None:
-            library = bundle.get("library", {})
-            unknown = set(observed["unknown_adapter_modules"])
-            observed_rows = "".join(
-                f'<tr><td>{e(module)}</td><td>{e(", ".join(personas))}</td>'
-                f'<td>{e("Adapter needed" if module in unknown else "Adapter available")}'
-                + (f' · <a href="{e(root + "unadapted?" + urlencode({"snapshot": name, "module": module}))}">Raw evidence</a>'
-                   if module in unknown else "") + '</td></tr>'
-                for module, personas in observed["modules"].items())
-            assignments = library.get("assignments") or {}
-            maps = library.get("scope_maps") or {}
-            discovery = (f'<section><h2>Observed tenant profile types</h2>'
-                         f'<p>Assignments: {e(assignments.get("status", "unknown"))}. '
-                         f'Scope maps: {e(maps.get("status", "unknown"))}. '
-                         f'{len(unknown)} observed types need adapters; '
-                         f'{observed["unresolved_records"]} records could not be classified. '
-                         'These inventories do not establish complete coverage.</p>'
-                         '<table><thead><tr><th>Profile type</th><th>Observed device functions</th>'
-                         '<th>Adapter</th></tr></thead><tbody>' + observed_rows + '</tbody></table></section>')
-        return page("Module coverage", '<section><h2>Configuration module qualification</h2>'
-                    '<p>Fully qualified modules first. Partial modules retain their valid scope evidence; '
-                    'unqualified scopes are diagnostics only. Qualification is not permission to modify configuration.</p>'
-                    f'<form method="get" action="{root}coverage"><label>Snapshot<select name="snapshot">'
-                    + options([(p.name, p.name) for p in files], name)
-                    + '</select></label><button>Open</button></form><table><thead><tr><th>Function</th><th>Module</th>'
-                    '<th>Qualified scopes</th><th>Status</th><th>Evidence</th></tr></thead><tbody>'
-                    + body + '</tbody></table></section>' + discovery, self.nav())
+        from workspace_views import coverage_view
+        return coverage_view(self, query)
 
     def report(self, query):
-        from central_tool import configuration_html, refresh_configuration_review
-        bundle = refresh_configuration_review(read_audit(self.directory, query["snapshot"]))
-        if "scope" in query or "module" in query:
-            from central_tool import config_review_rows, configuration_view_shape
-            from config_dashboard import render_dashboard
-            records = [r for r in config_review_rows(bundle) if r[0] == query.get("persona")
-                       and ("scope" not in query or r[3]["scope"] == query["scope"])
-                       and ("module" not in query or r[1] == query["module"])]
-            if not records:
-                raise ValueError("Unknown scope")
-            html = render_dashboard(bundle, records, configuration_view_shape)
-            html = html.replace("<main>", "<main><p>Filtered evidence. Counts and repeat groups are limited to this selection.</p>", 1)
-        else:
-            html = configuration_html(bundle)
-        # Static report remains standalone; add a local navigation link only here.
-        return html.replace("<main>", f'<main><p><a href="/{self.token}/">Back to workspace</a></p>', 1)
+        from workspace_views import explorer_view
+        return explorer_view(self, query)
 
     def scopes(self, query):
-        from central_tool import refresh_configuration_review
-        root = "/" + self.token + "/"
-        files = audit_files(self.directory)
-        if not files:
-            return page("Scopes", "<p>No snapshots available.</p>", self.nav())
-        name = query.get("snapshot", files[0].name)
-        bundle = refresh_configuration_review(read_audit(self.directory, name))
-        select = (f'<form method="get" action="{root}scopes"><label>Snapshot<select name="snapshot">'
-                  + options([(p.name, p.name) for p in files], name)
-                  + '</select></label><button>Open</button></form>')
-        sections = []
-        order = {"global": 0, "collection": 1, "site": 2, "group": 3, "device": 4}
-        for persona, entry in sorted(bundle["results"].items()):
-            rows = []
-            for scope in sorted(entry["scopes"], key=lambda s: (order.get(s["kind"], 99), s.get("name") or "", s["id"])):
-                sid = scope["id"]
-                views = [s for m in entry["modules"].values() for s in m["scope_results"] if s["scope"] == sid]
-                qualified = sum(s["review"]["qualified"] for s in views)
-                href = root + "report?" + urlencode({"snapshot": name, "persona": persona, "scope": sid})
-                rows.append(f'<tr><td>{e(scope["kind"])}</td><td>{e(scope.get("name") or sid)}</td>'
-                            f'<td>{qualified}/{len(views)}</td><td><a href="{e(href)}">Inspect scope</a></td></tr>')
-            sections.append(f'<section><h2>{e(persona)}</h2><table><thead><tr><th>Scope type</th>'
-                            '<th>Name</th><th>Qualified modules</th><th>Action</th></tr></thead><tbody>'
-                            + "".join(rows) + '</tbody></table></section>')
-        return page("Scopes", '<p>Scope inventory grouped by device function and level. '
-                    'Parent relationships are not inferred from the order.</p>' + select + "".join(sections), self.nav())
+        from workspace_views import inventory_view
+        return inventory_view(self, query)
 
     def comparison(self, query):
-        from central_tool import refresh_configuration_review
-        root = "/" + self.token + "/"
-        files = audit_files(self.directory)
-        if not files:
-            return page("Compare", "<p>No snapshots available.</p>", self.nav())
-        name = query.get("snapshot", files[0].name)
-        bundle = refresh_configuration_review(read_audit(self.directory, name))
-        personas = sorted(bundle["results"])
-        if not personas:
-            return page("Compare", "<p>No qualified personas in capture.</p>", self.nav())
-        persona = query.get("persona", personas[0])
-        if persona not in personas:
-            raise ValueError("Unknown persona")
-        entry = bundle["results"][persona]
-        devices = [(s["id"], s.get("name") or s["id"]) for s in entry["scopes"] if s["kind"] == "device"]
-        left, right = query.get("left", ""), query.get("right", "")
-        module = query.get("module", "")
-        if module and module not in entry["modules"]:
-            raise ValueError("Unknown module")
-        choose = (f'<form method="get" action="{root}compare">'
-                  f'<label>Snapshot<select name="snapshot">{options([(p.name,p.name) for p in files], name)}</select></label>'
-                  f'<label>Function<select name="persona">{options([(p,p) for p in personas], persona)}</select></label>'
-                  '<button>Load devices</button></form>')
-        controls = (f'<form method="get" action="{root}compare">'
-                    f'<input type="hidden" name="snapshot" value="{e(name)}">'
-                    f'<input type="hidden" name="persona" value="{e(persona)}">'
-                    f'<label>Reference device<select name="left">{options([("", "Select")] + devices, left)}</select></label>'
-                    f'<label>Compare device<select name="right">{options([("", "Select")] + devices, right)}</select></label>'
-                    f'<label>Module<select name="module">{options([("", "Reusable modules")] + [(m,m) for m in sorted(entry["modules"])], module)}</select></label>'
-                    '<button>Compare</button></form>')
-        result = ""
-        if left and right:
-            comparison = compare_devices(bundle, persona, left, right, module or None)
-            result = "".join(f'<section><h2>{e(r["module"])}</h2><p class="pill">{e(r["status"])} · '
-                             f'{len(r["differences"])} differing profiles</p>'
-                             + "".join(f'<details><summary>{e(d["identity"])} · {e(d["status"])}</summary>'
-                                       f'<pre>{e(json.dumps(d,indent=2,ensure_ascii=False))}</pre></details>'
-                                       for d in r["differences"]) + "</section>" for r in comparison)
-        return page("Compare devices", '<section><h2>Compare captured effective configuration</h2>'
-                    '<p>Same snapshot and device function only. Infrastructure is excluded by default; '
-                    'select a specific module to compare it. Exact body differences do not prove operational equivalence.</p>'
-                    + choose + controls + "</section>" + result, self.nav())
+        from workspace_views import comparison_view
+        return comparison_view(self, query)
 
 
 def handler_for(workspace):
@@ -757,7 +424,7 @@ def handler_for(workspace):
                     self.reply(json.dumps(workspace.status()), content_type="application/json; charset=utf-8")
                     return
                 if parsed.path == root:
-                    body = workspace.home()
+                    body = workspace.home(query)
                 elif parsed.path == root + "report":
                     body = workspace.report(query)
                 elif parsed.path == root + "advisor":
