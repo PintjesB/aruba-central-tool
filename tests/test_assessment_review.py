@@ -25,3 +25,19 @@ class AssessmentTests(unittest.TestCase):
             html = Workspace(tmp).assessment({"snapshot": name})
             for label in ("Evidence to resolve", "Optimization opportunities", "Export private report JSON", "Open worklist"):
                 self.assertIn(label, html)
+
+
+    def test_assessment_exposes_policy_and_checkpoint_evidence(self):
+        from test_policy_rule_review import policy, rule
+        from test_policy_sequence_review import capture
+        data = fixture()
+        data["library"]["modules"]["policies"] = {"status": "list_parsed", "profiles": {
+            "broad": policy([rule(1, source=None), rule(2)]), "specific": policy([rule(1)])}}
+        data["unadapted_profiles"] = {"policy-groups": {"library": capture([
+            {"name": "broad", "position": 1}, {"name": "specific", "position": 2}])}}
+        data["collection_checkpoint"] = {"enabled": True, "mixed_capture_times": True,
+                                         "reused_pairs": 2, "additional_observations_reused": {"library": 1}}
+        report = assessment(data)
+        self.assertEqual(report["policy_rules"]["groups_with_findings"], 1)
+        self.assertEqual(report["policy_sequences"]["cross_policy_candidates"], 2)
+        self.assertTrue(report["checkpoint"]["mixed_capture_times"])

@@ -117,7 +117,10 @@ No live write may be authorized by profile similarity, inferred identity, or a s
 - [x] Baseline-driven configuration templates and historical compliance trends with contemporaneous approval evaluation.
 - [x] Before/after remediation review for prior override and duplicate Library candidates, with strictly newer captures and private rollback evidence (not executable rollback).
 - [x] Profile source tracing, bulk observed Library assignment and overlap analysis, saved/effective port conversion evidence, and grouped same-name effective policy variants.
-- [ ] Extend reference schemas, semantic policy conflict analysis, and inheritance qualification; validate against live customer coverage.
+- [x] Private CLI/browser recovery of qualified structured scope, Library, raw catalog and keyed reads, with bounded age, identity checks, live discovery and mixed-time disclosure.
+- [x] Dependency-aware bulk review ordering and cycle detection, consolidated customer assessment, indexed usage analysis and selected-workflow detail rendering.
+- [x] Review documented default security-policy rule subsets and captured policy-group order; retain unsupported predicates and unresolved policy targets as evidence gaps.
+- [ ] Extend semantic ACL and policy analysis to services, addresses, rule side effects and resultant role-specific policies. Extend reference schemas and inheritance qualification; validate against live customer coverage.
 - [ ] Multi-customer workspaces with explicit tenant separation, credential entry in memory only, no persistent API credentials and no cross-tenant comparison by default.
 
 ## Vendor references
