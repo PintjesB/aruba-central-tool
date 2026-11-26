@@ -53,7 +53,8 @@ def device_override_rows(bundle, persona):
                 local, ref = row["local"], row["global_reference"]
                 evidence = vlan_comparison_evidence(bundle, persona, sid, row) if module == "layer2-vlan" else None
                 assessment = comparison_fields(evidence["comparison"] if evidence else row["effective"], ref,
-                                               vlan=module == "layer2-vlan", conflicts=evidence["conflicts"] if evidence else ())
+                                               vlan=module == "layer2-vlan", conflicts=evidence["conflicts"] if evidence else (),
+                                               saved=evidence["local"] if evidence else local)
                 counts = assessment["counts"]
                 # A sparse VLAN local/effective response is not by itself a
                 # source conflict. Explicit discrepancies and source annotations
@@ -78,11 +79,16 @@ def device_override_rows(bundle, persona):
                         d["kind"] not in ("missing_local", "missing_reference", "null_vs_value")
                         for d in evidence["differences"] or [])):
                     state = "different"
+                elif any(d["kind"] not in ("missing_local", "missing_reference", "null_vs_value")
+                         for d in field_differences(local, ref)):
+                    # An explicit saved difference cannot be dismissed because
+                    # the effective read omitted that setting.
+                    state = "source_uncertain"
                 elif canonical(local) == canonical(ref):
                     state = "identical"
                 elif evidence and evidence["differences"] == [] and counts["matching"]:
                     state = "effective_match"
-                elif counts["matching"] and counts["unavailable"]:
+                elif evidence and counts["matching"] and counts["unavailable"]:
                     state = "partial_match"
                 elif counts["unavailable"]:
                     state = "omitted"
