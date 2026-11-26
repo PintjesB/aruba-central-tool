@@ -95,6 +95,12 @@ def advisor_view(workspace, query):
         return empty
     root, name, bundle, picker = loaded
     findings = profile_recommendations(bundle)
+    # Exact deep links from the device override inspector preserve the full group.
+    scope_filter, identity_filter = query.get("scope"), query.get("identity")
+    if scope_filter and identity_filter:
+        findings = [f for f in findings if f["action"] == "remove_override"
+                    and f["persona"] == query.get("persona") and f["module"] == query.get("module")
+                    and f["identity"] == identity_filter and any(s["scope"] == scope_filter for s in f["sources"])]
     short = {key: value[0] for key, value in ACTION_GUIDE.items()}
     counts = Counter(f["action"] for f in findings)
     group_counts = [("opportunities", "Consolidation opportunities", sum(counts[k] for k in OPPORTUNITIES)),
@@ -170,6 +176,7 @@ def advisor_view(workspace, query):
               '<div id="preview"></div><button id="export-plan" type="button" class="primary" disabled>Export private preview JSON</button>'
               '</div></dialog>')
     return page("Consolidation advisor", intro("Consolidation", "Choose a task, inspect the evidence, and prepare a change preview.", picker)
+                + f'<p><a href="{url(root, "overrides", snapshot=name)}">Compare device overrides with Global →</a></p>'
                 + '<section><div id="snapshot-label" hidden data-snapshot="' + e(name) + '"></div>'
                 + tabs + category_help + filters + '<div class="table-toolbar"><span id="visible-count" class="muted" aria-live="polite"></span>'
                 '<div><button id="advisor-prev" type="button">Previous</button> <span id="advisor-page" class="muted"></span> '
@@ -296,13 +303,18 @@ def engineering_view(workspace, query):
         grouped.setdefault(key, []).append(rec)
     for members in grouped.values():
         r = members[0]
-        details = '<h3>Winning vs higher-scope settings</h3>' + diff_table(field_differences(r["effective"], r["higher_body"]), "Winning", "Higher scope") + '<h3>Affected devices</h3>' + list_items([v["device"] for v in members]) + raw(members)
+        same = r["relationship"] == "same_body"
+        why = ("The applied profile has identical settings to the higher-scope profile. The lower-scope definition may be redundant, but removing it could expose a different intermediate definition."
+               if same else "The applied profile takes precedence over a different higher-scope profile. This is normal inheritance behavior and may be intentional.")
+        details = '<h3>Why this appears</h3><p>' + e(why) + '</p><h3>Applied vs higher-scope settings</h3>' + diff_table(field_differences(r["effective"], r["higher_body"]), "Applied configuration", "Higher scope") + '<h3>Devices using the applied definition</h3>' + list_items([v["device"] for v in members]) + '<p class="note">Do not remove the higher-scope profile merely because it is overridden on these devices. Other devices may still depend on it.</p>' + raw(members)
+        if r["winning_scope_kind"] == "device":
+            details += f'<p><a href="{url(root, "overrides", snapshot=name, persona=r["persona"], device=r["scope"], module=r["module"])}">Compare this device with Global</a></p>'
         rows.append(tr(f'<strong>{e(title_profile(r["identity"], r["effective"]))}</strong><small>{e(module_label(r["module"]))}</small>',
                        e(r["winning_scope"]), e(r["higher_scope"]), str(len({v["scope"] for v in members})),
-                       badge("Same body" if r["relationship"] == "same_body" else "Different body", "good" if r["relationship"] == "same_body" else "warn"),
+                       badge("Identical settings" if same else "Different settings", "neutral"),
                        inspect(r["identity"], details)))
-    panel("shadow", "Shadowed configuration", "Known member scopes and observed winning sources. A shadowed profile may still serve other devices.",
-          ("Profile", "Winning scope", "Shadowed scope", "Devices", "Comparison", ""), rows, len(rows))
+    panel("shadow", "Scope precedence", "Shows which configuration takes precedence over a higher-scope definition. This is normal inheritance, not necessarily a problem. Identical definitions may warrant reviewing the lower-scope copy; do not delete the higher-scope profile.",
+          ("Profile", "Applied from", "Higher-scope definition", "Devices", "Settings compared", ""), rows, len(rows))
     rows = []
     for r in data["library_duplicates"]:
         refs = r.get("observed_references", [])
@@ -385,7 +397,7 @@ def inventory_view(workspace, query):
             qualified = sum(v["review"]["qualified"] for v in views)
             href = url(root, "report", snapshot=name, persona=persona, scope=sid)
             rows.append(tr(f'<strong>{e(s.get("name") or sid)}</strong>', e(pretty(s["kind"])), e(persona_label(persona)),
-                           f'{qualified}/{len(views)}', f'<a href="{href}">Open configuration</a>'))
+                           f'{qualified}/{len(views)}', (f'<a href="{url(root, "overrides", snapshot=name, persona=persona, device=sid)}">Compare overrides</a> · ' if s["kind"] == "device" else "") + f'<a href="{href}">Open configuration</a>'))
     return page("Scopes", intro("Inventory", "Browse captured devices and configuration scopes.", picker)
                 + '<section>' + table(("Scope / device", "Type", "Function", "Qualified modules", ""), rows, search=True) + '</section>', workspace.nav(name))
 

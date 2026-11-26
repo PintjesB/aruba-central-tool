@@ -318,6 +318,7 @@ if(panel.dataset.state==='running')poll();
                                ("Library profiles", observed, "Observed definitions")])
             cards = []
             for route, title, desc in (
+                ("overrides", "Review device overrides", "Compare saved device settings with Global and find possible redundant overrides."),
                 ("advisor", "Consolidate configuration", "Find repeated profiles, compare overrides and choose destinations."),
                 ("advanced", "Review engineering findings", "Find reusable ports, shadowed settings and duplicate Library profiles."),
                 ("report", "Explore configuration", "Inspect individual scope settings and their sources."),
@@ -335,6 +336,10 @@ if(panel.dataset.state==='running')poll();
                     + summary + '<div class="split">' + captures
                     + f'<section><h2>Connect to Central</h2>{progress_html}{refresh}</section></div>'
                     + script, self.nav(name))
+
+    def overrides(self, query):
+        from override_view import overrides_view
+        return overrides_view(self, query)
 
     def advisor(self, query):
         from workspace_views import advisor_view
@@ -431,6 +436,8 @@ def handler_for(workspace):
                     from central_tool import configuration_html, refresh_configuration_review
                     bundle = refresh_configuration_review(read_audit(workspace.directory, query["snapshot"]))
                     body = configuration_html(bundle).replace("<main>", f'<main><p><a href="{root}report?{e(urlencode({"snapshot": query["snapshot"]}))}">Back to workspace</a></p>', 1)
+                elif parsed.path == root + "overrides":
+                    body = workspace.overrides(query)
                 elif parsed.path == root + "advisor":
                     body = workspace.advisor(query)
                 elif parsed.path == root + "advanced":

@@ -1,4 +1,5 @@
 import unittest
+import copy
 from consolidation import profile_recommendations
 from central_tool import review_module_scope
 
@@ -33,8 +34,8 @@ def fixture():
     return {"schema": 1, "kind": "configuration_audit", "captured_at": "test",
             "results": {"ACCESS_SWITCH": {"scopes": scopes, "modules": {
                 "layer2-vlan": {"scope_results": results, "device_scope_only": False},
-                "system-info": {"scope_results": results, "device_scope_only": False},
-                "ethernet-interfaces": {"scope_results": results, "device_scope_only": True}}}},
+                "system-info": {"scope_results": copy.deepcopy(results), "device_scope_only": False},
+                "ethernet-interfaces": {"scope_results": copy.deepcopy(results), "device_scope_only": True}}}},
             "library": {"modules": {"layer2-vlan": view([vlan(30, "Reuse"), vlan(60, "Unassigned")])},
                         "assignments": {"status": "response_received", "rows": [
                             {"profile-type": "layer2-vlan", "profile-instance": "30"}]}}}
@@ -149,6 +150,7 @@ class ConsolidationTests(unittest.TestCase):
             query = {"snapshot": name}
             pages = [
                 ("Overview", workspace.home(query)),
+                ("Device overrides", workspace.overrides(query)),
                 ("Consolidation", workspace.advisor(query)),
                 ("Engineering", workspace.advanced(query)),
                 ("Configuration", workspace.report(query)),
@@ -214,3 +216,43 @@ class ConsolidationTests(unittest.TestCase):
             self.assertIn("let action='opportunities'", html)
             self.assertIn("if(!check.disabled)", html)
             self.assertNotIn(">Default differences<", html)
+
+    def test_device_override_comparison_and_deep_links(self):
+        from override_view import device_override_rows
+        from config_app import Workspace
+        from pathlib import Path
+        import tempfile
+        import json
+        data = fixture()
+        entry = data["results"]["ACCESS_SWITCH"]
+        local = entry["modules"]["layer2-vlan"]["scope_results"][2]
+        local["effective_view"]["profiles"]["10"]["@"] = {
+            "aruba-annotation:object_type": "LOCAL", "aruba-annotation:inherited": False}
+        from central_tool import refresh_configuration_review
+        refresh_configuration_review(data)
+        # Fixture views contain already-parsed reviews, not raw API responses.
+        next(r for r in local["review"]["profiles"] if r["identity"] == "10")["annotations"] = {
+            "aruba-annotation:object_type": "LOCAL", "aruba-annotation:inherited": False}
+        findings, missing = device_override_rows(data, "ACCESS_SWITCH")
+        by_id = {f["identity"]: f for f in findings if f["device"] == "3" and f["module"] == "layer2-vlan"}
+        self.assertEqual(by_id["10"]["result"], "identical")
+        self.assertEqual(by_id["40"]["result"], "different")
+        self.assertEqual(by_id["20"]["result"], "no_global")
+        self.assertTrue(any(f["device"] == "5" for f in missing))
+        self.assertFalse(any(f["module"] == "ethernet-interfaces" for f in findings))
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(data))
+            w = Workspace(directory)
+            html = w.overrides({"snapshot": name, "device": "3", "module": "layer2-vlan", "result": "identical"})
+            self.assertIn("Compare with Global", html)
+            self.assertIn("Identical to Global", html)
+            self.assertIn("Review possible override removal", html)
+            self.assertIn("Open matching consolidation preview", html)
+            self.assertIn("identity=10", html)
+            self.assertNotIn("VLAN 40", html)
+            html = w.advisor({"snapshot": name, "persona": "ACCESS_SWITCH", "module": "layer2-vlan", "scope": "3", "identity": "10"})
+            self.assertIn('data-action="remove_override"', html)
+            self.assertNotIn('data-plan="{&quot;action&quot;: &quot;promote_local&quot;', html)
+            self.assertIn("Scope precedence", w.advanced({"snapshot": name}))
+            self.assertIn("Compare overrides", w.scopes({"snapshot": name}))
