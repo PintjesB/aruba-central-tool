@@ -1666,6 +1666,142 @@
         "limit",
         "offset"
       ]
+    },
+    {
+      "group": "IoT",
+      "name": "Read existing usb configuration configurations",
+      "id": "3a1765ae-3d2c-4035-a27e-af34c6e65494",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/usb/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "IoT",
+      "name": "Read configured usb parameters",
+      "id": "82e68f61-043a-4d83-9113-279ce2d9a6fb",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/usb",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Miscellaneous",
+      "name": "Read overlay-wlan",
+      "id": "a104e145-cd8d-46fd-98b3-224c621c1cf6",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/overlay-wlan",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Miscellaneous",
+      "name": "Read ssid-cluster by profile",
+      "id": "e48022d3-3b73-413a-bf2a-5be38c893a64",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/overlay-wlan/:profile",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Named Object",
+      "name": "Read a configured net-service",
+      "id": "55834867-f36d-4c2c-bfd6-3ad5df66015d",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/net-services/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Named Object",
+      "name": "Read configured net-service definitions",
+      "id": "d9db8891-bfa4-4ec8-b7cc-0683e4b72d73",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/net-services",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Named Object",
+      "name": "Read aliases",
+      "id": "82087db1-cef3-4294-883a-35a362d37258",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/aliases",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Named Object",
+      "name": "Read alias by name",
+      "id": "8dda0410-eb03-4402-ac71-8f9541e5a0f1",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/aliases/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
     }
   ],
   "folder_outcomes": {
@@ -1716,6 +1852,18 @@
     "Interfaces": {
       "status": "read",
       "get_count": 43
+    },
+    "IoT": {
+      "status": "read",
+      "get_count": 2
+    },
+    "Miscellaneous": {
+      "status": "read",
+      "get_count": 2
+    },
+    "Named Object": {
+      "status": "read",
+      "get_count": 4
     }
   }
 }
