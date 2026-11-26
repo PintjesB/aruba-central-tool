@@ -169,6 +169,10 @@ def inventory(client):
     raise ValueError("Inventory pagination safety limit reached")
 
 
+class EmptyCommittedLocal(list):
+    """Observed empty-object response for committed local VLAN queries."""
+
+
 class VLANResponseError(RuntimeError):
     """A successful HTTP response whose VLAN schema could not be validated."""
 
@@ -215,6 +219,10 @@ def vlan_rows(client, **params):
     try:
         if params.get("view-type") != "LIBRARY":
             payload = client.get(VLAN, **params)
+            if (payload == {} and params.get("view-type") == "LOCAL"
+                    and params.get("object-type") == "LOCAL"
+                    and params.get("effective") == "false"):
+                return EmptyCommittedLocal()
             return scoped_vlan_rows(payload, params.get("object-type", "ANY"))
 
         # The live unpaginated Library view returned all 29 profiles.
@@ -246,6 +254,28 @@ def vlan_rows(client, **params):
     except ValueError as exc:
         safe = {k: v for k, v in params.items() if k != "scope-id"}
         raise VLANResponseError(f"{exc}; VLAN query: {canonical(safe)}") from None
+
+
+def check_empty_local(annotated):
+    """Cross-check observed empty local response against effective annotations."""
+    if not annotated:
+        return "no_effective_profiles"
+    uncertain = False
+    for profile in annotated:
+        annotation = profile.get("@")
+        if not isinstance(annotation, dict):
+            uncertain = True
+            continue
+        inherited = annotation.get("aruba-annotation:inherited")
+        object_type = annotation.get("aruba-annotation:object_type")
+        if inherited is True:
+            continue
+        if inherited is False and isinstance(object_type, str) and object_type.upper() == "SHARED":
+            continue
+        if inherited is False and isinstance(object_type, str) and object_type.upper() == "LOCAL":
+            return "contradictory_local_profile"
+        uncertain = True
+    return "unverified_annotations" if uncertain else "consistent_with_effective_annotations"
 
 
 def scan(client, persona):
@@ -292,11 +322,19 @@ def scan(client, persona):
             try:
                 scope[view] = vlan_rows(client, **params, **query)
                 print(f"  {view}: {len(scope[view])} profiles", flush=True)
+                if isinstance(scope[view], EmptyCommittedLocal):
+                    scope["local_response_format"] = "empty_object"
             except VLANResponseError as exc:
                 # Collect all schema mismatches in one scan, but never write a
                 # partial snapshot. HTTP/transport errors still stop immediately.
                 failures.append(f"{label} {view}: {exc}")
                 print(f"  {view}: SCHEMA ERROR: {exc}", flush=True)
+        if scope.get("local_response_format") == "empty_object" and "annotated" in scope:
+            status = check_empty_local(scope["annotated"])
+            scope["local_response_validation"] = status
+            print(f"  empty local response: {status}", flush=True)
+            if status == "contradictory_local_profile":
+                failures.append(f"{label}: empty committed local conflicts with annotations")
     if failures:
         raise RuntimeError(f"{len(failures)} VLAN views could not be validated; no snapshot written.")
     return {"schema": 1, "captured_at": datetime.now(timezone.utc).isoformat(),
@@ -340,6 +378,8 @@ def report(snapshot):
         comparisons.append({
             "scope": scope["id"], "kind": scope["kind"], "name": scope["name"],
             "local_vlan_ids": sorted(local, key=int),
+            "local_response_format": scope.get("local_response_format", "list_or_explicit_zero"),
+            "local_response_validation": scope.get("local_response_validation", "not_required"),
             "additional_vs_global": sorted(effective.keys() - baseline.keys(), key=int),
             "missing_vs_global": sorted(baseline.keys() - effective.keys(), key=int),
             "different_vs_global": sorted((v for v in effective.keys() & baseline.keys()

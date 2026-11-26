@@ -1,5 +1,5 @@
 import unittest
-from central_tool import APIError, Central, EU_REGIONS, detect_region, inventory, offset_rows, report, scoped_vlan_rows, vlan_map, vlan_rows
+from central_tool import APIError, Central, EmptyCommittedLocal, EU_REGIONS, check_empty_local, detect_region, inventory, offset_rows, report, scoped_vlan_rows, vlan_map, vlan_rows
 
 
 class Fake:
@@ -110,6 +110,27 @@ class Tests(unittest.TestCase):
         self.assertEqual(vlan_rows(client, **{"view-type": "LOCAL", "effective": "true"}), data)
         self.assertNotIn("limit", client.calls[0][1])
         self.assertNotIn("offset", client.calls[0][1])
+
+    def test_observed_empty_object_only_for_committed_local(self):
+        result = vlan_rows(Fake([{}]), **{"view-type": "LOCAL",
+                          "object-type": "LOCAL", "effective": "false"})
+        self.assertIsInstance(result, EmptyCommittedLocal)
+        self.assertEqual(result, [])
+        with self.assertRaisesRegex(RuntimeError, "Unrecognized"):
+            vlan_rows(Fake([{}]), **{"view-type": "LOCAL", "effective": "true"})
+        with self.assertRaisesRegex(RuntimeError, "Unrecognized"):
+            vlan_rows(Fake([{}]), **{"view-type": "LOCAL", "object-type": "LOCAL",
+                                    "effective": "true"})
+
+    def test_empty_local_annotation_cross_check(self):
+        def profile(inherited, kind):
+            return {"vlan": 10, "@": {"aruba-annotation:inherited": inherited,
+                                     "aruba-annotation:object_type": kind}}
+        self.assertEqual(check_empty_local([profile(True, "LOCAL"), profile(False, "SHARED")]),
+                         "consistent_with_effective_annotations")
+        self.assertEqual(check_empty_local([profile(False, "LOCAL")]), "contradictory_local_profile")
+        self.assertEqual(check_empty_local([{"vlan": 10}]), "unverified_annotations")
+        self.assertEqual(check_empty_local([]), "no_effective_profiles")
 
     def test_scoped_missing_module_with_explicit_zero(self):
         response = {"metadata": {"count_objects_in_module": {"LOCAL": 0, "SHARED": 22, "ANY": 22}}}
