@@ -289,6 +289,13 @@ class Workspace:
         if evidence is None:
             return page("Profile evidence", "<p>No captured evidence for this profile type. Collect a fresh audit.</p>", self.nav())
         body = f'<section><h2>{e(module)}</h2><p>Raw read-only evidence. This profile type has no qualified identity adapter.</p>'
+        from central_tool import qualify_observed_identities
+        identities = qualify_observed_identities(evidence)
+        for persona, result in identities.items():
+            body += (f'<details><summary>{e(persona)} · {e(result["status"])} · '
+                     f'{result.get("comparable_source_scopes", 0)}/{result["source_scopes"]} comparable source scopes</summary>'
+                     '<p>Inventory-derived identity evidence only. Full hierarchy and migration safety are not verified.</p>'
+                     f'<pre>{e(json.dumps(result, indent=2, ensure_ascii=False))}</pre></details>')
         library = evidence["library"]
         body += (f'<details><summary>Library · {e(library["status"])}</summary>'
                  f'<pre>{e(json.dumps(library, indent=2, ensure_ascii=False))}</pre></details>')
