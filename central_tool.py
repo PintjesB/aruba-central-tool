@@ -1314,7 +1314,9 @@ def module_view(payload, identity, object_type="ANY"):
     if len(lists) != 1 or set(payload) - {"metadata", lists[0][0]}:
         return {"status": "schema_unresolved", "profiles": {}}
     envelope, items = lists[0]
-    for count in (metadata.get("total"), expected):
+    if "offset" in metadata and (type(metadata["offset"]) is not int or metadata["offset"] != 0):
+        return {"status": "count_mismatch", "profiles": {}}
+    for count in (metadata.get("total"), metadata.get("count"), expected):
         if count is not None and (type(count) is not int or count != len(items)):
             return {"status": "count_mismatch", "profiles": {}}
     profiles = {}
@@ -1413,6 +1415,7 @@ def read_module_view(client, module, identity, params):
         if (not isinstance(page_meta, dict) or page_meta.get("total") != total
                 or not isinstance(batch, list) or not batch
                 or page_meta.get("count", len(batch)) != len(batch)
+                or page_meta.get("offset", len(items)) != len(items)
                 or page_meta.get("count_objects_in_module", {}) != counts
                 or len(items) + len(batch) > total):
             return incomplete("count_changed")
@@ -1426,7 +1429,7 @@ def read_module_view(client, module, identity, params):
         if len(items) == total:
             if Counter(canonical(item) for item in initial) - Counter(canonical(item) for item in items):
                 return incomplete("initial_response_changed")
-            combined = {"metadata": {**meta, "count": total}, envelope: items}
+            combined = {"metadata": {**meta, "count": total, "offset": 0}, envelope: items}
             result = module_view(combined, identity, object_type)
             return {**result, "raw": combined, "initial_raw": raw, "raw_pages": pages,
                     "pagination_status": "complete"}
@@ -1712,6 +1715,8 @@ def read_raw_profile_collection(client, module, params):
         if len(combined) == total:
             if Counter(canonical(item) for item in initial) - Counter(canonical(item) for item in combined):
                 return incomplete("initial_response_changed")
+            if len({canonical(item) for item in combined}) != total:
+                return incomplete("duplicate_records")
             # Retain a reconstructed collection for inspection, never qualify
             # identities or authorize a change based on this raw count alone.
             return {**result, "raw": {"metadata": {**meta, "count": total, "offset": 0}, envelope: combined},
