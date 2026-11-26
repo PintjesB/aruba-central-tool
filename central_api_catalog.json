@@ -3108,6 +3108,142 @@
         "limit",
         "offset"
       ]
+    },
+    {
+      "group": "Network Services/Dhcp Snooping",
+      "name": "Read existing DHCP-Snooping configuration",
+      "id": "32717089-cfb8714d-26f6-4552-be09-88dc1ca0417d",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/dhcp-snooping",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Network Services/Dhcp Snooping Interface",
+      "name": "Read existing DHCP-Snooping interface configuration",
+      "id": "32717089-75cbaaa4-da63-4d72-a87e-97d562fab540",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/dhcp-snooping-interface",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Network Services/Mgmd",
+      "name": "Read configured profile for MGMD",
+      "id": "32717089-32a082fc-4c42-4238-8280-dfa3ab17e9fe",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/mgmd-global/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Routing & Overlays/Multicast",
+      "name": "Read configured profile for Multicast",
+      "id": "32717089-7ac01923-1060-43ea-b929-d9ae1bd3bf64",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/multicast-global/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Routing & Overlays/Multicast Static Route",
+      "name": "Read configured profile for Multicast Static Route",
+      "id": "32717089-07dee07c-8ac6-4dd7-9b82-63b10bff2493",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/multicast-static-route/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Security/Aaa Dot1xauth",
+      "name": "Read an existing 802.1X authentication profile",
+      "id": "32717089-bd9cb90a-93e1-49b0-ae83-d0023fdb0320",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/dot1xauth/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Security/Aaa Profile",
+      "name": "Read an exiting AAA profile",
+      "id": "32717089-31e1071c-17b8-4a09-a7ff-45ef29bc689b",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/aaa-profile/:name",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "group": "Security/Auth Server Group",
+      "name": "Read configuration of Authentication Server Group",
+      "id": "32717089-f77f5337-739d-45e6-9208-00f68efcabf4",
+      "method": "GET",
+      "path": "/network-config/v1alpha1/server-groups",
+      "query": [
+        "view-type",
+        "object-type",
+        "scope-id",
+        "device-function",
+        "effective",
+        "detailed",
+        "limit",
+        "offset"
+      ]
     }
   ]
 }
