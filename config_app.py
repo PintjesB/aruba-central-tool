@@ -390,28 +390,55 @@ if(panel.dataset.state==='running')poll();
         return library_view(self, query)
 
     def unadapted(self, query):
+        from workspace_ui import property_table, table, tr, status, raw, module_label, persona_label, badge
+        from central_tool import qualify_observed_identities
         root = "/" + self.token + "/"
-        bundle = read_audit(self.directory, query["snapshot"])
-        module = query["module"]
+        name, module = query["snapshot"], query["module"]
+        bundle = read_audit(self.directory, name)
         evidence = bundle.get("unadapted_profiles", {}).get(module)
         if evidence is None:
-            return page("Profile evidence", "<p>No captured evidence for this profile type. Collect a fresh audit.</p>", self.nav())
-        body = f'<section><h2>{e(module)}</h2><p>Raw read-only evidence. This profile type has no qualified identity adapter.</p>'
-        from central_tool import qualify_observed_identities
+            return page("Profile evidence", "<p>No captured evidence for this profile type. Collect a fresh audit.</p>", self.nav(name))
+        def link(**params):
+            return e(root + "unadapted?" + urlencode({"snapshot": name, "module": module, **params}))
+        def settings(read):
+            payload = read.get("raw")
+            if isinstance(payload, dict):
+                fields = {k: v for k, v in payload.items() if k != "metadata"}
+                display = property_table(fields) if fields else '<p class="empty">No configuration values returned.</p>'
+            else:
+                display = '<p class="empty">Structured settings unavailable.</p>'
+            return status(read["status"]) + display + raw(read, "Complete captured response")
+        names = {(persona, str(s["id"])): s.get("name") or s["id"]
+                 for persona, entry in bundle["results"].items() for s in entry["scopes"]}
         identities = qualify_observed_identities(evidence)
-        for persona, result in identities.items():
-            body += (f'<details><summary>{e(persona)} · {e(result["status"])} · '
-                     f'{result.get("comparable_source_scopes", 0)}/{result["source_scopes"]} comparable source scopes</summary>'
-                     '<p>Inventory-derived identity evidence only. Full hierarchy and migration safety are not verified.</p>'
-                     f'<pre>{e(json.dumps(result, indent=2, ensure_ascii=False))}</pre></details>')
-        library = evidence["library"]
-        body += (f'<details><summary>Library · {e(library["status"])}</summary>'
-                 f'<pre>{e(json.dumps(library, indent=2, ensure_ascii=False))}</pre></details>')
-        for view in evidence["source_views"]:
-            body += (f'<details><summary>{e(view["persona"])} / Scope {e(view["scope"])} · '
-                     f'{len(view["observed_instances"])} observed instances</summary>'
-                     f'<pre>{e(json.dumps(view, indent=2, ensure_ascii=False))}</pre></details>')
-        return page("Profile evidence", intro("Profile evidence", "Raw diagnostic capture.") + body + "</section>", self.nav(query["snapshot"]))
+        selected_persona, selected_scope = query.get("persona"), query.get("scope")
+        body = intro(module_label(module), "Captured configuration without a qualified comparison adapter.")
+        body += f'<div class="collection-nav"><a href="{e(root + "coverage?" + urlencode({"snapshot": name}))}">← Collection coverage</a></div>'
+        body += '<p class="note">Read-only evidence. A captured value does not establish profile identity, source precedence or safe removal.</p>'
+        if selected_persona is not None or selected_scope is not None:
+            matches = [v for v in evidence["source_views"] if v["persona"] == selected_persona and v["scope"] == selected_scope]
+            if len(matches) != 1:
+                raise ValueError("Unknown source scope")
+            view = matches[0]
+            label = names.get((selected_persona, selected_scope), selected_scope)
+            body += f'<section><a href="{link()}">← All captured scopes</a><h2>{e(label)} · {e(persona_label(selected_persona))}</h2>'
+            body += '<h3>Committed configuration</h3>' + settings(view["committed"])
+            body += '<h3>Effective configuration</h3>' + settings(view["effective"]) + '</section>'
+        else:
+            library = evidence["library"]
+            body += '<section><h2>Library</h2>' + settings(library) + '</section>'
+            views = evidence["source_views"]
+            if identities:
+                body += '<section><h2>Identity evidence</h2>' + table(("Device function", "Identity field", "Comparable observed source scopes"),
+                    [tr(e(persona_label(p)), e(v.get("identity_field", "Unavailable")),
+                        f'{v.get("comparable_source_scopes", 0)}/{v["source_scopes"]}')
+                     for p, v in identities.items()]) + '</section>'
+            body += '<section><h2>Captured scopes</h2>' + table(("Device function", "Scope", "Committed", "Effective", ""),
+                    [tr(e(persona_label(v["persona"])), e(names.get((v["persona"], v["scope"]), v["scope"])),
+                        status(v["committed"]["status"]), status(v["effective"]["status"]),
+                        f'<a href="{link(persona=v["persona"], scope=v["scope"])}">Inspect settings</a>')
+                     for v in views], search=True) + '</section>'
+        return page("Profile evidence", body, self.nav(name))
 
     def coverage(self, query):
         from workspace_views import coverage_view

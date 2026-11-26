@@ -747,6 +747,26 @@ class Tests(unittest.TestCase):
         self.assertIn("new-module", discover_profile_types(result, {})["modules"])
         self.assertEqual(fake.calls[1][1], {"scope-id": "2", "device-function": "ACCESS_SWITCH"})
 
+    def test_assignment_inventory_recovers_pages_and_retains_partial_observations(self):
+        from central_tool import profile_inventory_view, collect_scoped_assignments
+        def record(name):
+            return {"scope-id": "1", "device-function": "ACCESS_SWITCH",
+                    "profile-type": "new-module", "profile-instance": name}
+        def page(items, total=2, offset=0):
+            return {"metadata": {"total": total, "count": len(items), "offset": offset},
+                    "config-assignment": items}
+        a, b = record("a"), record("b")
+        initial = page([a])
+        fake = Fake([initial, page([a]), page([b], offset=1)])
+        result = profile_inventory_view(fake, "config-assignments", "config-assignment")
+        self.assertEqual(result["rows"], [a, b])
+        self.assertTrue(result["collection_count_verified"])
+        partial = collect_scoped_assignments(Fake([initial, page([a]), page([a], offset=1)]),
+                    {"status": "response_received", "rows": []}, {"ACCESS_SWITCH": [{"id": "1"}]})
+        self.assertEqual(partial["rows"], [a])
+        self.assertEqual(partial["scope_read_outcomes"], {"partial_response": 1})
+        self.assertFalse(partial["coverage_verified"])
+
     def test_profile_type_discovery_keeps_unknown_and_scope_map_evidence(self):
         from central_tool import discover_profile_types
         assignments = {"rows": [{"profile-type": "layer2-vlan", "device-function": "ACCESS_SWITCH"},
@@ -800,6 +820,23 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(fake.calls), 3)
         self.assertEqual(fake.calls[0][1]["scope-id"], "12")
         self.assertEqual(fake.calls[2][1], {"view-type": "LIBRARY", "detailed": "true"})
+
+    def test_discovered_modules_are_surveyed_across_unassigned_scopes(self):
+        from central_tool import discover_profile_types, inspect_unadapted_profiles
+        assignments = {"rows": [{"profile-type": "new-module", "profile-instance": "a",
+                                 "device-function": "ACCESS_SWITCH", "scope-id": "12"}]}
+        discovery = discover_profile_types(assignments, {})
+        fake = Fake([{"profiles": []}] * 7)
+        result = inspect_unadapted_profiles(fake, discovery, assignments, {},
+                  scopes_by_persona={"ACCESS_SWITCH": [{"id": "1"}, {"id": "12"}, {"id": "13"}],
+                                     "CAMPUS_AP": [{"id": "20"}]})
+        evidence = result["new-module"]
+        self.assertEqual([s["scope"] for s in evidence["source_views"]], ["1", "12", "13"])
+        self.assertEqual(evidence["source_views"][1]["observed_instances"], ["a"])
+        self.assertEqual(evidence["source_views"][2]["observed_instances"], [])
+        self.assertEqual(evidence["scope_read_outcomes"], {"response_received": 6})
+        self.assertEqual(len(fake.calls), 7)
+        self.assertFalse(evidence["safe_to_apply"])
 
     def test_runtime_identity_requires_unique_inventory_match_and_counts(self):
         from central_tool import qualify_observed_identities
