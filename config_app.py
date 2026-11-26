@@ -167,7 +167,7 @@ class Workspace:
 
     def nav(self):
         root = "/" + self.token + "/"
-        return f'<a href="{root}">Snapshots</a><a href="{root}coverage">Module coverage</a><a href="{root}scopes">Scopes</a><a href="{root}compare">Compare devices</a>'
+        return f'<a href="{root}">Snapshots</a><a href="{root}coverage">Module coverage</a><a href="{root}library">Library</a><a href="{root}scopes">Scopes</a><a href="{root}compare">Compare devices</a>'
 
     def home(self):
         root = "/" + self.token + "/"
@@ -198,6 +198,47 @@ class Workspace:
                             f' · <a href="{root}scopes?{e(urlencode({"snapshot": p.name}))}">Browse scopes</a>' 
                             f' · <a href="{root}compare?{e(urlencode({"snapshot": p.name}))}">Compare devices</a></td></tr>'
                             for p in files) + '</tbody></table></section>', self.nav())
+
+    def library(self, query):
+        root = "/" + self.token + "/"
+        files = audit_files(self.directory)
+        if not files:
+            return page("Library", "<p>No snapshots available.</p>", self.nav())
+        name = query.get("snapshot", files[0].name)
+        bundle = read_audit(self.directory, name)
+        library = bundle.get("library")
+        select = (f'<form method="get" action="{root}library"><label>Snapshot<select name="snapshot">'
+                  + options([(p.name, p.name) for p in files], name)
+                  + '</select></label><button>Open</button></form>')
+        if not library:
+            return page("Library", select + "<p>This capture predates Library discovery. Refresh from Central to collect it.</p>", self.nav())
+        module = query.get("module", "")
+        modules = library.get("modules", {})
+        if module and module not in modules:
+            raise ValueError("Unknown Library module")
+        assignments = library.get("assignments", {})
+        assignment_rows = assignments.get("rows", [])
+        body = ""
+        for key, view in sorted(modules.items()):
+            if module and key != module:
+                continue
+            link = root + "library?" + urlencode({"snapshot": name, "module": key})
+            body += (f'<tr><td><a href="{e(link)}">{e(key)}</a></td><td>{e(view["status"])}</td>'
+                     f'<td>{len(view["profiles"])}</td></tr>')
+        detail = ""
+        if module:
+            view = modules[module]
+            detail = f'<section><h2>{e(module)}</h2><p>Observed profiles: {len(view["profiles"])}</p>'
+            for identity, profile in sorted(view["profiles"].items()):
+                detail += (f'<details><summary>{e(identity)}</summary>'
+                           f'<pre>{e(json.dumps(profile, indent=2, ensure_ascii=False))}</pre></details>')
+            detail += "</section>"
+        assignment_detail = (f'<section><h2>Observed assignment response</h2><p>{e(assignments.get("status", "unknown"))} · '
+                             f'{len(assignment_rows)} records. Assignment completeness is not verified.</p>'
+                             f'<details><summary>Inspect raw assignment records</summary><pre>{e(json.dumps(assignment_rows, indent=2, ensure_ascii=False))}</pre></details></section>')
+        return page("Library", select + '<section><h2>Tenant Library</h2><p>Read-only shared profile inventory; counts are observed, not proof of completeness.</p>'
+                    '<table><thead><tr><th>Module</th><th>Response status</th><th>Observed profiles</th></tr></thead><tbody>'
+                    + body + '</tbody></table></section>' + detail + assignment_detail, self.nav())
 
     def coverage(self, query):
         from central_tool import refresh_configuration_review
@@ -349,6 +390,8 @@ def handler_for(workspace):
                     body = workspace.home()
                 elif parsed.path == root + "report":
                     body = workspace.report(query)
+                elif parsed.path == root + "library":
+                    body = workspace.library(query)
                 elif parsed.path == root + "coverage":
                     body = workspace.coverage(query)
                 elif parsed.path == root + "scopes":

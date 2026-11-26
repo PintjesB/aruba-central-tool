@@ -511,6 +511,8 @@ class Tests(unittest.TestCase):
         class Client:
             base = "test"
             def get(self, path, **params):
+                if path.endswith("/config-assignments"):
+                    return {"config-assignment": []}
                 return {"profiles": []}
         devices = [{"deviceFunction": "Campus AP"}, {"deviceFunction": "Access Switch"},
                    {"deviceFunction": "Hybrid NAC"}]
@@ -598,6 +600,33 @@ class Tests(unittest.TestCase):
         self.assertEqual(set(next(iter(groups.values()))), {"a", "b"})
         self.assertEqual(finding_category(d[1], d[3], d[3]["review"]["profiles"][0]), "infrastructure")
         self.assertEqual(finding_category(a[1], a[3], a[3]["review"]["profiles"][0]), "candidate")
+
+    def test_annotated_committed_recovery_requires_complete_count_and_sources(self):
+        from central_tool import annotated_committed_local
+        shared = {"name": "a", "@": {"aruba-annotation:object_type": "SHARED",
+                                     "aruba-annotation:inherited": False}}
+        local = {"name": "b", "@": {"aruba-annotation:object_type": "LOCAL",
+                                    "aruba-annotation:inherited": False}}
+        payload = {"profiles": [shared, local], "metadata": {
+            "count_objects_in_module": {"ANY": 2, "LOCAL": 1, "SHARED": 1}}}
+        recovered = annotated_committed_local(payload, "name")
+        self.assertEqual(recovered["profiles"], {"b": {"name": "b"}})
+        self.assertEqual(recovered["qualification"], "annotated_committed_local")
+        bad = {**payload, "profiles": [shared, {"name": "b"}]}
+        self.assertEqual(annotated_committed_local(bad, "name")["status"], "annotation_recovery_unverified")
+        bad = {**payload, "metadata": {"count_objects_in_module": {"ANY": 2, "LOCAL": 0}}}
+        self.assertEqual(annotated_committed_local(bad, "name")["status"], "annotation_recovery_unverified")
+
+    def test_library_reads_nac_with_default_parameters_once(self):
+        from central_tool import library_inventory
+        fake = Fake([{"profiles": [{"auth-profile-id": "a"}]},
+                     {"profiles": [{"vlan": 10}]}, {"config-assignment": []}])
+        result = library_inventory(fake, {"auth-profiles", "layer2-vlan", "ethernet-interfaces"})
+        self.assertEqual(fake.calls[0][1], {})
+        self.assertEqual(fake.calls[1][1], {"view-type": "LIBRARY", "detailed": "true"})
+        self.assertNotIn("ethernet-interfaces", result["modules"])
+        self.assertEqual(result["modules"]["auth-profiles"]["status"], "list_parsed")
+        self.assertFalse(result["assignment_coverage_verified"])
 
     def test_svi_identity_does_not_guess(self):
         from central_tool import svi_vlan_id

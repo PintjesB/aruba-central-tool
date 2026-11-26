@@ -1159,6 +1159,8 @@ CONFIG_MODULES = {
     "ap-system": ("name", AP_PERSONAS, False),
     "ap-port-profiles": ("profile-name", AP_PERSONAS, False),
     "gw-port-profiles": ("profile-name", GATEWAY_PERSONAS, False),
+    # Central NAC authentication profiles use default query parameters.
+    # Keep this existing catalog entry for historical audit compatibility.
     "auth-profiles": ("auth-profile-id", NETWORK_PERSONAS, False),
 }
 
@@ -1211,6 +1213,36 @@ def module_view(payload, identity, object_type="ANY"):
             "count_confirmed": metadata.get("total") is not None or expected is not None}
 
 
+def annotated_committed_local(payload, identity):
+    """Recover local objects from an annotated, unfiltered committed response.
+
+    Require a complete ANY view and explicit annotations for every object.
+    Never trust a bare LOCAL count when nonempty objects contradict it.
+    """
+    parsed = module_view(payload, identity, "ANY")
+    if parsed["status"] != "list_parsed" or not parsed.get("count_confirmed"):
+        return {"status": "annotation_recovery_unverified", "profiles": {}}
+    counts = payload.get("metadata", {}).get("count_objects_in_module", {})
+    expected = counts.get("LOCAL")
+    if type(expected) is not int or expected < 0:
+        return {"status": "annotation_recovery_unverified", "profiles": {}}
+    local = {}
+    for key, profile in parsed["profiles"].items():
+        annotation = profile.get("@")
+        if not isinstance(annotation, dict):
+            return {"status": "annotation_recovery_unverified", "profiles": {}}
+        kind = annotation.get("aruba-annotation:object_type")
+        inherited = annotation.get("aruba-annotation:inherited")
+        if inherited is not False or kind not in ("LOCAL", "SHARED"):
+            return {"status": "annotation_recovery_unverified", "profiles": {}}
+        if kind == "LOCAL":
+            local[key] = profile_body(profile)
+    if len(local) != expected:
+        return {"status": "annotation_recovery_unverified", "profiles": {}}
+    return {"status": "list_parsed", "profiles": local, "count_confirmed": True,
+            "qualification": "annotated_committed_local"}
+
+
 def read_module_view(client, module, identity, params):
     try:
         raw = client.get(ALPHA + "/" + module, **params)
@@ -1220,6 +1252,45 @@ def read_module_view(client, module, identity, params):
         return {"status": "permission_denied" if exc.status == 403 else "request_rejected",
                 "http_error": exc.status, "profiles": {}}
     return {**module_view(raw, identity, params.get("object-type", "ANY")), "raw": raw}
+
+
+def recover_local_view(client, module, identity, params, local):
+    if local["status"] not in ("count_mismatch", "schema_unresolved"):
+        return local
+    # Query unfiltered committed configuration and require explicit source
+    # annotations, rather than assuming the API honored object-type=LOCAL.
+    fallback = read_module_view(client, module, identity,
+                                {**params, "effective": "false", "detailed": "true"})
+    recovered = annotated_committed_local(fallback["raw"], identity) if "raw" in fallback else {}
+    if recovered.get("status") == "list_parsed":
+        return {**recovered, "raw": local["raw"], "alternate_raw": fallback["raw"]}
+    return {**local, "fallback_status": fallback["status"],
+            **({"alternate_raw": fallback["raw"]} if "raw" in fallback else {})}
+
+
+def library_inventory(client, modules):
+    """Read tenant-wide shared profiles once per module and preserve assignment evidence."""
+    results = {}
+    for module in sorted(modules):
+        identity, _, device_only = CONFIG_MODULES[module]
+        if device_only:
+            continue
+        params = {} if module == "auth-profiles" else {"view-type": "LIBRARY", "detailed": "true"}
+        view = read_module_view(client, module, identity, params)
+        results[module] = view
+        print(f"  Library {module}: {view['status']}; profiles={len(view['profiles'])}", flush=True)
+    try:
+        raw = client.get(ALPHA + "/config-assignments")
+        assignments = rows(raw, ("config-assignment",))
+        assignment_view = {"status": "response_received", "rows": assignments, "raw": raw}
+    except APIError as exc:
+        if exc.status not in (400, 403, 404, 405, 406, 412, 422):
+            raise
+        assignment_view = {"status": "request_rejected", "http_error": exc.status, "rows": []}
+    except ValueError:
+        assignment_view = {"status": "schema_unresolved", "rows": []}
+    return {"modules": results, "assignments": assignment_view,
+            "assignment_coverage_verified": False, "safe_to_apply": False}
 
 
 def profile_body(profile):
@@ -1294,7 +1365,7 @@ def configuration_audit(client, selected_persona=None):
     results = {}
     unqualified = []
     for persona in personas:
-        modules = {m: spec for m, spec in CONFIG_MODULES.items() if persona in spec[1]}
+        modules = {m: spec for m, spec in CONFIG_MODULES.items() if persona in spec[1] and m != "auth-profiles"}
         if not modules:
             unqualified.append(persona)
             continue
@@ -1310,6 +1381,7 @@ def configuration_audit(client, selected_persona=None):
                 params = {"view-type": "LOCAL", "scope-id": scope["id"], "device-function": persona}
                 local = read_module_view(client, module, identity, {**params, "object-type": "LOCAL",
                                                                     "effective": "false", "detailed": "false"})
+                local = recover_local_view(client, module, identity, params, local)
                 effective = read_module_view(client, module, identity, {**params, "effective": "true", "detailed": "true"})
                 if scope["kind"] == "global" and effective["status"] == "list_parsed":
                     baseline = effective["profiles"]
@@ -1331,11 +1403,15 @@ def configuration_audit(client, selected_persona=None):
             for (status, http), count in sorted(errors.items(), key=str):
                 print(f"    {status}{' HTTP ' + str(http) if http else ''}: {count}", flush=True)
         results[persona] = {"scopes": scopes, "modules": module_results}
+    applicable_modules = {m for entry in results.values() for m in entry["modules"]}
+    applicable_modules.add("auth-profiles")
+    print("Reading tenant Library and assignments", flush=True)
+    library = library_inventory(client, applicable_modules)
     print(f"Configuration audit coverage: personas reviewed={len(results)}; "
           f"personas without adapter={len(unqualified)}; migration authorized=no")
     return {"schema": 1, "kind": "configuration_audit", "region": client.base,
             "captured_at": datetime.now(timezone.utc).isoformat(), "inventory": records,
-            "results": results, "unqualified_personas": unqualified,
+            "results": results, "unqualified_personas": unqualified, "library": library,
             "catalog_exhaustive": False, "safe_to_apply": False}
 
 
@@ -1405,8 +1481,13 @@ def refresh_configuration_review(bundle):
                 for kind, object_type in (("local", "LOCAL"), ("effective", "ANY")):
                     view = scope[kind + "_view"]
                     if "raw" in view:
-                        scope[kind + "_view"] = {**module_view(view["raw"], identity, object_type),
-                                                "raw": view["raw"]}
+                        parsed = module_view(view["raw"], identity, object_type)
+                        if kind == "local" and "alternate_raw" in view and parsed["status"] != "list_parsed":
+                            alternative = annotated_committed_local(view["alternate_raw"], identity)
+                            if alternative["status"] == "list_parsed":
+                                parsed = alternative
+                        scope[kind + "_view"] = {**parsed, "raw": view["raw"],
+                                                **({"alternate_raw": view["alternate_raw"]} if "alternate_raw" in view else {})}
                 effective = scope["effective_view"]
                 if scope["scope_kind"] == "global" and effective["status"] == "list_parsed":
                     baseline = effective["profiles"]
