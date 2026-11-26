@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 CONFIG = "/network-config/v1"
@@ -596,7 +596,110 @@ def scan_all(client):
             "inventory": records, "snapshots": snapshots}
 
 
-DEPENDENCY_MODULES = ("vlan-interfaces", "mgmd-global", "ethernet-interfaces", "sw-port-profiles")
+DEPENDENCY_MODULES = ("vlan-interfaces", "mgmd-global", "ethernet-interfaces", "sw-port-profiles",
+                      "interface-profiles", "roles", "portchannels")
+
+
+def probe_operational_vlans(client, metadata):
+    """Retrieve monitoring evidence without guessing serials or trusting partial pages."""
+    serial = next((metadata.get(k) for k in ("stackId", "stackID", "serialNumber", "serial")
+                   if metadata.get(k)), None)
+    if not isinstance(serial, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,16}", serial):
+        return {"status": "identity_unresolved"}
+    path = "/network-monitoring/v1/switches/" + quote(serial, safe="") + "/vlans"
+    try:
+        payload = client.get(path, limit=1000, offset=0)
+    except APIError as exc:
+        if exc.status not in (400, 403, 404, 405, 422):
+            raise
+        return {"status": "permission_denied" if exc.status == 403 else "request_rejected",
+                "http_error": exc.status}
+    return {"status": "response_received" if isinstance(payload, dict) else "schema_unresolved",
+            "payload": payload}
+
+
+# Explicit reference-shaped fields, not arbitrary integers or VLAN names.
+# This is a candidate index, never proof that every reference was discovered.
+VLAN_REFERENCE_FIELDS = {"vlan", "vlan-id", "access-vlan", "native-vlan", "allowed-vlans",
+                         "trusted-vlans", "tagged-vlans", "untagged-vlans",
+                         "primary-vlan", "secondary-vlan", "voice-vlan"}
+VLAN_LIST_FIELDS = {"allowed-vlans", "trusted-vlans", "tagged-vlans", "untagged-vlans"}
+
+
+def parse_reference_ids(value, allow_list=False):
+    """Parse explicit IDs/ranges; wildcard and unknown expressions remain unresolved."""
+    if type(value) is int:
+        return {str(value)} if 1 <= value <= 4094 else None
+    if isinstance(value, list):
+        if not allow_list or not value:
+            return None
+        ids = set()
+        for item in value:
+            found = parse_reference_ids(item, True)
+            if found is None:
+                return None
+            ids.update(found)
+        return ids
+    if not isinstance(value, str):
+        return None
+    result = set()
+    parts = value.split(",") if allow_list else [value]
+    for part in parts:
+        match = re.fullmatch(r"\s*(\d{1,4})(?:\s*-\s*(\d{1,4}))?\s*", part)
+        if not match or (match.group(2) and not allow_list):
+            return None
+        low = int(match.group(1))
+        high = int(match.group(2) or low)
+        if not 1 <= low <= high <= 4094:
+            return None
+        result.update(str(i) for i in range(low, high + 1))
+    return result
+
+
+def reference_candidates(payload):
+    """Index candidate VLAN references and unresolved VLAN-shaped paths privately."""
+    references, unresolved = [], []
+    def visit(value, path):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in ("@", "metadata"):
+                    continue
+                current = path + [key]
+                if key in VLAN_REFERENCE_FIELDS:
+                    ids = parse_reference_ids(item, key in VLAN_LIST_FIELDS)
+                    if ids is not None:
+                        references.append({"path": current, "vlan_ids": sorted(ids, key=int)})
+                    else:
+                        unresolved.append(current)
+                        # Nested VLAN objects may themselves contain explicit IDs.
+                        if isinstance(item, (dict, list)):
+                            visit(item, current)
+                else:
+                    if "vlan" in key.lower() and isinstance(item, (str, int, list, dict)) and type(item) is not bool:
+                        unresolved.append(current)
+                    visit(item, current)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                visit(item, path + [index])
+    visit(payload, [])
+    return {"references": references, "unresolved_paths": unresolved}
+
+
+def operational_vlan_summary(evidence):
+    """Report observed response structure, without inferring unsupported state fields."""
+    if not isinstance(evidence, dict) or evidence.get("status") != "response_received":
+        return {"status": evidence.get("status", "not_collected") if isinstance(evidence, dict) else "not_collected"}
+    payload = evidence.get("payload")
+    if not isinstance(payload, dict):
+        return {"status": "schema_unresolved"}
+    lists = [v for k, v in payload.items() if k != "metadata" and isinstance(v, list)]
+    if len(lists) != 1 or not all(isinstance(item, dict) for item in lists[0]):
+        return {"status": "schema_unresolved"}
+    items = lists[0]
+    return {"status": "schema_observed", "rows": len(items),
+            "fields": sorted({k for item in items for k in item}),
+            "may_be_truncated": len(items) >= 1000}
+
 
 
 def discover_dependencies(client, snapshot):
@@ -624,8 +727,10 @@ def discover_dependencies(client, snapshot):
                 else:
                     capabilities[module] = "schema_unresolved"
             print(f"  Device {index}: {module}: {capabilities[module]}", flush=True)
+        operational = probe_operational_vlans(client, scope.get("metadata", {}))
+        print(f"  Device {index}: operational VLANs: {operational['status']}", flush=True)
         devices.append({"scope_id": scope["id"], "identity": identity, "modules": modules,
-                        "capabilities": capabilities})
+                        "capabilities": capabilities, "operational_vlans": operational})
     return {"region": snapshot["region"], "persona": snapshot["persona"], "devices": devices,
             "captured_at": datetime.now(timezone.utc).isoformat()}
 
@@ -670,6 +775,7 @@ def dependency_review(snapshot, dependencies, data):
     by_id = {entry["scope_id"]: entry["modules"] for entry in entries}
     if len(by_id) != len(entries) or set(by_id) != {scope["id"] for scope in devices}:
         raise ValueError("Dependency snapshot device coverage mismatch")
+    operational_by_id = {entry["scope_id"]: entry.get("operational_vlans") for entry in entries}
     device_reviews = []
     protected = {}
     known_default = {}
@@ -712,7 +818,14 @@ def dependency_review(snapshot, dependencies, data):
         else:
             multicast_state = "unresolved"
             issues.append("mgmd-global_unresolved")
+        candidate_map = {}
+        for module in ("ethernet-interfaces", "sw-port-profiles", "interface-profiles", "roles", "portchannels"):
+            payload = modules.get(module)
+            if isinstance(payload, dict) and payload and "http_error" not in payload:
+                candidate_map[module] = reference_candidates(payload)
+        operational = operational_vlan_summary(operational_by_id.get(sid))
         device_reviews.append({"scope": sid, "model": model, "firmware": firmware,
+                               "reference_candidates": candidate_map, "operational_vlan_summary": operational,
                                "counts": counts, "module_fields": shapes,
                                "identity": identity, "multicast_defaults": known_default[sid],
                                "protected_vlan_ids": sorted(protected[sid], key=int),
@@ -750,6 +863,10 @@ def dependency_review(snapshot, dependencies, data):
         # reference graph (LAGs, NAC and role-based VLAN assignments may also matter).
         blockers.append("full_vlan_reference_graph_unverified")
         blockers.append("operational_equivalence_unverified")
+        device_evidence = next((d for d in device_reviews if d["scope"] == sid), {})
+        row["reference_candidate_modules"] = sorted(module for module, evidence in
+            device_evidence.get("reference_candidates", {}).items()
+            if any(vid in ref["vlan_ids"] for ref in evidence["references"]))
         row["dependency_blockers"] = sorted(set(blockers))
         row["migration_eligible"] = False
     data["dependency_review"] = {"devices": device_reviews, "safe_to_apply": False,
@@ -764,6 +881,18 @@ def print_dependency_summary(data):
         print(f"  Device {index}: SVI identities={len(device['svi_ids'])}, "
               f"L3 indicators={len(device['svi_indicators'])}, "
               f"protected VLANs={len(device['protected_vlan_ids'])}")
+        for module, evidence in sorted(device.get("reference_candidates", {}).items()):
+            print(f"    {module}: reference fields={len(evidence['references'])}, "
+                  f"unresolved paths={len(evidence['unresolved_paths'])}")
+        operational = device.get("operational_vlan_summary", {})
+        print(f"    operational VLANs: {operational.get('status', 'not_collected')}")
+        if "rows" in operational:
+            print(f"    monitoring rows={operational['rows']}; possible truncation={operational['may_be_truncated']}")
+            # Only print known, non-identifying schema field names.
+            known = {"id", "vlanId", "vlan", "name", "status", "type", "voice", "igmp", "mld",
+                     "isIgmpEnabled", "is_igmp_enabled", "taggedPorts", "untaggedPorts",
+                     "accessPorts", "nativeVlan", "ipv4", "ipv6"}
+            print("    known monitoring fields:", ", ".join(k for k in operational["fields"] if k in known))
         for issue in device["issues"]:
             print(f"    {issue}")
     print("Migration blockers (profile counts):")
