@@ -358,7 +358,7 @@ if(panel.dataset.state==='running')poll();
                            f'<p>{gap} incomplete or unavailable module reads.</p><a href="{e(coverage_href)}">Inspect coverage {icon("arrow")}</a></section></div>'
                            + summary
                            + '<section class="overview-links"><div><h3>Review device overrides</h3><p>Inspect the actual differences between a device and Global before removing local definitions.</p>'
-                           f'<a href="{e(overrides_href)}">Compare overrides {icon("arrow")}</a></div>'
+                           f'<a href="{e(overrides_href + "&result=cleanup")}">Review potential cleanup {icon("arrow")}</a></div>'
                            '<div><h3>Library engineering</h3><p>Find duplicate definitions, compare individual usage and inspect configuration dependencies.</p>'
                            f'<a href="{e(root + "advanced?" + urlencode({"snapshot": name}))}">Review engineering {icon("arrow")}</a></div></section>')
         else:
