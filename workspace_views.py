@@ -384,7 +384,7 @@ ADVISOR_CSS = """
 ADVISOR_JS = r"""
 (()=>{
 'use strict';
-const $=id=>document.getElementById(id), rows=Array.from($('advisor-table').querySelectorAll('tbody > tr'));
+const $=id=>document.getElementById(id), rows=Array.from($('advisor-table').querySelectorAll(':scope > .data-grid > .table-scroll > table > tbody > tr'));
 const checks=rows.map(r=>r.querySelector('.choose'));
 const categories={opportunities:['remove_override','promote_local','reuse_library'],review:['conflict','default_review'],optional:['create_library','unassigned_library']};
 let page=0, filtered=[];const size=30;
@@ -547,14 +547,15 @@ def engineering_view(workspace, query):
                   + raw(r))
         # One decision per duplicate group. Keep all per-profile usage counts
         # aligned, rather than repeating the same review button for every member.
-        cells = [usage_cells(u) for u in usage.values()]
-        stack = lambda values: '<div class="usage-stack">' + "".join(f'<div>{v}</div>' for v in values) + '</div>'
-        rows.append(tr(e(module_label(r["module"])),
-                       stack([f'<strong>{e(identity)}</strong>' + (' <span class="retain-mark">Keep</span>' if identity == keep else "") for identity in usage]),
-                       *(stack([values[index] for values in cells]) for index in range(4)),
+        group_usage = ('<table class="group-usage"><thead><tr>' + "".join(
+            f'<th scope="col">{e(label)}</th>' for label in ("Profile", "Assignments", "Devices", "References", "Unknown reads"))
+            + '</tr></thead><tbody>' + "".join(
+                tr(f'<strong>{e(identity)}</strong>' + (' <span class="retain-mark">Keep</span>' if identity == keep else ""),
+                   *usage_cells(u)) for identity, u in usage.items()) + '</tbody></table>')
+        rows.append(tr(e(module_label(r["module"])), group_usage,
                        e(keep or "Choose profile"), inspect(", ".join(r["identities"]), detail, "Review group")))
     panel("duplicates", "Duplicate Library profiles", "Each row is a duplicate group. Compare observed usage for each name before choosing which profile to retain.",
-          ("Module", "Matching profiles", "Assignments", "Shared devices", "References", "Unknown reads", "Suggested keep", ""), rows, len(rows))
+          ("Module", "Profiles and observed usage", "Suggested keep", ""), rows, len(rows))
     for key, label, records in (("references", "Reference review", [r for r in data["references"] if r["status"] != "observed"]),
                                 ("resolved", "Observed references", [r for r in data["references"] if r["status"] == "observed"])):
         rows = [tr(e(r["device"]), f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
@@ -727,7 +728,7 @@ def coverage_view(workspace, query):
     body += metrics([("Complete module reads", counts["qualified"], "All requested scopes could be interpreted"), ("Partial module reads", counts["partial"], "Some scopes could be interpreted"), ("Unverified module reads", counts["unqualified"], "No scope evidence qualified")])
     rows = [tr(e(persona_label(r["persona"])), e(module_label(r["module"])), f'{r["qualified"]}/{r["total"]}', status(r["status"]),
                f'<a href="{url(root, "report", snapshot=name, persona=r["persona"], module=r["module"], diagnostics="1")}">View evidence</a>')
-            for r in sorted(records, key=lambda r: ({"qualified": 0, "partial": 1, "unqualified": 2}[r["status"]], r["persona"], r["module"]))]
+            for r in sorted(records, key=lambda r: ({"unqualified": 0, "partial": 1, "qualified": 2}[r["status"]], r["persona"], r["module"]))]
     body += '<section><h2>Module qualification</h2>' + table(("Device function", "Module", "Qualified scopes", "Read status", ""), rows, search=True) + '</section>'
     discovery = bundle.get("profile_type_discovery")
     if discovery:
