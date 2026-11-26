@@ -22,6 +22,17 @@ Reduce configuration duplication and unnecessary scope overrides in New Central 
 - [ ] **Deferred: complete VLAN IGMP and MLD snooping retrieval through Central.** The tested Central command allowlist does not expose the snooping-specific commands, and supported multicast commands returned no routed-interface records. Configuration reads did not supply the missing fields. Revisit when Central exposes a suitable API, command or documented default-expansion mechanism.
 - [ ] Track other unavailable configuration fields and module types during Central-only coverage work. Qualify each newly available source before using its values.
 
+### Collection completeness milestones
+
+- [x] Expand named read adapters for aliases, network groups, policies, role ACLs and ALG profiles using documented resource keys. Live response qualification remains pending.
+- [x] Attempt Library collection for every named adapter, including functions with no devices and profiles without observed assignments. Survey ARC, policy groups and USB collections separately as raw evidence.
+- [x] Recover explicitly truncated additional profile collections, retain original pages and reject inconsistent counts/offsets. Count verification is not semantic completeness.
+- [ ] Reconcile the complete documented New Central configuration endpoint catalog against captured types, including singleton and non-name-keyed profiles, unsupported device functions and unassigned profiles.
+- [ ] Expand unknown module coverage beyond observed source scopes; qualify response envelopes, individual-object reads and reference semantics. Report any failed or unavailable collection explicitly.
+- [ ] Validate the new coverage report against a real customer refresh, and use its anonymous outcomes to prioritize the remaining adapters.
+
+References: [aliases](https://developer.arubanetworks.com/new-central-config/reference/readaliasesaliasbyid), [network groups](https://developer.arubanetworks.com/new-central-config/reference/readnetgroupsnetgroupbyid), [policies](https://developer.arubanetworks.com/new-central-config/reference/readpoliciespolicybyid), [role ACLs](https://developer.arubanetworks.com/new-central-config/reference/readroleaclsaclbyid), [ALG](https://developer.arubanetworks.com/new-central-config/reference/readalgprofilebyid), [ARC](https://developer.arubanetworks.com/new-central-config/reference/readarc), [policy groups](https://developer.arubanetworks.com/new-central-config/reference/readpolicygroups), [USB](https://developer.arubanetworks.com/new-central-config/reference/readusb).
+
 Show unknown effective/reference values as **Unavailable**, including settings omitted by every source. Keep omitted saved-local fields distinct from verified disabled values. Never infer a default, match, or safe override removal from missing evidence. Direct-device access remains outside the current scope; reconsider only if explicitly approved.
 
 ## Priority 1: consolidation advisor
