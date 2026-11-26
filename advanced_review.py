@@ -80,7 +80,7 @@ def library_usage(bundle, module, identities, references):
                             "definition_reference_count": len(definitions), "effective_reference_count": len(effective),
                             "reference_devices": len({(r["persona"], r["scope"]) for r in refs if r.get("source_scope_kind", "device") == "device" and r.get("source_view", "effective") == "effective"}),
                             "references": refs, "shared_devices": [], "matching_other_devices": [],
-                            "different_devices": [], "unknown_devices": [], "compared_devices": 0,
+                            "different_devices": [], "unknown_devices": [], "absent_devices": [], "compared_devices": 0,
                             "coverage_complete": False}
     for persona, entry in sorted(bundle["results"].items()):
         if module not in entry["modules"]:
@@ -97,6 +97,7 @@ def library_usage(bundle, module, identities, references):
                 usage["compared_devices"] += 1
                 profile = actual["profiles"].get(identity)
                 if profile is None:
+                    usage["absent_devices" if actual.get("count_confirmed") is True else "unknown_devices"].append(record)
                     continue
                 expected = view.get("profiles", {}).get(identity)
                 if expected is None or canonical(profile_body(profile)) != canonical(profile_body(expected)):
@@ -124,7 +125,7 @@ def preferred_duplicate(usage):
     return ordered[0]["identity"]
 
 
-def duplicate_migration_preview(module, usage, keep):
+def duplicate_migration_preview(module, usage, keep, bundle=None):
     """A concrete review worklist, never executable or complete."""
     if keep not in usage:
         raise ValueError("Choose an observed duplicate profile")
@@ -151,8 +152,10 @@ def duplicate_migration_preview(module, usage, keep):
                 definitions.append(evidence)
             else:
                 impacts.append(evidence)
+    from migration_review import migration_recipient_review
+    recipients = migration_recipient_review(bundle, usage, keep, assignments, definitions, impacts)
     return {"module": module, "retain": keep, "assignments": assignments, "saved_references": definitions,
-            "effective_references": impacts,
+            "effective_references": impacts, **recipients,
             "target_conflicts": usage[keep]["different_devices"], "target_unknown_reads": usage[keep]["unknown_devices"],
             "blockers": ["Verify all assignments and reverse references, including unadapted modules.",
                          "Verify the retained profile is visible and equivalent on every affected device.",
