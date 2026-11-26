@@ -393,6 +393,23 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("device.name", f["evidence"]["conflicts"])
         self.assertFalse(f["candidate"])
 
+    def test_monitoring_voice_uses_explicit_state_only(self):
+        from central_tool import vlan_comparison_evidence
+        row = {"identity": "10", "local": {"vlan": 10}, "effective": {"vlan": 10},
+               "global_reference": {"vlan": 10, "voice-enable": False}}
+        record = {"id": 10, "voice": "Disabled"}
+        data = {"operational_vlans": {"ACCESS_SWITCH": {"3": {
+            "status": "response_received", "payload": {"vlans": [record]}}}}}
+        evidence = vlan_comparison_evidence(data, "ACCESS_SWITCH", "3", row)
+        self.assertEqual(evidence["differences"], [])
+        self.assertEqual(evidence["sources"]["comparison.voice-enable"], "Switch monitoring")
+        self.assertEqual(evidence["local"], {"vlan": 10})
+        self.assertEqual(evidence["effective"], {"vlan": 10})
+        for unknown in (None, "Unknown", "N/A"):
+            record["voice"] = unknown
+            evidence = vlan_comparison_evidence(data, "ACCESS_SWITCH", "3", row)
+            self.assertNotIn("voice-enable", evidence["comparison"])
+
     def test_feature_evidence_completes_nested_vlan_comparison(self):
         from central_tool import vlan_comparison_evidence
         row = {"identity": "10", "local": {"vlan": 10}, "effective": {"vlan": 10},
