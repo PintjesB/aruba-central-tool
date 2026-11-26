@@ -3,11 +3,11 @@ import getpass
 import json
 import os
 
-from central_tool import APIError, Central, EU_REGIONS, VLAN_FEATURE_COMMANDS, detect_region, supported_show_commands, extract_command_output, parse_vlan_running_config, parse_show_vlan, parse_vlan_feature, VLAN_FEATURE_ALTERNATIVES, parse_multicast_interface_output, probe_operational_vlans
+from central_tool import APIError, Central, EU_REGIONS, VLAN_FEATURE_COMMANDS, detect_region, supported_show_commands, extract_command_output, parse_vlan_running_config, parse_show_vlan, parse_vlan_feature, VLAN_FEATURE_ALTERNATIVES, parse_multicast_interface_output, probe_operational_vlans, operational_vlan_summary, monitoring_vlan_records, collect_monitoring_voice_filter, voice_state
 
 
 def main():
-    print("Read-only VLAN probe. Review diagnostics before sharing.")
+    print("Read-only VLAN probe. Unrecognized multicast command output can contain customer data. Review before sharing.")
     serial = input("Switch serial: ").strip()
     client_id = os.environ.get("CENTRAL_CLIENT_ID") or input("Central client ID: ").strip()
     client_secret = os.environ.get("CENTRAL_CLIENT_SECRET") or getpass.getpass("Central client secret: ")
@@ -17,7 +17,7 @@ def main():
     allowed = set()
     try:
         allowed = supported_show_commands(client.list_show_commands(serial))
-        print("Supported show commands:", json.dumps(sorted(allowed)), flush=True)
+        print("Supported VLAN inspection commands:", json.dumps(sorted(allowed & {"show vlan", *VLAN_FEATURE_COMMANDS.values(), *VLAN_FEATURE_ALTERNATIVES.values(), "show running-config", "show running-config all"})), flush=True)
     except (RuntimeError, OSError, ValueError):
         print("Command list unavailable", flush=True)
     ids = set()
@@ -38,6 +38,9 @@ def main():
                     field = next(k for k, v in VLAN_FEATURE_ALTERNATIVES.items() if v == command)
                     values = parse_multicast_interface_output(extract_command_output(response["result"], command), field, ids)
                     result = {"status": ("observed" if set(values) == ids else "partial") if values else "schema_unresolved", "vlans": len(values)}
+                    if not values:
+                        output = extract_command_output(response["result"], command)
+                        result["raw_output"] = output if output is not None else {"response_keys": sorted(response["result"])} 
                 else:
                     field = next(k for k, v in VLAN_FEATURE_COMMANDS.items() if v == command)
                     parsed = parse_vlan_feature(response["result"], field, ids)
@@ -48,15 +51,23 @@ def main():
         except (RuntimeError, OSError, ValueError):
             print(command + ": read failed", flush=True)
     try:
-        monitoring = probe_operational_vlans(client, {"serial": serial})
-        payload = monitoring.get("payload", {})
+        metadata = {"serial": serial}
+        monitoring = probe_operational_vlans(client, metadata)
+        payload = monitoring.get("payload")
+        records = monitoring_vlan_records(payload)
+        summary = operational_vlan_summary(monitoring)
         voice = {}
-        for item in payload.get("vlans", []) if isinstance(payload, dict) else []:
-            if isinstance(item, dict):
-                value = item.get("voice")
-                label = str(value).lower() if type(value) is bool or (isinstance(value, str) and value.lower() in ("enabled", "disabled")) else "unknown"
-                voice[label] = voice.get(label, 0) + 1
-        print("Monitoring voice states:", json.dumps({"status": monitoring["status"], "counts": voice}), flush=True)
+        for item in (records or {}).values():
+            state = voice_state(item.get("voice"))
+            label = "enabled" if state is True else "disabled" if state is False else "unknown"
+            voice[label] = voice.get(label, 0) + 1
+        filters = collect_monitoring_voice_filter(client, metadata, monitoring)
+        print("Monitoring VLAN evidence:", json.dumps({
+            "response_keys": sorted(payload) if isinstance(payload, dict) else [],
+            "summary": {k: summary[k] for k in ("status", "rows", "fields", "may_be_truncated") if k in summary},
+            "ids_match_cli": records is not None and bool(ids) and set(records) == ids,
+            "voice_counts": voice,
+            "voice_filter": {k: v for k, v in filters.items() if k != "values"}}), flush=True)
     except (RuntimeError, OSError, ValueError):
         print("Monitoring voice states: read failed", flush=True)
     config_command = next((cmd for cmd in ("show running-config all", "show running-config") if cmd in allowed), None)

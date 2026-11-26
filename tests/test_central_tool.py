@@ -849,6 +849,26 @@ class Tests(unittest.TestCase):
         self.assertEqual(set(details["ACCESS_SWITCH"]["12"]["1"]), {"local", "effective"})
         self.assertNotIn("10", details["ACCESS_SWITCH"]["12"])
 
+    def test_monitoring_voice_filters_require_a_complete_disjoint_partition(self):
+        from central_tool import collect_monitoring_voice_filter
+        metadata = {"serial": "ABC123"}
+        evidence = {"status": "response_received", "identity_field": "serial",
+                    "payload": {"items": [{"id": 1}, {"id": 10}]}}
+        enabled = {"items": [{"id": 10}]}
+        disabled = {"items": [{"id": 1}]}
+        fake = Fake([enabled, disabled])
+        result = collect_monitoring_voice_filter(fake, metadata, evidence)
+        self.assertEqual(result["values"], {"1": False, "10": True})
+        self.assertEqual(result["status"], "observed")
+        self.assertEqual(fake.calls[0][1]["filter"], "voice eq 'Enabled'")
+        self.assertEqual(fake.calls[1][1]["filter"], "voice eq 'Disabled'")
+        for pages in ([enabled, enabled], [enabled, {"items": []}],
+                      [{"items": [{"id": 10, "voice": "Disabled"}]}, disabled],
+                      [enabled, {"items": [{"id": 99}]}]):
+            self.assertEqual(collect_monitoring_voice_filter(Fake(pages), metadata, evidence)["values"], {})
+        complete = {**evidence, "payload": {"items": [{"id": 1, "voice": "Disabled"}]}}
+        self.assertEqual(collect_monitoring_voice_filter(Fake([]), metadata, complete)["status"], "not_needed_or_unavailable")
+
     def test_multicast_interface_commands_use_explicit_snooping_flag(self):
         from central_tool import parse_multicast_interface_output
         for field in ("igmp", "mld"):
