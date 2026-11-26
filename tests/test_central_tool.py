@@ -619,6 +619,37 @@ class Tests(unittest.TestCase):
         bad = {**payload, "metadata": {"count_objects_in_module": {"ANY": 2, "LOCAL": 0}}}
         self.assertEqual(annotated_committed_local(bad, "name")["status"], "annotation_recovery_unverified")
 
+    def test_generic_module_recovers_truncated_collection(self):
+        from central_tool import read_module_view
+        def page(names):
+            return {"metadata": {"total": 3, "count": len(names)},
+                    "profiles": [{"name": name} for name in names]}
+        fake = Fake([page(["a"]), page(["a", "b"]), page(["c"])])
+        view = read_module_view(fake, "sw-port-profiles", "name", {"view-type": "LIBRARY"})
+        self.assertEqual(view["status"], "list_parsed")
+        self.assertEqual(view["pagination_status"], "complete")
+        self.assertEqual(set(view["profiles"]), {"a", "b", "c"})
+        self.assertEqual([params.get("offset") for _, params in fake.calls], [None, 0, 2])
+        self.assertEqual(len(view["raw_pages"]), 2)
+
+    def test_generic_module_rejects_repeated_or_changed_pages(self):
+        from central_tool import read_module_view
+        def page(names, total=3):
+            return {"metadata": {"total": total, "count": len(names)},
+                    "profiles": [{"name": name} for name in names]}
+        cases = [
+            ([page(["a"]), page(["a", "b"]), page(["b"])], "duplicate_or_invalid_identity"),
+            ([page(["a"]), page(["b", "c", "d"])], "initial_response_changed"),
+            ([page(["a"]), page(["a", "b"], 4)], "count_changed"),
+            ([page(["a"]), page([])], "count_changed"),
+        ]
+        for pages, reason in cases:
+            with self.subTest(reason=reason):
+                view = read_module_view(Fake(pages), "sw-port-profiles", "name", {})
+                self.assertEqual(view["status"], "count_mismatch")
+                self.assertEqual(view["pagination_status"], reason)
+                self.assertEqual(view["profiles"], {})
+
     def test_library_reads_nac_with_default_parameters_once(self):
         from central_tool import library_inventory
         fake = Fake([{"profiles": [{"auth-profile-id": "a"}]},
