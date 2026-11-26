@@ -430,7 +430,7 @@ def handler_for(workspace):
                 elif parsed.path == root + "legacy-report":
                     from central_tool import configuration_html, refresh_configuration_review
                     bundle = refresh_configuration_review(read_audit(workspace.directory, query["snapshot"]))
-                    body = configuration_html(bundle).replace("<main>", f\'<main><p><a href="{root}report?{e(urlencode({"snapshot": query["snapshot"]}))}">Back to workspace</a></p>\', 1)
+                    body = configuration_html(bundle).replace("<main>", f'<main><p><a href="{root}report?{e(urlencode({"snapshot": query["snapshot"]}))}">Back to workspace</a></p>', 1)
                 elif parsed.path == root + "advisor":
                     body = workspace.advisor(query)
                 elif parsed.path == root + "advanced":
