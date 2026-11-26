@@ -1,12 +1,13 @@
 """Device-first review of committed local settings against Global."""
 from collections import Counter
-from central_tool import canonical, profile_body, PERSONAS
+from central_tool import canonical, profile_body, PERSONAS, vlan_comparison_evidence
 from consolidation import scope_memberships, REUSABLE
 from workspace_ui import e, page, intro, badge, raw, table, tr, inspect, diff_table, property_table, module_label, persona_label
 from workspace_views import load, url, select, title_profile, vlan_explanation, operational_vlan_context, vlan_instance_context
 
 RESULTS = {
     "identical": "Identical to Global",
+    "effective_match": "Observed settings match Global",
     "omitted": "Comparison incomplete: omitted fields",
     "protected": "Protected default VLAN",
     "different": "Different from Global",
@@ -16,6 +17,7 @@ RESULTS = {
 }
 NEXT_STEP = {
     "identical": "Review possible override removal",
+    "effective_match": "Review removal only after verifying saved definition and inheritance",
     "omitted": "Verify missing settings; no proven effective difference",
     "protected": "Retain VLAN 1; inspect default settings only",
     "different": "Keep local unless the difference is unnecessary",
@@ -47,9 +49,10 @@ def device_override_rows(bundle, persona):
                 if row["local"] is None or (row["status"] == "default_profile" and not protected):
                     continue
                 local, ref = row["local"], row["global_reference"]
+                evidence = vlan_comparison_evidence(bundle, persona, sid, row) if module == "layer2-vlan" else None
                 if protected:
                     state = "protected"
-                elif row["status"] in ("source_conflict", "local_effective_mismatch"):
+                elif row["status"] in ("source_conflict", "local_effective_mismatch") or (evidence and evidence["conflicts"]):
                     state = "source_uncertain"
                 elif global_view.get("status") != "list_parsed":
                     state = "global_unknown"
@@ -57,7 +60,9 @@ def device_override_rows(bundle, persona):
                     state = "no_global"
                 elif canonical(local) == canonical(ref):
                     state = "identical"
-                elif module == "layer2-vlan" and row["global_differences"] and all(d["kind"] in ("missing_local", "missing_reference") for d in row["global_differences"]):
+                elif evidence and evidence["differences"] == []:
+                    state = "effective_match"
+                elif evidence and evidence["differences"] and all(d["kind"] in ("missing_local", "missing_reference") for d in evidence["differences"]):
                     state = "omitted"
                 else:
                     state = "different"
@@ -80,7 +85,7 @@ def device_override_rows(bundle, persona):
                 direct = ann.get("aruba-annotation:object_type") == "LOCAL" and ann.get("aruba-annotation:inherited") is False
                 findings.append({"device": sid, "device_name": names[sid], "module": module,
                                  "identity": identity, "result": state, "profile": row, "chain": chain,
-                                 "direct_confirmed": direct,
+                                 "direct_confirmed": direct, "evidence": evidence,
                                  "candidate": state == "identical" and module in REUSABLE and direct})
     return findings, incomplete
 
@@ -127,8 +132,8 @@ def overrides_view(workspace, query):
         if state == "identical" and not f["candidate"]:
             next_step = "Verify direct source and module support; do not remove yet"
         comparison = diff_table(p["global_differences"], "Device local", "Global")
-        if f["module"] == "layer2-vlan" and p["global_reference"] is not None and state in ("different", "source_uncertain", "omitted", "protected"):
-            comparison = vlan_explanation(p["local"], p["global_reference"], p["effective"]) or comparison
+        if f["module"] == "layer2-vlan" and p["global_reference"] is not None:
+            comparison = vlan_explanation(p["local"], p["global_reference"], p["effective"], f["evidence"]) or comparison
         detail = ('<h3>Comparison result</h3><p>' + e(RESULTS[state]) + '. ' + e(next_step) + '.</p>'
                   + '<h3>Device local vs Global</h3>' + comparison
                   + '<h3>Saved device settings</h3>' + property_table(p["local"])
@@ -145,7 +150,7 @@ def overrides_view(workspace, query):
                        badge(RESULTS[state], "good" if state == "identical" else "warn" if state == "different" else "neutral"),
                        e(next_step), inspect(label, detail, "Compare settings")))
     cards = []
-    for key in ("identical", "omitted", "different", "no_global", "protected"):
+    for key in ("identical", "effective_match", "omitted", "different", "no_global", "protected"):
         href = url(root, "overrides", snapshot=name, persona=persona, device=device, module=module, result=key)
         cards.append(f'<a class="workflow-card" href="{href}"><strong>{counts[key]} · {e(RESULTS[key])}</strong><span>Show these profiles →</span></a>')
     body = (intro("Device overrides", "Find saved device-level configuration and compare it directly with Global.", picker)
