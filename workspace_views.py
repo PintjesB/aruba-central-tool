@@ -1089,7 +1089,8 @@ def coverage_view(workspace, query):
     library = bundle.get("library") or {}
     additional = bundle.get("unadapted_profiles") or {}
     discovery = bundle.get("profile_type_discovery") or {}
-    unknown = set(discovery.get("unknown_adapter_modules", []))
+    tenant_default = set(discovery.get("tenant_default_modules", []))
+    unknown = set(discovery.get("unknown_adapter_modules", [])) - tenant_default
     survey = set(discovery.get("survey_modules", []))
     scoped_reads = [s[key + "_view"] for entry in bundle["results"].values()
                     for module in entry["modules"].values() for s in module["scope_results"]
@@ -1146,9 +1147,19 @@ def coverage_view(workspace, query):
         tr("Additional assignment identities", "Recovered by scoped queries", str(assignments.get("additional_assignments", "Unavailable"))),
         tr("Unqualified device functions", e(", ".join(bundle.get("unqualified_personas", [])) or "None recorded"), str(len(bundle.get("unqualified_personas", []))))])
     body += '<p class="note">Assignment and profile catalog completeness are not verified.</p></section>'
+    from nac_authorization import nac_collection
+    nac_rows = []
+    for module in ("auth-profiles", "authz-policies", "identity-stores", "static-tag"):
+        view = nac_collection(bundle, module)
+        nac_rows.append(tr(e(module_label(module)), status(view.get("status", "not_collected")),
+                           str(len(view.get("profiles", {}))), "Confirmed" if view.get("count_confirmed") is True else "Unverified"))
+    macs = bundle.get("nac_registrations") or {}
+    nac_rows.append(tr("MAC registrations", status(macs.get("status", "not_collected")),
+                       str(len(macs.get("rows", []))), "Confirmed" if macs.get("count_confirmed") is True else "Unverified"))
+    body += '<section><h2>Central NAC tenant collection</h2><p>Authentication profiles, authorization policies and identity stores use documented tenant-default parameters. Registration pagination is independent of configuration scope reads.</p>' + table(("Resource", "Read result", "Observed records", "Count evidence"), nac_rows) + f'<p><a href="{url(root, "nac", snapshot=name)}">Review NAC identities and authorization</a></p></section>'
     catalog = discovery.get("documented_catalog") or {}
     if catalog:
-        surveyed = set(library.get("modules", {})) | set(additional)
+        surveyed = set(library.get("modules", {})) | set(additional) | set(bundle.get("nac_configuration", {}))
         documented = set(catalog["modules"])
         pending = documented - surveyed - {"ethernet-interfaces"}
         body += '<section><h2>Vendor API catalog</h2>' + metrics([
