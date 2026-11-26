@@ -2071,6 +2071,117 @@ def read_vlan_instance(client, persona, scope, vid, effective):
             "annotations": annotation}
 
 
+def keyed_profile_contracts():
+    """Only exact documented single-key GET paths matching explicit adapters."""
+    catalog = json.loads(Path(__file__).with_name("central_api_catalog.json").read_text(encoding="utf-8"))
+    required = {"view-type", "object-type", "scope-id", "device-function", "effective", "detailed"}
+    supported = {}
+    for request in catalog["get_requests"]:
+        match = re.fullmatch(r"/network-config/v1alpha1/([a-z][a-z0-9-]*)/:([a-z][a-z0-9-]*)",
+                             request["path"])
+        if not match or request["method"] != "GET" or not required <= set(request["query"]):
+            continue
+        module, key = match.groups()
+        # Existing VLAN and special NAC adapters have separate query semantics.
+        if module in ("layer2-vlan", "auth-profiles") or module not in CONFIG_MODULES:
+            continue
+        if key == CONFIG_MODULES[module][0]:
+            supported[module] = key
+    return supported
+
+
+def keyed_profile_read(client, module, identity_key, identity, params, collection_profile):
+    """Retain keyed evidence separately; do not promote or rewrite collection data."""
+    if (not isinstance(identity, str) or not identity.strip() or len(identity) > 512
+            or identity in (".", "..") or any(c in identity for c in ("/", "\\", "%"))
+            or any(ord(c) < 32 or ord(c) == 127 for c in identity)):
+        return {"status": "invalid_selector", "safe_to_apply": False}
+    try:
+        raw = client.get(ALPHA + "/" + module + "/" + quote(identity, safe=""), **params)
+    except APIError as exc:
+        if exc.status in (401, 429):
+            raise
+        return {"status": "request_rejected", "http_error": exc.status, "safe_to_apply": False}
+    except (RuntimeError, OSError, ValueError):
+        return {"status": "read_failed", "safe_to_apply": False}
+    result = {"status": "schema_unresolved", "raw": raw, "safe_to_apply": False}
+    if not isinstance(raw, dict):
+        return result
+    parsed = module_view(raw, identity_key, params.get("object-type", "ANY"))
+    if parsed["status"] == "list_parsed":
+        if set(parsed["profiles"]) != {identity}:
+            return {**result, "status": "identity_unresolved"}
+        profile = parsed["profiles"][identity]
+    else:
+        # An individual GET may return a single object or a single-object
+        # envelope. Accept only exact identities, not arbitrary nested matches.
+        def matches(value):
+            return (isinstance(value, dict) and type(value.get(identity_key)) in (str, int)
+                    and str(value[identity_key]) == identity)
+        if "metadata" not in raw and matches(raw):
+            profile = raw
+        elif len(raw) == 1 and matches(next(iter(raw.values()))):
+            profile = next(iter(raw.values()))
+        else:
+            return result
+    body = profile_body(profile)
+    return {**result, "status": "identity_observed", "profile": body,
+            "annotations": profile.get("@"), "source_verified": False,
+            "differences": field_differences(profile_body(collection_profile), body)
+                           if isinstance(collection_profile, dict) else None}
+
+
+def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKERS, progress=None):
+    """Deep survey of observed Library definitions and saved local identities.
+
+    Effective reads are paired with each local identity. Do not query guessed
+    identifiers, inherited-only profiles, or special multi-key resources.
+    """
+    contracts = keyed_profile_contracts()
+    tasks = []
+    for module, view in sorted(library.get("modules", {}).items()):
+        if module in contracts and view.get("status") == "list_parsed":
+            for identity, profile in sorted(view["profiles"].items()):
+                tasks.append(("Library", "", module, identity, "library", profile))
+    for persona, entry in sorted(results.items()):
+        for module, data in sorted(entry["modules"].items()):
+            if module not in contracts:
+                continue
+            for view in data["scope_results"]:
+                sid = str(view["scope"])
+                local = view["local_view"]
+                effective = view["effective_view"]
+                if not sid.isdigit() or local.get("status") != "list_parsed":
+                    continue
+                for identity, profile in sorted(local["profiles"].items()):
+                    tasks.append((persona, sid, module, identity, "local", profile))
+                    tasks.append((persona, sid, module, identity, "effective",
+                                  effective.get("profiles", {}).get(identity)
+                                  if effective.get("status") == "list_parsed" else None))
+
+    def collect(task):
+        persona, sid, module, identity, kind, profile = task
+        params = {"view-type": "LIBRARY", "detailed": "true"} if kind == "library" else {
+            "view-type": "LOCAL", "scope-id": sid, "device-function": persona,
+            "effective": "true" if kind == "effective" else "false", "detailed": "true"}
+        if kind == "local":
+            params["object-type"] = "LOCAL"
+        return task[:5], keyed_profile_read(client, module, contracts[module], identity, params, profile)
+    print(f"Keyed profile details: {len(tasks)} observed profile reads; additional evidence only", flush=True)
+    audit_progress(progress, "Profile details", 0, len(tasks), "Reading individual configuration profiles")
+    observations = {}
+    outcomes = Counter()
+    for (persona, sid, module, identity, kind), evidence in ordered_parallel(
+            tasks, collect, workers, completed=lambda done, total: audit_progress(
+                progress, "Profile details", done, total, "Reading individual configuration profiles")):
+        observations.setdefault(persona, {}).setdefault(sid, {}).setdefault(module, {}).setdefault(
+            identity, {})[kind] = evidence
+        outcomes[evidence["status"]] += 1
+    print("Keyed profile details: " + canonical(dict(outcomes)), flush=True)
+    return {"supported_modules": sorted(contracts), "outcomes": dict(outcomes), "profiles": observations,
+            "complete": False, "safe_to_apply": False}
+
+
 def capture_vlan_instance_details(client, results, workers=AUDIT_WORKERS, progress=None):
     """Target only local switch VLANs with missing name/admin-state evidence."""
     tasks = []
@@ -2928,6 +3039,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress,
                                            scopes_by_persona=scopes_by_persona, deep_catalog=deep_catalog)
     health = capture_configuration_health(client, records, workers, progress)
+    keyed_details = capture_keyed_profile_details(client, results, library, workers, progress) if deep_catalog else None
     details = capture_vlan_instance_details(client, results, workers, progress)
     operational = capture_configuration_operational_vlans(client, results, workers, progress)
     cli = capture_switch_vlan_cli(client, results, details, workers, progress)
@@ -2939,6 +3051,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             "profile_type_discovery": profile_types, "unadapted_profiles": unadapted,
             "operational_vlans": operational, "vlan_instance_details": details, "switch_vlan_cli": cli,
             "configuration_health": health,
+            "keyed_profile_details": keyed_details,
             "api_read_coverage": client.report(),
             "catalog_exhaustive": False, "safe_to_apply": False}
 
