@@ -39,6 +39,29 @@ def read_audit(directory, name):
     return data
 
 
+class WorkspaceIdentityError(ValueError):
+    """A refresh could not establish continuity with the workspace."""
+
+
+def verify_workspace_identity(directory, incoming):
+    """Require positive continuity with the newest existing capture.
+
+    This is a conservative guard, not an authoritative Central tenant ID.
+    An empty workspace accepts its first capture; a different customer needs
+    a separate workspace directory. Legacy evidence without the required
+    identifiers cannot establish continuity.
+    """
+    from configuration_history import snapshot_identity_checks
+    files = audit_files(directory)
+    if not files:
+        return
+    try:
+        previous = read_audit(directory, files[0].name)
+        snapshot_identity_checks(previous, incoming)
+    except (ValueError, KeyError, TypeError, OSError, AttributeError) as exc:
+        raise WorkspaceIdentityError("Workspace identity not established; use a separate customer directory") from exc
+
+
 from workspace_ui import page, navigation, intro, snapshot_picker, metrics
 
 
@@ -60,7 +83,7 @@ def module_coverage(bundle):
     return result
 
 
-def credential_refresh(client_id, client_secret, region, *, deep_catalog=False, checkpoint_path=None, resume=False):
+def credential_refresh(client_id, client_secret, region, *, deep_catalog=False, checkpoint_path=None, resume=False, identity_guard=None):
     """One-shot credentials captured in a worker closure, not a workspace or file."""
     from central_tool import Central, EU_REGIONS, detect_region, configuration_audit, audit_progress
     if region and region not in EU_REGIONS:
@@ -73,7 +96,7 @@ def credential_refresh(client_id, client_secret, region, *, deep_catalog=False, 
             audit_progress(progress, "Connection", 0, 0, "Authenticating and detecting region")
             detect_region(client, region or None)
             return configuration_audit(client, progress=progress, deep_catalog=deep_catalog,
-                                       checkpoint_path=checkpoint_path, resume=resume)
+                                       checkpoint_path=checkpoint_path, resume=resume, identity_guard=identity_guard)
         finally:
             client.client_id = None
             client.client_secret = None
@@ -200,6 +223,7 @@ class Workspace:
             try:
                 from central_tool import write_private
                 bundle = refresh(progress=self.update_progress)
+                verify_workspace_identity(self.directory, bundle)
                 self.update_progress("Saving snapshot", 0, 0, "Publishing the completed audit")
                 stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
                 target = self.directory / f"config-audit-{stamp}.json"
@@ -218,7 +242,9 @@ class Workspace:
                 snapshot = None
                 # Expose only a known HTTP status, never arbitrary exception data.
                 from central_tool import APIError
-                if isinstance(exc, APIError):
+                if isinstance(exc, WorkspaceIdentityError):
+                    state = "failed; workspace identity not established; use a separate customer directory"
+                elif isinstance(exc, APIError):
                     stage = "OAuth" if str(exc).startswith("OAuth:") else "Central API"
                     state = f"failed; {stage} returned HTTP {exc.status}"
                 else:
@@ -259,6 +285,7 @@ class Workspace:
                    f'<button type="submit"{disabled}>Connect and refresh</button></form>'
                    '<p><small>Deep collection can take substantially longer on large tenants. API coverage gaps and rejected reads remain visible.</small></p>'
                    '<p><small>Resume only an interrupted collection with the same tenant, depth and inventory. Resumed evidence has mixed capture times; use a fresh collection for change verification.</small></p>'
+                   '<p><small>Use a separate directory per customer. Existing captures require matching region, Global scope and overlapping device serial evidence before collecting configuration.</small></p>'
                    '<p><small>Credentials are used only for this audit, in process memory. '
                    'They are not saved or returned by the application. Decline browser password-saving prompts.</small></p>')
         if self.refresh is not None:
@@ -656,6 +683,8 @@ def handler_for(workspace):
                     kwargs = {"deep_catalog": depth == "deep"}
                     if checkpoint_path is not None:
                         kwargs.update(checkpoint_path=checkpoint_path, resume=resume)
+                    if audit_files(workspace.directory):
+                        kwargs["identity_guard"] = lambda incoming: verify_workspace_identity(workspace.directory, incoming)
                     refresh = credential_refresh(values["client_id"][0], values["client_secret"][0], values["region"][0], **kwargs)
                     values.clear()
                     started = workspace.start_refresh(refresh, checkpoint_path=checkpoint_path)
