@@ -397,6 +397,7 @@ class Workspace:
         self._reviewed_snapshot = None
         self._overview_snapshot = None
         self._advanced_snapshot = None
+        self._consolidation_snapshot = None
         self._vlan_summary = None
         self.state = "idle"
         self.phase = ""
@@ -568,6 +569,7 @@ class Workspace:
             # Release the previous large bundle before parsing another file.
             self._reviewed_snapshot = None
             self._advanced_snapshot = None
+            self._consolidation_snapshot = None
             self._vlan_summary = None
             bundle = refresh_configuration_review(read_audit(self.directory, name))
             if before != fingerprint():
@@ -589,6 +591,20 @@ class Workspace:
                     self._advanced_snapshot = advanced_analysis(bundle)
                 return self._advanced_snapshot
         return advanced_analysis(bundle)
+
+    def consolidation_snapshot(self, bundle):
+        """Cache base recommendations for the active reviewed capture.
+
+        Callers may enrich top-level finding copies, but nested evidence must
+        remain read-only, as for the reviewed bundle and engineering cache.
+        """
+        from .consolidation import profile_recommendations
+        with self.snapshot_lock:
+            if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle:
+                if self._consolidation_snapshot is None:
+                    self._consolidation_snapshot = profile_recommendations(bundle)
+                return self._consolidation_snapshot
+        return profile_recommendations(bundle)
 
     def vlan_summary(self, bundle):
         """Reuse snapshot-wide aggregate diagnostics for filtered override views."""
@@ -643,7 +659,13 @@ class Workspace:
             if complete_structure:
                 reviewed = (self._reviewed_snapshot[1] if self._reviewed_snapshot is not None
                             and self._reviewed_snapshot[0] == before else refresh_configuration_review(bundle))
-                summary["counts"] = dict(Counter(f["action"] for f in profile_recommendations(reviewed)))
+                if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is reviewed:
+                    if self._consolidation_snapshot is None:
+                        self._consolidation_snapshot = profile_recommendations(reviewed)
+                    findings = self._consolidation_snapshot
+                else:
+                    findings = profile_recommendations(reviewed)
+                summary["counts"] = dict(Counter(f["action"] for f in findings))
             if before != fingerprint():
                 raise ValueError("Snapshot changed while loading; open it again")
             self._overview_snapshot = (before, summary)
