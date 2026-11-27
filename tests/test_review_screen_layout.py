@@ -30,7 +30,7 @@ class ReviewScreenLayoutTests(unittest.TestCase):
                 "source trace": w.sources({**q, "persona": "ACCESS_SWITCH", "device": "3", "module": "layer2-vlan", "identity": "10"}),
                 "dependency impact": w.impact({**q, "module": "layer2-vlan", "identity": "10"}),
                 "entity search": w.report({**q, "mode": "entities", "q": "Switch"}),
-                "library profile": w.library({**q, "module": "layer2-vlan", "identity": "30"}),
+                "library profile": w.library({**q, "module": "layer2-vlan", "profile": "30"}),
                 "NAC": w.nac(q),
             }
             with sync_playwright() as playwright:
