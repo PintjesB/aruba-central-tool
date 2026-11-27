@@ -2006,6 +2006,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
     Extend observed resource/function pairs across the discovered scope inventory.
     """
     unknown = (set(discovery["unknown_adapter_modules"]) | set(discovery.get("survey_modules", []))) - set(discovery.get("tenant_default_modules", []))
+    from singleton_review import SINGLETON_PERSONAS, singleton_review, singleton_view
     targets = defaultdict(set)
     for view, assignment in ((assignments, True), (scope_maps, False)):
         for row in view.get("rows", []):
@@ -2031,7 +2032,10 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
     for module in sorted(unknown):
         if not re.fullmatch(r"[a-z][a-z0-9-]{0,127}", module):
             continue
-        for persona in discovery["modules"].get(module, []):
+        functions = set(discovery["modules"].get(module, []))
+        if deep_catalog:
+            functions.update(SINGLETON_PERSONAS.get(module, ()))
+        for persona in sorted(functions):
             if persona not in NETWORK_PERSONAS:
                 continue
             for scope in (scopes_by_persona or {}).get(persona, []):
@@ -2102,9 +2106,10 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                 if not isinstance(payload, dict):
                     continue
                 for key, items in payload.items():
-                    if key == "metadata" or not isinstance(items, list):
+                    if key in ("metadata", "@"):
                         continue
-                    for item in items:
+                    candidates = items if isinstance(items, list) else [items] if isinstance(items, dict) and module in SINGLETON_PERSONAS else []
+                    for item in candidates:
                         if not isinstance(item, dict):
                             continue
                         ann = item.get("@")
@@ -2140,6 +2145,10 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                        "complete": False},
                   "safe_to_apply": False}
         result["identity_evidence"] = qualify_observed_identities(result)
+        if module in SINGLETON_PERSONAS:
+            result["singleton_library"] = singleton_view(module, result["library"])
+            for view in result["source_views"]:
+                view["singleton_review"] = singleton_review(module, view["committed"], view["effective"])
         print(f"  Unadapted profile type {module}: source views={len(evidence)}; "
               f"Library={result['library']['status']}", flush=True)
         return module, result
