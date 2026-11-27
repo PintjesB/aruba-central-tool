@@ -1,7 +1,6 @@
 """Customer assessment with linked review queues and private JSON report."""
 from .workspace_ui import e, page, intro, metrics, table, tr, module_label, persona_label
 from .workspace_views import load, url
-from .assessment_review import assessment
 from .history_view import private_export
 
 
@@ -25,7 +24,7 @@ def assessment_view(workspace, query):
     from .optimization_worklist import optimization_worklist, reduction_scenario
     findings = workspace.consolidation_snapshot(bundle)
     analysis = workspace.advanced_snapshot(bundle)
-    report = assessment(bundle, findings=findings, engineering=analysis)
+    report = workspace.assessment_snapshot(bundle)
     coverage = report["coverage"]
     engineering, consolidation, assignments, variants = (report[k] for k in ("engineering", "consolidation", "assignments", "variants"))
     rules, sequences = report["policy_rules"], report["policy_sequences"]
