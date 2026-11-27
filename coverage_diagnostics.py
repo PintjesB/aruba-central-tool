@@ -86,7 +86,7 @@ def diagnostics(bundle):
             continue
         totals["not_attempted"] += 1
         gaps.append({"path": path, "group": group,
-                     "selector_required": bool(re.search(r"\\{[^}]+\\}", path))})
+                     "selector_required": any(part.startswith((":", "{")) for part in path.split("/"))})
     from nac_authorization import nac_collection
     nac = {module: view_summary(nac_collection(bundle, module))
            for module in ("auth-profiles", "authz-policies", "identity-stores", "static-tag")}
