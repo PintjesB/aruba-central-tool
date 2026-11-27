@@ -36,7 +36,8 @@ class EntitySearchTests(unittest.TestCase):
     def test_search_counts_all_types_but_paginates_selected_category(self):
         bundle = fixture()
         result = find_entities(bundle, "Switch", category="device", limit=1)
-        self.assertEqual(result["total"], 2)
+        # Device function is searchable too: all three captured devices are switches.
+        self.assertEqual(result["total"], 3)
         self.assertEqual(len(result["rows"]), 1)
         self.assertGreater(result["counts"]["profile"], 0)
         second = find_entities(bundle, "Switch", category="device", limit=1, offset=1)
