@@ -747,6 +747,36 @@ class Tests(unittest.TestCase):
         self.assertEqual(set(result["profiles"]["CAMPUS_AP"]["12"]["portals"]["shared"]), {"effective"})
         self.assertFalse(result["safe_to_apply"])
 
+    def test_unfiltered_details_preserve_conflicting_bodies_and_local_only_observations(self):
+        from central_tool import capture_keyed_profile_details
+        profile = {"name": "dns", "enable": True}
+        local = {"name": "local", "@": {"aruba-annotation:object_type": "LOCAL",
+                                        "aruba-annotation:inherited": False}}
+        def view(*profiles):
+            return {"status": "response_received", "raw": {"profiles": list(profiles)}}
+        extra = {"dns": {"source_views": [
+            {"persona": "ACCESS_SWITCH", "scope": "12", "effective": view(profile),
+             "committed": view()},
+            {"persona": "ALL_DEVICE_FUNCTIONS", "scope": "12",
+             "effective": view({**profile, "enable": False}), "committed": view(local)},
+            {"persona": "ACCESS_SWITCH", "scope": "13", "effective": view(profile)},
+            {"persona": "ALL_DEVICE_FUNCTIONS", "scope": "13", "effective": view(profile)}
+        ]}}
+        class Client:
+            def __init__(self):
+                self.calls = []
+            def get(self, path, **params):
+                self.calls.append((path, params))
+                return {"name": path.rsplit("/", 1)[-1]}
+        client = Client()
+        result = capture_keyed_profile_details(client, {}, {}, workers=1, unadapted=extra)
+        self.assertEqual(len(client.calls), 5)
+        unfiltered = result["profiles"]["ALL_DEVICE_FUNCTIONS"]
+        self.assertEqual(set(unfiltered), {"12"})
+        self.assertEqual(set(unfiltered["12"]["dns"]["local"]), {"local", "effective"})
+        self.assertIn("dns", unfiltered["12"]["dns"])
+        self.assertEqual(len([p for _, p in client.calls if p.get("scope-id") == "13"]), 1)
+
     def test_supplemental_collection_reuses_exact_successful_reads(self):
         from central_tool import inspect_unadapted_profiles
         class Client:
@@ -801,7 +831,8 @@ class Tests(unittest.TestCase):
                  "effective_view": {"status": "list_parsed", "profiles": {identity: profile}}}
                 for i in range(1, 5)]}
         results = {"ACCESS_SWITCH": {"modules": {"ethernet-interfaces": entry("ethernet-interfaces", "1/1/1"),
-                                                 "dns": entry("dns", "dns")}}}
+                                                 "dns": entry("dns", "dns"),
+                                                 "server-groups": entry("server-groups", "dns")}}}
         class Client:
             def __init__(self):
                 self.calls = []
@@ -812,6 +843,7 @@ class Tests(unittest.TestCase):
         result = capture_keyed_profile_details(client, results, {}, workers=1, adaptive=True)
         self.assertEqual(sum("/ethernet-interfaces/" in p for p, _ in client.calls), 5)
         self.assertEqual(result["profiles"]["ACCESS_SWITCH"]["2"]["dns"]["dns"]["effective"]["status"], "identity_observed")
+        self.assertEqual(sum("/server-groups/" in p for p, _ in client.calls), 5)
         self.assertEqual(result["collection_only_by_module"], {"dns": 1})
 
     def test_adaptive_keyed_details_keep_scope_data_and_expand_on_disagreement(self):
