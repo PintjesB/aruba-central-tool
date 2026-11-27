@@ -173,6 +173,31 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertNotIn(private, json.dumps(result))
 
 
+    def test_diagnostics_output_file_is_exclusive_and_does_not_print_json(self):
+        import contextlib
+        import io
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from coverage_diagnostics import main
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "config-audit-test.json"
+            snapshot.write_text(json.dumps({"schema": 1, "kind": "configuration_audit"}), encoding="utf-8")
+            output = root / "diagnostics.json"
+            args = ["coverage_diagnostics.py", "--directory", tmp, "--output", str(output)]
+            with patch("sys.argv", args), contextlib.redirect_stdout(io.StringIO()) as stdout:
+                main()
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["kind"],
+                             "anonymous_collection_diagnostics")
+            self.assertNotIn("attempted_operations", stdout.getvalue())
+            before = output.read_bytes()
+            with patch("sys.argv", args), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    main()
+            self.assertEqual(output.read_bytes(), before)
+
     def test_http_transport_diagnostics_are_bounded_and_anonymous(self):
         bundle = {"schema": 1, "kind": "configuration_audit",
                   "http_get_transport": {"http_get_attempts": 25, "http_get_retries": 5,
