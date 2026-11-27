@@ -281,8 +281,7 @@ def overrides_view(workspace, query):
             ("partial_match", "likely redundant"), ("different", "different"), ("omitted", "insufficient evidence"), ("no_global", "no Global profile"),
             ("protected", "protected"), ("global_unknown", "Global unavailable"),
             ("source_uncertain", "source conflict")) if counts[key]) + '</div>'
-    from .central_tool import vlan_evidence_summary
-    diagnostics = vlan_evidence_summary(bundle)
+    diagnostics = workspace.vlan_summary(bundle)
     report = '<details><summary>VLAN evidence collection results (entire snapshot)</summary>' + table(
         ("Source", "Read outcomes"), [tr(e(label), e(", ".join(f"{key}: {value}" for key, value in diagnostics[key].items()) or "No observations"))
          for key, label in (("individual_vlan_reads", "Individual VLAN API"), ("switch_cli", "Switch show vlan"),
