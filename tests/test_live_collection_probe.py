@@ -104,3 +104,39 @@ class LiveProbeTests(unittest.TestCase):
         self.assertFalse(result["complete"])
         for secret in ("PRIVATE-NAME", "PRIVATE-OTHER", "12345", "other-type"):
             self.assertNotIn(secret, json.dumps(result))
+
+
+    def test_specialized_probe_uses_bounded_current_scopes_and_anonymous_results(self):
+        from live_collection_probe import specialized_probe
+        scopes = {"ACCESS_SWITCH": {"scopes": [
+            {"id": "12345", "kind": "global"}, {"id": "23456", "kind": "device"},
+            {"id": "34567", "kind": "device"}]}}
+        rows = [{"scope-id": "12345", "device-function": "ACCESS_SWITCH",
+                 "profile-type": "dns", "profile-instance": "PRIVATE-" + str(i)}
+                for i in range(5)]
+        previous = {"library": {"assignments": {"rows": rows + [{**rows[0], "profile-instance": "private/invalid"}]}},
+                    "keyed_assignment_details": {"records": [{"selector": rows[0], "raw": {
+                        "scope-id": 12345, "persona": "ACCESS_SWITCH", "resource": "dns/PRIVATE-0"}}]},
+                    "scope_hierarchy_evidence": {"records": [
+                        {"scope": "23456", "kind": "device", "status": "request_rejected"},
+                        {"scope": "45678", "kind": "device", "status": "request_rejected"}]}}
+        view = {"status": "request_rejected", "http_error": 400}
+        with patch("live_collection_probe.qualified_scopes", return_value=scopes), patch(
+            "central_tool.read_raw_profile_collection", return_value=view) as read, patch(
+            "scope_evidence.hierarchy_capture", return_value={"records": []}) as hierarchy, patch(
+            "scope_evidence.keyed_assignment_capture", return_value={"outcomes": {"identity_observed": 2}}) as assignments, patch(
+            "nac_assets.capture_portal_assets", return_value={"images": [], "count_confirmed": True,
+                                                            "status": "list_parsed"}) as assets:
+            result = specialized_probe(Mock(), previous)
+        self.assertEqual(read.call_count, 18)
+        self.assertEqual(len(result["collections"]), 18)
+        self.assertTrue(all(c["http_error"] == 400 for c in result["collections"]))
+        self.assertEqual(hierarchy.call_args.args[1], {"sample": [{"id": "23456", "kind": "device"}]})
+        self.assertEqual(assignments.call_args.args[1]["rows"], rows[:2])
+        self.assertEqual(result["assignments"]["retained_legacy_identity_matches"], {"identity_observed": 1})
+        self.assertEqual(result["assignments"]["selector_rejection_reasons"], {"unqualified_slash_instance": 1})
+        self.assertEqual(assets.call_args.kwargs, {"detail_limit": 2})
+        self.assertFalse(result["complete"])
+        self.assertFalse(result["safe_to_apply"])
+        for private in ("12345", "23456", "34567", "45678", "PRIVATE-"):
+            self.assertNotIn(private, json.dumps(result))

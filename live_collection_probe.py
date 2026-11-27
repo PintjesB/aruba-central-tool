@@ -207,12 +207,108 @@ def probe(client, previous, modules, sample=2):
             "complete": False, "safe_to_apply": False}
 
 
+def specialized_probe(client, previous):
+    """Bound live verification of outstanding API contracts to observed scopes.
+
+    No additional audit or persisted capture. Exports counts/status only;
+    never returns private selectors, field values, error text or credentials.
+    """
+    from central_tool import read_raw_profile_collection
+    from scope_evidence import (hierarchy_capture, keyed_assignment_capture, assignment_identity,
+                                assignment_selector_rejection, legacy_assignment_status)
+    from nac_assets import capture_portal_assets
+    scopes = qualified_scopes(client, previous)
+    selected = {}
+    for persona, entry in sorted(scopes.items()):
+        # One current scope per kind; no arbitrary guessed scope IDs.
+        by_kind = {}
+        for scope in sorted(entry["scopes"], key=lambda s: str(s["id"])):
+            if scope["kind"] in ("global", "device"):
+                by_kind.setdefault(scope["kind"], scope)
+        selected[persona] = list(by_kind.values())
+    # Check both documented endpoints at Library and representative scopes.
+    # A response on one scope never establishes absence on another.
+    collections = []
+    seen = set()
+    def collection(module, persona, kind, mode, params):
+        signature = (module, json.dumps(params, sort_keys=True))
+        if signature in seen:
+            return
+        seen.add(signature)
+        view = observed_read(lambda: read_raw_profile_collection(client, module, params))
+        raw = view.get("raw")
+        collections.append({"module": module, "persona": persona, "scope_kind": kind,
+                            "view": mode, "status": safe_status(view.get("status")),
+                            "http_error": view.get("http_error"),
+                            "count_confirmed": view.get("collection_count_verified") is True,
+                            "record_lists": sum(isinstance(v, list) for k, v in raw.items() if k != "metadata") if isinstance(raw, dict) else 0,
+                            "record_count": sum(len(v) for k, v in raw.items() if k != "metadata" and isinstance(v, list)) if isinstance(raw, dict) else 0})
+    for module in ("management-server", "custom-get-api"):
+        collection(module, "Library", "library", "library", {"view-type": "LIBRARY", "detailed": "true"})
+        for persona, entries in sorted(selected.items()):
+            for scope in entries:
+                for effective in ("false", "true"):
+                    base = {"view-type": "LOCAL", "scope-id": str(scope["id"]),
+                            "effective": effective, "detailed": "true"}
+                    side = "effective" if effective == "true" else "committed"
+                    collection(module, "ALL_DEVICE_FUNCTIONS", scope["kind"], side, base)
+                    collection(module, persona, scope["kind"], side, {**base, "device-function": persona})
+    # Recheck only previously failed hierarchy scopes which still exist in
+    # the independently qualified current inventory, at most four.
+    live = {(str(s["id"]), s["kind"]): s for entry in scopes.values() for s in entry["scopes"]}
+    failed = sorted({(str(r.get("scope")), r.get("kind"))
+                     for r in (previous.get("scope_hierarchy_evidence") or {}).get("records", [])
+                     if r.get("status") == "request_rejected"
+                     and (str(r.get("scope")), r.get("kind")) in live})[:4]
+    hierarchy = hierarchy_capture(client, {"sample": [live[k] for k in failed]})
+    hierarchy_rows = [{"kind": r["kind"], "status": r["status"],
+                       "version": r.get("endpoint_version"), "http_error": r.get("http_error"),
+                       "primary_http_error": r.get("primary_read", {}).get("http_error")}
+                      for r in hierarchy["records"]]
+    # Select at most two observed assignments per currently qualified persona.
+    # The live keyed response must still match every selector field.
+    live_pairs = {(persona, str(s["id"])) for persona, entry in scopes.items() for s in entry["scopes"]}
+    rows = ((previous.get("library") or {}).get("assignments") or {}).get("rows", [])
+    sampled, used = [], Counter()
+    unique = set()
+    rejected = Counter()
+    for row in rows:
+        reason = assignment_selector_rejection(row)
+        if reason:
+            rejected[reason] += 1
+            continue
+        identity = assignment_identity(row)
+        sid, persona, _, _ = identity
+        if (persona, sid) not in live_pairs or used[persona] >= 2 or identity in unique:
+            continue
+        unique.add(identity)
+        used[persona] += 1
+        sampled.append(row)
+    assignments = keyed_assignment_capture(client, {"rows": sampled})
+    retained = Counter()
+    for record in (previous.get("keyed_assignment_details") or {}).get("records", []):
+        identity = assignment_identity(record.get("selector"))
+        raw = record.get("raw")
+        if identity and isinstance(raw, dict) and "persona" in raw and "resource" in raw:
+            retained[legacy_assignment_status(raw, identity)] += 1
+    assets = capture_portal_assets(client, detail_limit=2)
+    return {"schema": 1, "kind": "anonymous_specialized_live_probe",
+            "collections": collections, "hierarchy": hierarchy_rows,
+            "assignments": {"sampled": len(sampled), "outcomes": assignments["outcomes"],
+                            "retained_legacy_identity_matches": dict(retained),
+                            "selector_rejection_reasons": dict(rejected)},
+            "portal_assets": {"status": assets.get("status"), "count_confirmed": assets["count_confirmed"],
+                              "images": len(assets["images"]), "outcomes": assets.get("outcomes", {})},
+            "complete": False, "safe_to_apply": False}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--snapshot")
     parser.add_argument("--module", choices=PROBE_MODULES, action="append")
     parser.add_argument("--sample", type=int, choices=range(1, 5), default=2)
+    parser.add_argument("--specialized", action="store_true", help="Bounded probe of management-server, custom-get-api, failed hierarchy scopes, assignment identities and portal assets")
     args = parser.parse_args()
     from config_app import audit_files, read_audit
     try:
@@ -227,7 +323,7 @@ def main():
             client_id = client_id or getpass.getpass("Central client ID: ")
             secret = secret or getpass.getpass("Central client secret: ")
         client = Central(previous["region"], token, client_id, secret)
-        report = probe(client, previous, args.module or ["ethernet-interfaces", "snmp", "net-groups"], args.sample)
+        report = specialized_probe(client, previous) if args.specialized else probe(client, previous, args.module or ["ethernet-interfaces", "snmp", "net-groups"], args.sample)
         print(json.dumps(report, indent=2, sort_keys=True))
     except APIError as exc:
         parser.exit(1, f"Probe stopped: Central HTTP {exc.status}.\n")

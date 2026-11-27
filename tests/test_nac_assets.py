@@ -86,3 +86,22 @@ class PortalAssetTests(unittest.TestCase):
         self.assertFalse(result["count_confirmed"])
         self.assertEqual(result["invalid_records"], 1)
         self.assertEqual(len(client.calls), 1)
+
+
+    def test_probe_limit_retains_inventory_and_bounds_individual_reads(self):
+        class Client:
+            def __init__(self):
+                self.calls = []
+            def get(self, path, **params):
+                self.calls.append(path)
+                if path.endswith("cnac-image"):
+                    return {"count": 3, "items": [{"imageId": x} for x in ("a", "b", "c")]}
+                return {"imageId": path.rsplit("/", 1)[-1]}
+        client = Client()
+        result = capture_portal_assets(client, detail_limit=2)
+        self.assertEqual(len(client.calls), 3)
+        self.assertEqual(len(result["images"]), 3)
+        self.assertEqual(result["detail_reads_planned"], 2)
+        self.assertEqual(set(result["details"]), {"a", "b"})
+        self.assertTrue(result["count_confirmed"])
+        self.assertFalse(result["complete"])
