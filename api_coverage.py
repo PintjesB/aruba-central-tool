@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import threading
+import time
 
 
 class ReadCoverage:
@@ -37,6 +38,7 @@ class ReadCoverage:
             score = sum(not part.startswith(":") for part in parts)
             self.templates[len(parts)].append((re.compile(pattern), score, path))
         self.counts = defaultdict(Counter)
+        self.timing = defaultdict(lambda: [0, 0])
         self.unmatched = Counter()
         self.lock = threading.Lock()
         self.cache = OrderedDict()
@@ -123,6 +125,7 @@ class ReadCoverage:
     def _get(self, path, **params):
         from central_tool import APIError
         template = self.resolve(path)
+        started = time.monotonic()
         try:
             result = self.client.get(path, **params)
         except APIError as exc:
@@ -135,11 +138,15 @@ class ReadCoverage:
             outcome = "response_received"
             return result
         finally:
+            elapsed_ms = max(0, round((time.monotonic() - started) * 1000))
             with self.lock:
                 if template is None:
                     self.unmatched[outcome] += 1
                 else:
                     self.counts[template][outcome] += 1
+                    timing = self.timing[template]
+                    timing[0] += elapsed_ms
+                    timing[1] = max(timing[1], elapsed_ms)
 
     def report(self):
         with self.lock:
@@ -152,7 +159,9 @@ class ReadCoverage:
                          else "mixed_outcomes" if received != attempted else "response_received")
                 rows.append({"path": path, "groups": sorted(meta["groups"]),
                              "definitions": meta["definitions"], "attempted": attempted,
-                             "received": received, "outcomes": counts, "status": state})
+                             "received": received, "outcomes": counts, "status": state,
+                             "elapsed_ms_sum": self.timing[path][0],
+                             "elapsed_ms_max": self.timing[path][1]})
             return {"revision": self.revision, "operations": rows,
                     "unmatched_get_outcomes": dict(self.unmatched),
                     "exact_collection_gets_reused": self.reused, "complete": False}
