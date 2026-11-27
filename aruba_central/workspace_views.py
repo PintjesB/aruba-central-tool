@@ -766,6 +766,17 @@ def engineering_view(workspace, query):
         selected = next((key for key in ("duplicates", "ports", "shadow", "references", "variants", "rules", "resolved") if counts[key]), "ports")
     from .optimization_worklist import engineering_group_id
     selected_group = query.get("group", "")
+    from .review_dispositions import snapshot_binding
+    binding = snapshot_binding(workspace, name, bundle)
+    detail_only = query.get("detail") == "1"
+    if detail_only and (selected not in ("duplicates", "ports") or not selected_group or query.get("binding") != binding):
+        raise ValueError("Finding or snapshot changed; reopen the worklist")
+    def review_button(workflow, record, label, action):
+        group = engineering_group_id(workflow, record)
+        href = url(root, "advanced", snapshot=name, workflow=workflow, group=group)
+        detail_url = url(root, "advanced", snapshot=name, workflow=workflow, group=group, detail="1", binding=binding)
+        return (f'<button type="button" class="secondary" data-inspect data-inspect-url="{detail_url}">{e(action)}</button>'
+                f'<noscript><a href="{href}">{e(label)}: {e(action)}</a></noscript>')
     panels = []
     def panel(key, label, hint, headers, rows, count):
         content = (f'<section data-panel="{key}" data-group="engineering"><p class="filter-hint">{e(hint)}</p>'
@@ -787,54 +798,60 @@ def engineering_view(workspace, query):
             preferred = preferred_duplicate(match_usage) if len(match_usage) > 1 else next(iter(match_usage), None)
             library_available = record["library_status"] == "list_parsed"
             target = preferred or ("Choose matching profile" if matches else "New profile candidate" if library_available else "Library unavailable")
-            visibility = []
-            for match in matches:
-                counts = Counter(v["status"] for v in match["visibility"])
-                visibility.append(tr(e(match["identity"]), *usage_cells(match_usage[match["identity"]]),
-                                     e(f'{counts["matching"]}/{len(devices)} matching; {counts["unknown"]} unknown')))
-            device_summary = Counter(p["device"] for p in ports)
-            mapping = table(("Device", "Port", "Description", "Proposed profile"), [
-                tr(e(p["device"]), e(p["port"]), e(p.get("description") or "—"),
-                   '<span data-port-target>' + e(preferred or "Not selected") + '</span>') for p in ports], search=len(ports) > 30)
-            conversion = record["conversion_review"]
-            conversion_rows = []
-            for item in conversion:
-                detail = ('<h3>Saved port settings</h3>' + property_table(item["saved"])
-                          + '<h3>Effective port settings</h3>' + property_table(item["effective"])
-                          + '<h3>Shared fields to review</h3>' + list_items(item["proposed_shared_fields"])
-                          + '<h3>Saved fields to retain locally</h3>' + property_table(item["retained_local_fields"])
-                          + '<h3>Saved shared settings versus candidate</h3>' + diff_table(item["saved_vs_shared"], "Saved", "Candidate"))
-                conversion_rows.append(tr(e(item["device"]), e(item["port"]), badge(pretty(item["status"])),
-                                          e(", ".join(item["proposed_shared_fields"]) or "None observed"),
-                                          e(", ".join(item["retained_local_fields"]) or "None observed"),
-                                          inspect(item["port"], detail, "Compare")))
-            conversion_table = table(("Device", "Port", "Saved evidence", "Shared field candidates", "Retain locally", ""), conversion_rows, search=True)
-            chooser = ""
-            if matches:
-                chooser = ('<label>Profile to review<select data-port-profile aria-label="Profile to review">'
-                           + '<option value="">Choose matching profile</option>' + "".join(
-                               f'<option value="{e(m["identity"])}"{" selected" if m["identity"] == preferred else ""}>{e(m["identity"])}</option>'
-                               for m in matches) + '</select></label>')
             action = ("Review unsupported settings first" if record["unsupported_fields"] else
-                      "Verify saved port configuration" if any(v["status"] != "exact_saved_effective_match" for v in conversion) else
+                      "Verify saved port configuration" if any(v["status"] != "exact_saved_effective_match" for v in record["conversion_review"]) else
                       "Resolve dependency evidence" if unresolved else
                       "Review existing profile assignment" if matches else
                       "Review a new reusable profile" if library_available else "Retrieve Library definitions first")
-            details = ('<div class="review-decision"><div><strong>' + e(action) + '</strong><p>Preserve every port identity and description. This is a review preview, not an executable change.</p></div></div>'
-                       + '<div class="comparison-summary">' + badge(f"{len(ports)} ports", "info") + badge(f"{len(devices)} devices", "neutral")
-                       + (badge(f"{unresolved} unresolved dependencies", "warn") if unresolved else badge(f"{len(dependencies)} observed dependencies", "neutral")) + '</div>'
-                       + '<h3>Shared configuration</h3>' + property_table(settings)
-                       + ('<h3>Matching Library profiles</h3>' + table(("Profile", "Assignments", "Shared devices", "References", "Unknown reads", "Visibility on affected devices"), visibility) if matches else
-                          '<p class="note">' + e("No exact Library match in captured profiles." if library_available else "Library coverage unavailable; an existing profile may be present.") + '</p>')
-                       + '<div data-port-review><h3>Proposed port mapping</h3>' + chooser + mapping
-                       + '<h3>Per-port conversion evidence</h3><p>These fields are candidates for review, not instructions to delete them. Saved/effective differences or unsupported settings require separate validation.</p>'
-                       + conversion_table + '</div>'
-                       + ('<h3>Unsupported fields</h3>' + list_items(record["unsupported_fields"]) if record["unsupported_fields"] else "")
-                       + ('<details' + (' open' if unresolved else '') + '><summary>Port dependencies</summary>' +
-                          table(("Device", "Port", "Target", "Evidence"), [tr(e(r["device"]), e(r["source"]),
-                              e(module_label(r["target_module"]) + " / " + str(r["target"] if r["target"] is not None else "Unresolved")), status(r["status"]))
-                              for r in sorted(dependencies, key=lambda r: r["status"] == "observed")], search=len(dependencies) > 30) + '</details>' if dependencies else '<p class="note">No dependencies observed; reference coverage is incomplete.</p>')
-                       + '<details><summary>Validation required</summary>' + list_items(record.get("blockers", [])) + '</details>' + raw(record))
+            device_summary = Counter(p["device"] for p in ports)
+            if selected_group:
+                visibility = []
+                for match in matches:
+                    visibility_counts = Counter(v["status"] for v in match["visibility"])
+                    visibility.append(tr(e(match["identity"]), *usage_cells(match_usage[match["identity"]]),
+                                         e(f'{visibility_counts["matching"]}/{len(devices)} matching; {visibility_counts["unknown"]} unknown')))
+                mapping = table(("Device", "Port", "Description", "Proposed profile"), [
+                    tr(e(p["device"]), e(p["port"]), e(p.get("description") or "—"),
+                       '<span data-port-target>' + e(preferred or "Not selected") + '</span>') for p in ports], search=len(ports) > 30)
+                conversion = record["conversion_review"]
+                conversion_rows = []
+                for item in conversion:
+                    detail = ('<h3>Saved port settings</h3>' + property_table(item["saved"])
+                              + '<h3>Effective port settings</h3>' + property_table(item["effective"])
+                              + '<h3>Shared fields to review</h3>' + list_items(item["proposed_shared_fields"])
+                              + '<h3>Saved fields to retain locally</h3>' + property_table(item["retained_local_fields"])
+                              + '<h3>Saved shared settings versus candidate</h3>' + diff_table(item["saved_vs_shared"], "Saved", "Candidate"))
+                    conversion_rows.append(tr(e(item["device"]), e(item["port"]), badge(pretty(item["status"])),
+                                              e(", ".join(item["proposed_shared_fields"]) or "None observed"),
+                                              e(", ".join(item["retained_local_fields"]) or "None observed"),
+                                              inspect(item["port"], detail, "Compare")))
+                conversion_table = table(("Device", "Port", "Saved evidence", "Shared field candidates", "Retain locally", ""), conversion_rows, search=True)
+                chooser = ""
+                if matches:
+                    chooser = ('<label>Profile to review<select data-port-profile aria-label="Profile to review">'
+                               + '<option value="">Choose matching profile</option>' + "".join(
+                                   f'<option value="{e(m["identity"])}"{" selected" if m["identity"] == preferred else ""}>{e(m["identity"])}</option>'
+                                   for m in matches) + '</select></label>')
+                details = ('<div class="review-decision"><div><strong>' + e(action) + '</strong><p>Preserve every port identity and description. This is a review preview, not an executable change.</p></div></div>'
+                           + '<div class="comparison-summary">' + badge(f"{len(ports)} ports", "info") + badge(f"{len(devices)} devices", "neutral")
+                           + (badge(f"{unresolved} unresolved dependencies", "warn") if unresolved else badge(f"{len(dependencies)} observed dependencies", "neutral")) + '</div>'
+                           + '<h3>Shared configuration</h3>' + property_table(settings)
+                           + ('<h3>Matching Library profiles</h3>' + table(("Profile", "Assignments", "Shared devices", "References", "Unknown reads", "Visibility on affected devices"), visibility) if matches else
+                              '<p class="note">' + e("No exact Library match in captured profiles." if library_available else "Library coverage unavailable; an existing profile may be present.") + '</p>')
+                           + '<div data-port-review><h3>Proposed port mapping</h3>' + chooser + mapping
+                           + '<h3>Per-port conversion evidence</h3><p>These fields are candidates for review, not instructions to delete them. Saved/effective differences or unsupported settings require separate validation.</p>'
+                           + conversion_table + '</div>'
+                           + ('<h3>Unsupported fields</h3>' + list_items(record["unsupported_fields"]) if record["unsupported_fields"] else "")
+                           + ('<details' + (' open' if unresolved else '') + '><summary>Port dependencies</summary>' +
+                              table(("Device", "Port", "Target", "Evidence"), [tr(e(r["device"]), e(r["source"]),
+                                  e(module_label(r["target_module"]) + " / " + str(r["target"] if r["target"] is not None else "Unresolved")), status(r["status"]))
+                                  for r in sorted(dependencies, key=lambda r: r["status"] == "observed")], search=len(dependencies) > 30) + '</details>' if dependencies else '<p class="note">No dependencies observed; reference coverage is incomplete.</p>')
+                           + '<details><summary>Validation required</summary>' + list_items(record.get("blockers", [])) + '</details>' + raw(record))
+                control = inspect(label, details, "Review mapping")
+                if detail_only:
+                    return control.replace("<template>", '<template data-advisor-evidence>', 1)
+            else:
+                control = review_button("ports", record, label, "Review mapping")
             device_names = ", ".join(f"{dev} ({device_summary[dev]})" for dev in devices[:2])
             if len(devices) > 2:
                 device_names += f" +{len(devices)-2} more"
@@ -842,7 +859,7 @@ def engineering_view(workspace, query):
                            f'<strong>{len(ports)} ports</strong><small>{e(device_names)}</small>',
                            f'<strong>{e(target)}</strong>' + (f'<small>{len(matches)} matching Library profiles</small>' if matches else ""),
                            badge(action, "warn" if record["unsupported_fields"] or unresolved or not library_available else "info"),
-                           inspect(label, details, "Review mapping")))
+                           control))
     panel("ports", "Port consolidation", "Review shared settings, choose a reusable profile and verify port mappings and dependencies.",
           ("Shared configuration", "Affected ports", "Proposed target", "Next step", ""), rows, counts["ports"])
     rows = []
@@ -929,23 +946,29 @@ def engineering_view(workspace, query):
             usage = r["usage"]
             from .retention_review import retention_comparison
             retention = retention_comparison(usage, keep)
-            comparison = [tr(f'<strong>{e(row["identity"])}</strong>' + ('<small>Suggested retention candidate</small>' if row["suggested"] else ""),
-                             str(row["saved_references"]), e(row["assignments"]), str(row["referencing_objects"]),
-                             str(row["shared_devices"]), str(row["different_devices"]), str(row["unknown_devices"]))
-                          for row in retention["rows"]]
-            choose_keep = '<label>Profile to retain<select data-keep>' + '<option value="">Choose a profile</option>' + "".join(f'<option value="{e(identity)}"{" selected" if identity == keep else ""}>{e(identity)}</option>' for identity in usage) + '</select></label>'
-            from .advanced_review import duplicate_migration_preview
-            preview_data = {identity: {"assignments": usage_cells(u)[0], "shared_devices": len(u["shared_devices"]), "referencing_objects": u["reference_count"], "unknown_reads": len(u["unknown_devices"])} for identity, u in usage.items()}
-            migration_plans = {identity: duplicate_migration_preview(r["module"], usage, identity, bundle=bundle) for identity in usage}
-            unresolved = r["unresolved_reference_count"]
-            detail = ('<div class="review-decision"><div><strong>Choose the canonical Library profile</strong><p>Use observed references and assignments to estimate migration work. No profile is proven safe to delete.</p></div></div>'
-                      + '<p class="note">' + e(retention["explanation"]) + '</p>'
-                      + table(("Profile", "Saved referring objects", "Assignments", "All referring objects", "Shared devices", "Different body", "Unknown reads"), comparison)
-                      + f'<div data-duplicate-preview data-usage="{e(json.dumps(preview_data))}" data-migration-plans="{e(json.dumps(migration_plans))}"><h3>Migration preview</h3>{choose_keep}<div data-migration-summary aria-live="polite">Choose a profile to preview the observed migration workload.</div></div>'
-                      + (f'<p class="note"><strong>{unresolved} unresolved reference observations in this module.</strong> Their target identities are not established; they may affect this migration.</p>' if unresolved else "")
-                      + "".join(f'<details><summary>{e(identity)} · Where it is used</summary>{usage_detail(u, root=root, snapshot=name, module=r["module"])}</details>' for identity, u in usage.items())
-                      + '<details><summary>Validation before consolidation</summary><ol><li>Choose the canonical name based on usage and naming standards.</li><li>Move assignments and references to that name.</li><li>Verify effective configuration and complete reverse references before deleting the old profile.</li></ol></details>'
-                      + raw(r))
+            if selected_group:
+                comparison = [tr(f'<strong>{e(row["identity"])}</strong>' + ('<small>Suggested retention candidate</small>' if row["suggested"] else ""),
+                                 str(row["saved_references"]), e(row["assignments"]), str(row["referencing_objects"]),
+                                 str(row["shared_devices"]), str(row["different_devices"]), str(row["unknown_devices"]))
+                              for row in retention["rows"]]
+                choose_keep = '<label>Profile to retain<select data-keep>' + '<option value="">Choose a profile</option>' + "".join(f'<option value="{e(identity)}"{" selected" if identity == keep else ""}>{e(identity)}</option>' for identity in usage) + '</select></label>'
+                from .advanced_review import duplicate_migration_preview
+                preview_data = {identity: {"assignments": usage_cells(u)[0], "shared_devices": len(u["shared_devices"]), "referencing_objects": u["reference_count"], "unknown_reads": len(u["unknown_devices"])} for identity, u in usage.items()}
+                migration_plans = {identity: duplicate_migration_preview(r["module"], usage, identity, bundle=bundle) for identity in usage}
+                unresolved = r["unresolved_reference_count"]
+                detail = ('<div class="review-decision"><div><strong>Choose the canonical Library profile</strong><p>Use observed references and assignments to estimate migration work. No profile is proven safe to delete.</p></div></div>'
+                          + '<p class="note">' + e(retention["explanation"]) + '</p>'
+                          + table(("Profile", "Saved referring objects", "Assignments", "All referring objects", "Shared devices", "Different body", "Unknown reads"), comparison)
+                          + f'<div data-duplicate-preview data-usage="{e(json.dumps(preview_data))}" data-migration-plans="{e(json.dumps(migration_plans))}"><h3>Migration preview</h3>{choose_keep}<div data-migration-summary aria-live="polite">Choose a profile to preview the observed migration workload.</div></div>'
+                          + (f'<p class="note"><strong>{unresolved} unresolved reference observations in this module.</strong> Their target identities are not established; they may affect this migration.</p>' if unresolved else "")
+                          + "".join(f'<details><summary>{e(identity)} · Where it is used</summary>{usage_detail(u, root=root, snapshot=name, module=r["module"])}</details>' for identity, u in usage.items())
+                          + '<details><summary>Validation before consolidation</summary><ol><li>Choose the canonical name based on usage and naming standards.</li><li>Move assignments and references to that name.</li><li>Verify effective configuration and complete reverse references before deleting the old profile.</li></ol></details>'
+                          + raw(r))
+                control = inspect(", ".join(r["identities"]), detail, "Plan consolidation")
+                if detail_only:
+                    return control.replace("<template>", '<template data-advisor-evidence>', 1)
+            else:
+                control = review_button("duplicates", r, ", ".join(r["identities"]), "Plan consolidation")
             # One decision per duplicate group. Keep all per-profile usage counts
             # aligned, rather than repeating the same review button for every member.
             group_usage = ('<table class="group-usage"><thead><tr>' + "".join(
@@ -955,7 +978,9 @@ def engineering_view(workspace, query):
                        *usage_cells(u)) for identity, u in usage.items()) + '</tbody></table>')
             rows.append(tr(e(module_label(r["module"])), group_usage,
                            f'<strong>{e(keep) if keep else "Manual choice"}</strong><small>{e(retention["short_reason"])}</small>',
-                           inspect(", ".join(r["identities"]), detail, "Plan consolidation")))
+                           control))
+    if detail_only:
+        raise ValueError("Finding or snapshot changed; reopen the worklist")
     panel("duplicates", "Duplicate Library profiles", "Compare observed usage for each name before choosing which profile to retain. Suggested names are based on observed migration effort, not safe deletion.",
           ("Module", "Profiles and observed usage", "Retention candidate", "Action"), rows, counts["duplicates"])
     for key, label in (("references", "Reference review"), ("resolved", "Observed references")):
@@ -1026,10 +1051,8 @@ document.addEventListener('change',event=>{
   for(const target of review.querySelectorAll('[data-port-target]'))target.textContent=event.target.value||'Not selected';
  }
 });
-document.addEventListener('click',event=>{
- if(event.target.closest('[data-inspect]'))requestAnimationFrame(()=>{
-  for(const panel of document.querySelectorAll('#workspace-inspector-body [data-duplicate-preview]'))update(panel);
- });
+document.addEventListener('workspace-inspector-loaded',()=>{
+ for(const panel of document.querySelectorAll('#workspace-inspector-body [data-duplicate-preview]'))update(panel);
 });
 })();
 """
