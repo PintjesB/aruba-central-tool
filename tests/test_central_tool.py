@@ -872,6 +872,49 @@ class Tests(unittest.TestCase):
         self.assertEqual(sum("/server-groups/" in p for p, _ in client.calls), 5)
         self.assertEqual(result["collection_only_by_module"], {"dns": 1})
 
+    def test_adaptive_device_persona_reference_requires_matching_fresh_pairs(self):
+        from aruba_central.central_tool import capture_keyed_profile_details
+        mapping = {"device-type": "SWITCH", "device-functions": ["ACCESS_SWITCH"]}
+        def fixture():
+            return {"ACCESS_SWITCH": {"modules": {"device-persona-mapping": {"scope_results": [
+                {"scope": str(i), "scope_kind": "device",
+                 "local_view": {"status": "list_parsed", "profiles": {"SWITCH": dict(mapping)}},
+                 "effective_view": {"status": "list_parsed", "profiles": {"SWITCH": dict(mapping)}}}
+                for i in range(1, 7)]}}}}
+        class Client:
+            def __init__(self, differs=False):
+                self.calls = []
+                self.differs = differs
+            def get(self, path, **params):
+                self.calls.append((params["scope-id"], params["effective"]))
+                return {**mapping, **({"additional-field": True} if self.differs and params["effective"] == "false" else {})}
+        for adaptive, differs, expected in ((True, False, 4), (True, True, 12), (False, False, 12)):
+            client = Client(differs)
+            result = capture_keyed_profile_details(client, fixture(), {}, workers=1, adaptive=adaptive)
+            self.assertEqual(len(client.calls), expected)
+            self.assertEqual(result["candidate_reads"], 12)
+            self.assertEqual(result["actual_reads"], expected)
+            if expected == 4:
+                self.assertEqual(set(client.calls), {("1", "true"), ("1", "false"), ("6", "true"), ("6", "false")})
+                self.assertEqual(result["collection_only_by_module"], {"device-persona-mapping": 8})
+                for view in ("local", "effective"):
+                    observation = result["profiles"]["ACCESS_SWITCH"]["2"]["device-persona-mapping"]["SWITCH"][view]
+                    self.assertEqual(observation["status"], "collection_only_sampled")
+                    self.assertEqual(observation["sampling_reason"], "device_persona_reference")
+                    self.assertFalse(observation["safe_to_apply"])
+                    self.assertNotIn("profile", observation)
+        data = fixture()
+        scopes = data["ACCESS_SWITCH"]["modules"]["device-persona-mapping"]["scope_results"]
+        scopes[1]["local_view"]["profiles"]["SWITCH"]["@"] = {"aruba-annotation:object_type": "LOCAL"}
+        scopes[2]["effective_view"]["profiles"]["SWITCH"]["device-functions"] = ["CORE_SWITCH"]
+        client = Client()
+        result = capture_keyed_profile_details(client, data, {}, workers=1, adaptive=True)
+        for i in ("2", "3"):
+            self.assertIn((i, "true"), client.calls)
+            self.assertIn((i, "false"), client.calls)
+            self.assertEqual(result["profiles"]["ACCESS_SWITCH"][i]["device-persona-mapping"]["SWITCH"]["local"]["status"],
+                             "identity_observed")
+
     def test_adaptive_unfiltered_details_keep_selectors_separate_and_expand_on_difference(self):
         from aruba_central.central_tool import capture_keyed_profile_details
         profile = {"name": "service", "enable": True, "@": {
