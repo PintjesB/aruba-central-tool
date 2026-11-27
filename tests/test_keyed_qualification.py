@@ -25,6 +25,8 @@ class KeyedQualificationTests(unittest.TestCase):
         }}}
         report = keyed_qualification(bundle)
         self.assertEqual(report["schema_shapes"][0]["exact_identity_candidates"], 1)
+        self.assertTrue(any(row["level"] == "list_record" and row["field"] == "name" for row in report["schema_fields"]))
+        self.assertTrue(any(row["level"] == "envelope" and row["field"] == "other" for row in report["schema_fields"]))
         self.assertEqual({r["category"] for r in report["profile_differences"]},
                          {"order_only", "includes_non_order_difference"})
         self.assertEqual(sum(r["reads"] for r in report["profile_differences"]), 2)

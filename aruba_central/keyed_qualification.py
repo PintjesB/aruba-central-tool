@@ -2,6 +2,7 @@
 from collections import Counter
 from .central_tool import canonical
 from .coverage_diagnostics import raw_shape
+from .applicability_evidence import applicability_evidence
 
 MODULE_KEYS = {"role-gpids": "name", "roles": "name", "server-groups": "name"}
 PUBLIC_FIELDS = frozenset(("name", "servers", "type", "count-servers", "description",
@@ -39,8 +40,38 @@ def response_structure(raw, key, identity):
     return shape, records, recognized, matches
 
 
+def schema_fields(raw):
+    """Allowlisted immediate envelope and record fields, never tenant keys."""
+    allowed = PUBLIC_FIELDS | {"metadata", "@", "role", "roles", "role-gpid", "role-gpids",
+                              "role-name", "role-id", "gpid", "id", "items", "data",
+                              "count", "total", "offset", "limit", "count_objects_in_module",
+                              "ANY", "LOCAL", "SHARED"}
+    def fields(level, obj):
+        for key, value in obj.items():
+            name = key if key in allowed else "other"
+            kind = type(value).__name__
+            yield (level, name, kind if kind in TYPES else "other")
+    if not isinstance(raw, dict):
+        return
+    yield from fields("envelope", raw)
+    if isinstance(raw.get("metadata"), dict):
+        yield from fields("metadata", raw["metadata"])
+        counts = raw["metadata"].get("count_objects_in_module")
+        if isinstance(counts, dict):
+            yield from fields("object_counts", counts)
+    for key, value in raw.items():
+        if key in ("metadata", "@"):
+            continue
+        if isinstance(value, dict):
+            yield from fields("object", value)
+        elif isinstance(value, list):
+            for row in value:
+                if isinstance(row, dict):
+                    yield from fields("list_record", row)
+
+
 def keyed_qualification(bundle):
-    schemas, differences, profiles = Counter(), Counter(), Counter()
+    schemas, differences, profiles, structures = Counter(), Counter(), Counter(), Counter()
     for scopes in (bundle.get("keyed_profile_details") or {}).get("profiles", {}).values():
         for modules in scopes.values():
             for module, identities in modules.items():
@@ -52,6 +83,8 @@ def keyed_qualification(bundle):
                         if read.get("status") == "schema_unresolved":
                             shape = response_structure(read.get("raw"), MODULE_KEYS[module], str(identity))
                             schemas[(module, side, *shape)] += 1
+                            for level, field, kind in schema_fields(read.get("raw")):
+                                structures[(module, side, level, field, kind)] += 1
                         diffs = read.get("differences")
                         if read.get("status") != "identity_observed" or not isinstance(diffs, list) or not diffs:
                             continue
@@ -75,9 +108,12 @@ def keyed_qualification(bundle):
             "schema_shapes": [{"module": m, "view": v, "shape": s, "records": n,
                                "recognized_records": k, "exact_identity_candidates": x, "reads": c}
                               for (m, v, s, n, k, x), c in sorted(schemas.items())],
+            "schema_fields": [{"module": m, "view": v, "level": l, "field": f, "type": t, "occurrences": n}
+                              for (m, v, l, f, t), n in sorted(structures.items())],
             "field_differences": [{"module": m, "view": v, "field": f, "category": k,
                                    "local_type": l, "reference_type": r, "occurrences": c}
                                   for (m, v, f, k, l, r), c in sorted(differences.items())],
             "profile_differences": [{"module": m, "view": v, "category": k, "reads": c}
                                     for (m, v, k), c in sorted(profiles.items())],
+            "applicability": applicability_evidence(bundle),
             "safe_to_apply": False, "order_equivalence_qualified": False}
