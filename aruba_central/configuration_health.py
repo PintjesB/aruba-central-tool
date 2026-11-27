@@ -62,6 +62,21 @@ def health_view(workspace, query):
     if persona and persona not in bundle["results"]:
         raise ValueError("Unknown persona")
     records = configuration_health(bundle, persona=persona, group_by=grouping)
+    drill = query.get("drill", "")
+    parent_kind = query.get("parent_kind", "")
+    if drill or parent_kind:
+        if not persona or grouping != "device" or parent_kind not in ("site", "group", "collection"):
+            raise ValueError("Invalid scope drilldown")
+        groups = configuration_health(bundle, persona=persona, group_by=parent_kind)
+        selected = next((row for row in groups if
+                         (drill == "unknown" and row["membership_unknown"]) or
+                         (not row["membership_unknown"] and drill == "scope:" + str(row["scope"]))), None)
+        if selected is None:
+            raise ValueError("Unknown parent scope")
+        allowed = set(selected["device_ids"])
+        records = [row for row in records if row["scope"] in allowed]
+    else:
+        selected = None
     body = intro("Configuration health and evidence", "Review captured configuration consistency and evidence gaps by scope.", picker)
     body += f'<p><a href="{url(root, "assessment", snapshot=name)}">Return to optimization worklist</a></p>'
     body += (f'<section><form class="filter-bar" method="get" action="{e(root + "assessment")}">'
@@ -70,6 +85,9 @@ def health_view(workspace, query):
              + select("group_by", [("site", "Site"), ("group", "Device group"), ("collection", "Site collection"), ("device", "Device")], grouping, "Group by")
              + '<button type="submit">Review evidence</button></form>'
              '<p class="note">Counts are observations within captured modules, not a health score or proof of compliance. A local copy matching Global is not a safe removal. Missing reads and unknown memberships are not defects. Device/function pairs remain separate.</p></section>')
+    if selected is not None:
+        body += '<section><h2>Devices in ' + e(selected["name"]) + '</h2><p>Only observed members of the selected scope are shown.</p>'
+        body += f'<a href="{url(root, "assessment", snapshot=name, mode="health", persona=persona, group_by=parent_kind)}">Back to scope overview</a></section>'
     rows = []
     for row in records:
         count = row["counts"]
@@ -78,14 +96,19 @@ def health_view(workspace, query):
             params["scope"] = row["scope"]
         coverage = url(root, "report", snapshot=name, view="diagnostics", **params)
         override = url(root, "overrides", snapshot=name, persona=row["persona"], **({"device": row["scope"]} if grouping == "device" and row["scope"] else {}))
+        if grouping == "device":
+            links = f'<a href="{coverage}">Evidence</a> · <a href="{override}">Overrides</a>'
+        else:
+            target = "unknown" if row["membership_unknown"] else "scope:" + str(row["scope"])
+            links = f'<a href="{url(root, "assessment", snapshot=name, mode="health", persona=row["persona"], group_by="device", parent_kind=grouping, drill=target)}">Review member devices</a>'
         rows.append(tr(e(row["name"]), e(persona_label(row["persona"])), str(row["devices"]),
                        f'{count.get("qualified_modules", 0)}/{count.get("module_observations", 0)}',
                        str(count.get("expected_views", 0) - count.get("parsed_views", 0)),
                        str(count.get("parsed_views", 0) - count.get("count_confirmed_views", 0)),
                        str(count.get("source_disagreements", 0)), str(count.get("global_matches", 0)),
                        str(count.get("local_definitions", 0)),
-                       f'<a href="{coverage}">Evidence</a> · <a href="{override}">Overrides</a>'))
+                       links))
     body += '<section><h2>Scope review</h2>' + table(("Scope", "Function", "Devices", "Qualified modules", "Unparsed views", "Unconfirmed counts", "Source disagreements", "Global matches", "Local definitions", ""), rows, search=True) + '</section>'
     if grouping != "device":
-        body += '<p class="note">Evidence and override links open the function-wide worklists. Select Device grouping for exact device links.</p>'
+        body += '<p class="note">Open a scope to review its exact observed member devices. Unresolved membership is kept separate.</p>'
     return page("Configuration assessment", body, workspace.nav(name))
