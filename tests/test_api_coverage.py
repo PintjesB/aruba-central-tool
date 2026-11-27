@@ -55,6 +55,36 @@ class CoverageTests(unittest.TestCase):
         self.assertNotIn("private error", json.dumps(report))
         self.assertFalse(report["complete"])
 
+    def test_exact_complete_collection_reused_but_not_empty_or_partial(self):
+        class CountingClient:
+            def __init__(self):
+                self.calls = 0
+
+            def get(self, path, **params):
+                self.calls += 1
+                if params.get("scope-id") == "empty":
+                    return {"profiles": [], "metadata": {"total": 0}}
+                if params.get("scope-id") == "partial":
+                    return {"profiles": [{"name": "x"}], "metadata": {"total": 2}}
+                return {"profiles": [{"name": "x"}], "metadata": {"total": 1}}
+
+        path = "/network-config/v1alpha1/example"
+        spec = {"source_updated_at": "example", "get_requests": [
+            {"method": "GET", "path": path, "group": "Profiles"}]}
+        client = CountingClient()
+        tracked = ReadCoverage(client, spec)
+        first = tracked.get(path, **{"view-type": "LOCAL", "scope-id": "1"})
+        first["profiles"][0]["name"] = "modified"
+        self.assertEqual(tracked.get(path, **{"scope-id": "1", "view-type": "LOCAL"})["profiles"][0]["name"], "x")
+        for scope in ("empty", "partial"):
+            for _ in range(2):
+                tracked.get(path, **{"view-type": "LOCAL", "scope-id": scope})
+        tracked.get(path, **{"view-type": "LOCAL", "scope-id": "2"})
+        tracked.get(path, **{"view-type": "LOCAL", "scope-id": "1", "offset": 0})
+        self.assertEqual(client.calls, 7)
+        self.assertEqual(tracked.report()["exact_collection_gets_reused"], 1)
+        self.assertEqual(tracked.report()["operations"][0]["attempted"], 7)
+
     def test_parallel_counts(self):
         tracked = ReadCoverage(Client(), catalog())
         with ThreadPoolExecutor(max_workers=8) as pool:
