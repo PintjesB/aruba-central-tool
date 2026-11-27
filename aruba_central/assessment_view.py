@@ -14,7 +14,7 @@ def assessment_view(workspace, query):
         return empty
     root, name, bundle, picker = loaded
     from .consolidation import profile_recommendations
-    from .optimization_worklist import optimization_worklist
+    from .optimization_worklist import optimization_worklist, reduction_scenario
     findings = profile_recommendations(bundle)
     analysis = workspace.advanced_snapshot(bundle)
     report = assessment(bundle, findings=findings, engineering=analysis)
@@ -68,6 +68,9 @@ def assessment_view(workspace, query):
     def review_row(row):
         key = finding_key(binding, row)
         disposition = read_disposition(workspace.directory, key)
+        reduction = reduction_scenario(row)
+        reduction_label = (str(reduction["count"]) + " " + reduction["unit"] if reduction["count"] is not None else "Not estimated")
+        reduction_cell = f'<span title="{e(reduction["reason"])}">{e(reduction_label)}</span>'
         if state_filter and disposition["state"] != state_filter:
             return None
         form = (f'<form method="post" action="{e(root + "review-disposition")}">'
@@ -80,18 +83,19 @@ def assessment_view(workspace, query):
                 + '<button type="submit">Save review status</button></form>'
                 '<p class="note">Local review record only. It is not approval or change authorization. A changed snapshot requires review again.</p>')
         return tr(f'<input type="checkbox" data-bulk-key="{e(key)}" aria-label="Select {e(row["profile"])}">', e(categories[row["category"]]), f'<strong>{e(row["profile"])}</strong><small>{e(module_label(row["module"]))}</small>',
-           e(persona_label(row["persona"])), str(row["instances"]), e(row["unit"]), str(row["known"]),
+           e(persona_label(row["persona"])), str(row["instances"]), e(row["unit"]), reduction_cell, str(row["known"]),
            str(row["unknown"]) if row["unknown"] is not None else "Not assessed", e(row["next_step"]),
            e(STATES[disposition["state"]]),
            f'<a href="{url(root, row["route"], snapshot=name, **row["params"])}">Review finding</a> · ' + inspect("Review disposition", form, "Set status"))
     body += '<section><h2>Prioritized optimization worklist</h2>'
+    body += '<p>Conditional reduction counts are illustrative per proposal, exclude assignment objects, and must not be summed across overlapping proposals. Hover over a count for its assumptions. No reduction is guaranteed.</p>'
     body += '<p>Review larger groups first within each category. Counts describe observed review workload, not proven safe removals or a risk score. Recipient counts mean source recipients for local copies, observed shared deployments for Library names, and captured devices for ports. Unknown impact is not zero.</p>'
     body += (f'<form class="filter-bar" method="get" action="{e(root + "assessment")}"><input type="hidden" name="snapshot" value="{e(name)}">'
              + select("category", [("", "All categories")] + list(categories.items()), category, "Category")
              + select("state", [("", "All review statuses")] + list(STATES.items()), state_filter, "Review status")
              + '<button type="submit">Filter worklist</button></form>')
     review_rows = [review_row(row) for row in worklist if not category or row["category"] == category]
-    body += '<div id="bulk-review-table">' + table(("", "Opportunity", "Profile / configuration", "Function", "Count", "Unit", "Observed device/function pairs", "Unknown device/function pairs", "Next step", "Review status", ""),
+    body += '<div id="bulk-review-table">' + table(("", "Opportunity", "Profile / configuration", "Function", "Count", "Unit", "Conditional reduction", "Observed device/function pairs", "Unknown device/function pairs", "Next step", "Review status", ""),
                   [row for row in review_rows if row is not None], search=True) + '</div>'
     body += ('<div class="table-toolbar"><button type="button" id="bulk-select-page">Select visible page</button>'
              '<button type="button" id="bulk-clear">Clear selection</button><span id="bulk-selection" aria-live="polite">0 selected</span></div>'
