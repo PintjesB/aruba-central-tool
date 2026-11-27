@@ -254,6 +254,8 @@ def advisor_view(workspace, query):
     root, name, bundle, picker = loaded
     from .bulk_review import source_recipient_evidence, source_recipient_index
     findings = profile_recommendations(bundle)
+    if query.get("group"):
+        findings = [f for f in findings if f["id"] == query["group"]]
     # Exact deep links from the device override inspector preserve the full group.
     scope_filter, identity_filter = query.get("scope"), query.get("identity")
     if scope_filter and identity_filter:
@@ -697,6 +699,8 @@ def engineering_view(workspace, query):
     selected = query.get("workflow", "")
     if selected not in counts:
         selected = next((key for key in ("duplicates", "ports", "shadow", "references", "variants", "rules", "resolved") if counts[key]), "ports")
+    from .optimization_worklist import engineering_group_id
+    selected_group = query.get("group", "")
     panels = []
     def panel(key, label, hint, headers, rows, count):
         content = (f'<section data-panel="{key}" data-group="engineering"><p class="filter-hint">{e(hint)}</p>'
@@ -705,6 +709,8 @@ def engineering_view(workspace, query):
     rows = []
     if selected == "ports":
         for record in sorted(data["port_groups"], key=lambda r: (-len(r["ports"]), r["persona"])):
+            if selected_group and engineering_group_id("ports", record) != selected_group:
+                continue
             ports = record["ports"]
             matches = record.get("matching_library_profiles", [])
             devices = sorted({p["device"] for p in ports})
@@ -852,6 +858,8 @@ def engineering_view(workspace, query):
     rows = []
     if selected == "duplicates":
         for r in data["library_duplicates"]:
+            if selected_group and engineering_group_id("duplicates", r) != selected_group:
+                continue
             keep = r["suggested_keep"]
             usage = r["usage"]
             comparison = [tr(e(identity), *usage_cells(u),
