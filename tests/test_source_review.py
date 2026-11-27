@@ -23,3 +23,20 @@ class SourceTests(unittest.TestCase):
         self.assertIsNone(result["observed_source_scope"])
         self.assertIn("3", result["matching_direct_scopes"])
         self.assertTrue(result["blockers"])
+
+
+    def test_source_path_marks_only_qualified_winner_and_links_exact_scope(self):
+        from aruba_central.source_view import inheritance_path
+        entry = fixture(group="Office", global_="Different")
+        entry["modules"]["layer2-vlan"]["scope_results"].append({"scope": "5", "effective_view": {
+            "status": "list_parsed", "count_confirmed": True, "profiles": {"20": {"vlan": 20, "name": "Office", "@": {"aruba-annotation:inherited": True}}}}})
+        result = source_trace({"results": {"ACCESS_SWITCH": entry}}, "ACCESS_SWITCH", "5", "layer2-vlan", "20")
+        html = inheritance_path(result, "/test/", "capture.json", "ACCESS_SWITCH")
+        self.assertEqual(html.count('class="source-winner"'), 1)
+        self.assertIn("Direct definition differs", html)
+        self.assertIn("scope=4", html)
+        self.assertIn("Observed configuration precedence", html)
+        result["observed_source_scope"] = None
+        html = inheritance_path(result, "/test/", "capture.json", "ACCESS_SWITCH")
+        self.assertNotIn('class="source-winner"', html)
+        self.assertIn("No unique source is established", html)
