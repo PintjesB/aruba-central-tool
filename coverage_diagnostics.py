@@ -346,7 +346,8 @@ def diagnostics(bundle):
                    "Additional profile types", "NAC registrations", "Profile details",
                    "Profile detail expansion", "VLAN details", "Configuration health",
                    "Scope hierarchy", "Individual assignments", "NAC portal assets",
-                   "Saving snapshot"}
+                   "Saving snapshot", "Assignment coverage", "NAC configuration", "Operational VLANs",
+                   "Switch VLAN verification", "Switch VLAN features"}
     def seconds(value):
         return round(value, 1) if type(value) in (int, float) and 0 <= value <= 864000 else None
     phase_timing = [{"phase": row["phase"] if row.get("phase") in phase_names else "other",
@@ -428,13 +429,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", required=True, type=Path)
     parser.add_argument("--snapshot", help="Specific snapshot filename; default is latest")
+    parser.add_argument("--output", type=Path, help="Write JSON to a new private file instead of standard output")
     args = parser.parse_args()
+    if args.output is not None and (args.output.exists() or args.output.is_symlink()):
+        parser.error("Output already exists; choose a new filename")
     from config_app import audit_files, read_audit
     files = audit_files(args.directory)
     if not files:
         parser.error("No configuration audit snapshots found")
     result = diagnostics(read_audit(args.directory, args.snapshot or files[0].name))
-    print(json.dumps(result, indent=2, sort_keys=True))
+    if args.output is None:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        from central_tool import write_private
+        write_private(args.output, result)
+        print("Diagnostics saved to the requested file.")
 
 
 if __name__ == "__main__":
