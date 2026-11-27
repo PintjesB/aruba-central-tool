@@ -101,7 +101,76 @@ def credential_refresh(client_id, client_secret, region, *, deep_catalog=False, 
             client.client_id = None
             client.client_secret = None
             client.token = None
+    run.collection_strategy = "targeted" if targeted_catalog else "deep" if deep_catalog else "standard"
+    run.exhaustive_details = exhaustive_details
+    run.resumed = resume
     return run
+
+
+# Phases are ordered, but some are conditional. A phase position is not a
+# percentage of work: the duration of individual phases varies considerably.
+AUDIT_PHASES = (
+    "Connection", "Discovery", "Assignment coverage", "Configuration scopes",
+    "Library", "Additional profile types", "NAC configuration", "NAC registrations",
+    "NAC portal assets", "Configuration health", "Profile details",
+    "Profile detail expansion", "Scope hierarchy", "Individual assignments",
+    "VLAN details", "Operational VLANs", "Switch VLAN verification",
+    "Switch VLAN features", "Saving snapshot",
+)
+DEEP_ONLY_PHASES = {"NAC portal assets", "Profile details", "Profile detail expansion",
+                    "Scope hierarchy", "Individual assignments"}
+
+
+def historical_phase_times(directory, strategy, exhaustive=False):
+    """Use a completed comparable fresh capture in this workspace, if available."""
+    if strategy not in ("standard", "deep", "targeted"):
+        return {}
+    files = audit_files(directory)
+    if not files:
+        return {}
+    try:
+        previous = read_audit(directory, files[0].name)
+        if (previous.get("collection_strategy") != strategy
+                or previous.get("collection_checkpoint", {}).get("mixed_capture_times")
+                or (strategy != "standard" and
+                    ((previous.get("keyed_profile_details") or {}).get("detail_strategy")
+                     != ("exhaustive" if exhaustive else "adaptive")))):
+            return {}
+        times = {}
+        for row in (previous.get("collection_timing") or {}).get("phases", []):
+            phase, seconds = row.get("phase"), row.get("seconds")
+            if phase in AUDIT_PHASES and type(seconds) in (float, int) and 0 <= seconds <= 864000:
+                times[phase] = times.get(phase, 0) + seconds
+        required = {"Configuration scopes", "Additional profile types"}
+        if strategy != "standard":
+            required.add("Profile details")
+        return times if required <= times.keys() and sum(times.values()) > 0 else {}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return {}
+
+
+def overall_audit_progress(phase, strategy, history, elapsed, phase_elapsed, done, total, phase_eta):
+    phases = [p for p in AUDIT_PHASES if strategy != "standard" or p not in DEEP_ONLY_PHASES]
+    position = phases.index(phase) if phase in phases else None
+    result = {"stage": position + 1 if position is not None else None,
+              "stages": len(phases), "overall_percent": None, "overall_eta_seconds": None,
+              "estimate_basis": None}
+    if position is None or not history or phase not in history:
+        return result
+    # Use observed throughput in the active phase where available, not its
+    # historical duration. Later phases are estimated from the prior capture.
+    remaining_here = (phase_eta if phase_eta is not None else
+                      0 if total > 0 and done >= total else
+                      max(0, history[phase] - phase_elapsed))
+    future = sum(history.get(p, 0) for p in phases[position + 1:])
+    remaining = remaining_here + future
+    if phase != "Saving snapshot":
+        remaining = max(1, remaining)
+    if elapsed + remaining > 0:
+        result.update(overall_percent=min(99.0, round(100 * elapsed / (elapsed + remaining), 1)),
+                      overall_eta_seconds=round(remaining),
+                      estimate_basis="Previous comparable capture and current phase progress")
+    return result
 
 
 def library_profile_comparison(bundle, module):
@@ -230,6 +299,8 @@ class Workspace:
         self.phase_history = []
         self.finished = None
         self.snapshot = None
+        self.collection_strategy = None
+        self.historical_times = {}
 
     def update_progress(self, phase, done, total, detail):
         with self.lock:
@@ -257,7 +328,11 @@ class Workspace:
             rate = completed / phase_elapsed if phase_elapsed > 0 and completed > 0 else None
             eta = round((self.total - self.done) / rate) if (self.state == "running" and rate
                     and completed >= 10 and phase_elapsed >= 10 and self.total > self.done) else None
-            return {"phase_elapsed": int(phase_elapsed), "phase_items_per_second": round(rate, 2) if rate else None,
+            overall = overall_audit_progress(self.phase, self.collection_strategy, self.historical_times,
+                                             elapsed, phase_elapsed, self.done, self.total, eta)
+            if self.state == "complete":
+                overall.update(overall_percent=100, overall_eta_seconds=0)
+            return {**overall, "phase_elapsed": int(phase_elapsed), "phase_items_per_second": round(rate, 2) if rate else None,
                     "phase_eta_seconds": eta, "phase_history": list(self.phase_history),
                     "state": "failed" if self.state.startswith("failed") else self.state,
                     "message": self.state, "phase": self.phase, "detail": self.detail,
@@ -279,9 +354,16 @@ class Workspace:
             self.phase_history = []
             self.finished = None
             self.snapshot = None
+            self.collection_strategy = getattr(refresh, "collection_strategy", None)
+            self.historical_times = {}
         def run():
             try:
                 from central_tool import write_private
+                if not getattr(refresh, "resumed", False):
+                    times = historical_phase_times(self.directory, self.collection_strategy,
+                                                   getattr(refresh, "exhaustive_details", False))
+                    with self.lock:
+                        self.historical_times = times
                 bundle = refresh(progress=self.update_progress)
                 verify_workspace_identity(self.directory, bundle)
                 self.update_progress("Saving snapshot", 0, 0, "Publishing the completed audit")
@@ -401,6 +483,10 @@ class Workspace:
         progress_html = (
             f'<div class="audit-state" id="audit-state" data-state="{e(state)}" data-status-url="{root}status">'
             f'<h3 id="audit-title" role="status">{e(title)}</h3>'
+            '<div id="audit-overall" hidden><h4>Overall audit progress</h4>'
+            '<progress id="audit-overall-progress" max="100"></progress>'
+            '<p id="audit-overall-count"></p><p id="audit-overall-estimate" class="muted"></p></div>'
+            '<h4>Current phase</h4>'
             f'<p id="audit-detail">{e(status["phase"])} {e(status["detail"])}</p>'
             f'<progress id="audit-progress" max="{max(1, status["total"])}"'
             + (f' value="{status["done"]}"' if status["total"] else "")
@@ -417,6 +503,10 @@ const bar=document.getElementById('audit-progress');
 const count=document.getElementById('audit-count');
 const rate=document.getElementById('audit-rate');
 const history=document.getElementById('audit-phases');
+const overall=document.getElementById('audit-overall');
+const overallBar=document.getElementById('audit-overall-progress');
+const overallCount=document.getElementById('audit-overall-count');
+const overallEstimate=document.getElementById('audit-overall-estimate');
 function duration(seconds){
   const s=Math.max(0,Math.round(seconds));
   return (s>=3600?Math.floor(s/3600)+'h ':'')+(s>=60?Math.floor((s%3600)/60)+'m ':'')+(s%60)+'s';
@@ -438,6 +528,17 @@ async function poll(){
     if(state.state!=='running'){location.reload();return;}
     title.textContent='Audit in progress';
     detail.textContent=[state.phase,state.detail].filter(Boolean).join(' · ');
+    overall.hidden=false;
+    if(state.overall_percent!==null){
+      overallBar.value=state.overall_percent;
+      overallCount.textContent='Approximately '+state.overall_percent.toFixed(1)+'% · '+duration(state.elapsed)+' elapsed · '+duration(state.overall_eta_seconds)+' remaining';
+      overallEstimate.textContent=state.estimate_basis+'. Conditional phases and changing API latency may alter the estimate.';
+    }else{
+      overallBar.removeAttribute('value');
+      overallCount.textContent=duration(state.elapsed)+' elapsed';
+      overallEstimate.textContent='Overall time estimate unavailable until a comparable completed capture is available. Current phase progress is shown below.';
+    }
+    if(state.stage!==null)overallEstimate.textContent+=' · Stage '+state.stage+' of '+state.stages+' (some stages are conditional)';
     bar.hidden=false;
     if(state.total>0){bar.max=state.total;bar.value=state.done;}
     else{bar.removeAttribute('value');}
