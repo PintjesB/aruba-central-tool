@@ -507,6 +507,110 @@ def change_audit_probe(client, previous, *, now=None):
     return result
 
 
+def change_window_probe(client, previous, *, now=None):
+    """Check a fixed seven-day interval using overlapping daily windows.
+
+    Nine requests at most, excluding workspace continuity and transport retries.
+    No offset-based page traversal. Only anonymous counters leave this function.
+    Even exact reconciliation cannot establish coverage of all config changes.
+    """
+    from datetime import datetime, timedelta, timezone
+    from central_tool import canonical
+    qualified_scopes(client, previous)
+    end = (now or datetime.now(timezone.utc)) - timedelta(minutes=5)
+    end = end.replace(microsecond=0)
+    start = end - timedelta(days=7)
+    def stamp(value):
+        return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+    def fetch(lo, hi):
+        try:
+            raw = client.get(AUDIT_LOG_PATH, **{"start-at": stamp(lo), "end-at": stamp(hi),
+                                               "limit": 1000, "offset": 1})
+        except APIError as exc:
+            if exc.status in (401, 429):
+                raise
+            return {"status": "request_rejected", "http_error": exc.status}, {}
+        except (RuntimeError, OSError, ValueError):
+            return {"status": "read_failed"}, {}
+        if not isinstance(raw, dict) or not isinstance(raw.get("items"), list):
+            return {"status": "schema_unresolved"}, {}
+        rows = raw["items"]
+        total = raw.get("total")
+        count = raw.get("count")
+        offset = raw.get("offset")
+        metadata_ok = (type(total) is int and total >= len(rows)
+                       and type(count) is int and count == len(rows)
+                       and type(offset) is int and offset == 1
+                       and len(rows) <= 1000)
+        observed, invalid, duplicates, outside, conflicts, impact = {}, 0, 0, 0, 0, 0
+        for row in rows:
+            if not isinstance(row, dict):
+                invalid += 1
+                continue
+            event_id, when = row.get("id"), row.get("occurredOn")
+            if type(event_id) not in (str, int) or not str(event_id).strip() or not isinstance(when, str):
+                invalid += 1
+                continue
+            try:
+                instant = datetime.fromisoformat(when.replace("Z", "+00:00"))
+                if instant.tzinfo is None:
+                    raise ValueError("timestamp has no timezone")
+                if not lo <= instant <= hi:
+                    outside += 1
+            except (ValueError, OverflowError):
+                invalid += 1
+                continue
+            details = row.get("logDetails")
+            if isinstance(details, dict) and details.get("impactRadius"):
+                impact += 1
+            key = str(event_id)
+            signature = canonical(row)
+            if key in observed:
+                duplicates += 1
+                conflicts += observed[key] != signature
+            observed[key] = signature
+        qualified = metadata_ok and not (invalid or duplicates or outside or conflicts)
+        return {"status": "response_received", "records": len(rows),
+                "declared_total": total if type(total) is int and total >= 0 else None,
+                "metadata_consistent": metadata_ok, "invalid_records": invalid,
+                "duplicate_ids": duplicates, "conflicting_ids": conflicts,
+                "outside_window": outside, "impact_radius_present": impact,
+                "complete_window": bool(qualified and total == len(rows)),
+                "valid_page": bool(qualified)}, observed
+
+    broad, initial = fetch(start, end)
+    windows, combined = [], {}
+    overlaps = conflicts = 0
+    for day in range(7):
+        lo = start + timedelta(days=day)
+        if day:
+            lo -= timedelta(seconds=1)
+        hi = start + timedelta(days=day + 1)
+        summary, events = fetch(lo, hi)
+        windows.append({"window_index": day + 1, **summary})
+        for key, signature in events.items():
+            if key in combined:
+                overlaps += 1
+                conflicts += combined[key] != signature
+            combined[key] = signature
+    repeated, final = fetch(start, end)
+    stable = (broad.get("valid_page") is True and repeated.get("valid_page") is True
+              and broad.get("declared_total") == repeated.get("declared_total")
+              and initial == final)
+    broad_matches = all(combined.get(key) == signature for key, signature in initial.items())
+    reconciled = (stable and all(w.get("complete_window") for w in windows)
+                  and not conflicts and broad_matches
+                  and broad.get("declared_total") == len(combined))
+    return {"schema": 1, "kind": "anonymous_change_window_probe", "window_days": 7,
+            "page_limit": 1000, "broad_read": broad, "daily_windows": windows,
+            "repeated_broad_read": repeated, "broad_read_stable": stable,
+            "unique_daily_events": len(combined), "overlapping_events": overlaps,
+            "conflicting_events": conflicts, "broad_records_match_daily": broad_matches,
+            "window_counts_reconciled": bool(reconciled), "complete": False,
+            "safe_to_apply": False, "incremental_reuse_qualified": False}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, required=True)
@@ -517,6 +621,7 @@ def main():
     modes.add_argument("--specialized", action="store_true", help="Bounded probe of management-server, custom-get-api, failed hierarchy scopes, assignment identities and portal assets")
     modes.add_argument("--performance", action="store_true", help="Bounded selector and page-size qualification")
     modes.add_argument("--change-audit", action="store_true", help="Bounded tenant audit-log capability qualification")
+    modes.add_argument("--change-windows", action="store_true", help="Reconcile audit logs across overlapping daily windows")
     parser.add_argument("--output", type=Path, help="Write JSON to a new private file instead of standard output")
     args = parser.parse_args()
     if args.output is not None and (args.output.exists() or args.output.is_symlink()):
@@ -534,7 +639,9 @@ def main():
             client_id = client_id or getpass.getpass("Central client ID: ")
             secret = secret or getpass.getpass("Central client secret: ")
         client = Central(previous["region"], token, client_id, secret)
-        if args.change_audit:
+        if args.change_windows:
+            report = change_window_probe(client, previous)
+        elif args.change_audit:
             report = change_audit_probe(client, previous)
         elif args.performance:
             report = performance_probe(client, previous, args.sample)
