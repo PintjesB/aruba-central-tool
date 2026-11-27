@@ -1535,10 +1535,12 @@ def read_module_view(client, module, identity, params, *, paginate_uncounted=Fal
     try:
         raw = client.get(ALPHA + "/" + module, **params)
     except APIError as exc:
-        if exc.status not in (400, 403, 404, 405, 406, 412, 422):
+        if exc.status in (401, 429):
             raise
-        return {"status": "permission_denied" if exc.status == 403 else "request_rejected",
-                "http_error": exc.status, "profiles": {}}
+        status = "permission_denied" if exc.status == 403 else "read_failed" if exc.status >= 500 else "request_rejected"
+        return {"status": status, "http_error": exc.status, "profiles": {}, "count_confirmed": False}
+    except (RuntimeError, OSError, ValueError):
+        return {"status": "read_failed", "profiles": {}, "count_confirmed": False}
     object_type = params.get("object-type", "ANY")
     parsed = module_view(raw, identity, object_type)
     if paginate_uncounted and parsed["status"] == "list_parsed" and not parsed.get("count_confirmed"):
@@ -1570,7 +1572,7 @@ def read_module_view(client, module, identity, params, *, paginate_uncounted=Fal
         try:
             page = client.get(ALPHA + "/" + module, **params, limit=100, offset=len(items))
         except APIError as exc:
-            if exc.status == 401:
+            if exc.status in (401, 429):
                 raise
             return {**incomplete("request_failed"), "http_error": exc.status}
         except (RuntimeError, OSError, ValueError):
@@ -1630,6 +1632,19 @@ def profile_inventory_view(client, endpoint, envelope, *, paginate_uncounted=Fal
         records = rows(read["raw"], (envelope,))
     except ValueError:
         return {**read, "status": "schema_unresolved", "rows": []}
+    # Incomplete pagination may still yield additional positive identities.
+    # Keep original evidence and deduplicate exact observed records; never
+    # turn a partial or contradictory page sequence into a confirmed count.
+    if read.get("status") == "partial_response":
+        observed = {canonical(row): row for row in records}
+        for page in read.get("raw_pages", []):
+            try:
+                batch = rows(page, (envelope,))
+            except ValueError:
+                continue
+            for row in batch:
+                observed.setdefault(canonical(row), row)
+        records = list(observed.values())
     return {**read, "rows": records}
 
 
@@ -1650,16 +1665,18 @@ def collect_scoped_assignments(client, initial, scopes_by_persona, workers=1, pr
             records = result.pop("rows")
             if result["status"] not in ("response_received", "partial_response", "count_mismatch"):
                 return task, result, []
-            raw = result["raw"]
-            if any(str(r.get("scope-id")) != sid or r.get("device-function") != persona
-                   or not isinstance(r.get("profile-type"), str)
-                   or type(r.get("profile-instance")) not in (str, int) for r in records):
-                return task, {**result, "status": "selector_mismatch"}, []
-            # A truncated response can still prove that a returned assignment
-            # exists. It cannot establish that another assignment is absent.
-            return task, result, records
+            accepted = [r for r in records if str(r.get("scope-id")) == sid
+                        and r.get("device-function") == persona
+                        and isinstance(r.get("profile-type"), str)
+                        and type(r.get("profile-instance")) in (str, int)]
+            if len(accepted) != len(records):
+                result = {**result, "status": "selector_mismatch",
+                          "rejected_rows": len(records) - len(accepted)}
+            # Retain only positive observations with exact scope/function
+            # matches. A mixed response cannot establish absence.
+            return task, result, accepted
         except APIError as exc:
-            if exc.status == 401:
+            if exc.status in (401, 429):
                 raise
             return task, {"status": "request_rejected", "http_error": exc.status}, []
         except (RuntimeError, OSError, ValueError):
@@ -1921,9 +1938,12 @@ def read_raw_profile_collection(client, module, params, *, paginate_uncounted=Fa
     try:
         raw = client.get(ALPHA + "/" + module, **params)
     except APIError as exc:
-        if exc.status not in (400, 403, 404, 405, 406, 410, 412, 422):
+        if exc.status in (401, 429):
             raise
-        return {"status": "request_rejected", "http_error": exc.status}
+        return {"status": "read_failed" if exc.status >= 500 else "request_rejected",
+                "http_error": exc.status, "collection_count_verified": False}
+    except (RuntimeError, OSError, ValueError):
+        return {"status": "read_failed", "collection_count_verified": False}
     result = {"status": "response_received" if raw else "empty_response", "raw": raw,
               "collection_count_verified": False}
     if not isinstance(raw, dict):
@@ -1965,7 +1985,7 @@ def read_raw_profile_collection(client, module, params, *, paginate_uncounted=Fa
         try:
             page = client.get(ALPHA + "/" + module, **params, limit=100, offset=len(combined))
         except APIError as exc:
-            if exc.status == 401:
+            if exc.status in (401, 429):
                 raise
             return {**incomplete("request_failed"), "http_error": exc.status}
         except (RuntimeError, OSError, ValueError):
