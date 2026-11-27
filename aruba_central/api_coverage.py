@@ -36,7 +36,7 @@ class ReadCoverage:
         self.prefix_lengths = defaultdict(set)
         for path in self.operations.keys() - self.exact:
             parts = path.split("/")
-            prefix_length = next(i for i, part in enumerate(parts) if part.startswith(":"))
+            prefix_length = next((i for i, part in enumerate(parts) if part.startswith(":")), len(parts))
             prefix = tuple(parts[:prefix_length])
             pattern = "/".join("[^/]+" if part.startswith(":") else re.escape(part) for part in parts)
             score = sum(not part.startswith(":") for part in parts)
