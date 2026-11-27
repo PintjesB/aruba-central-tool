@@ -373,6 +373,12 @@ def diagnostics(bundle):
                                    for row in sorted((r for r in operations if "elapsed_ms_sum" in r),
                                                      key=lambda r: (-r["elapsed_ms_sum"], r["path"]))[:20]],
             "exact_collection_gets_reused": count((bundle.get("api_read_coverage") or {}).get("exact_collection_gets_reused")),
+            "exact_counted_empty_gets_reused": count((bundle.get("api_read_coverage") or {}).get("exact_counted_empty_gets_reused")),
+            "duplicate_config_get_attempts": [
+                {"path": row["path"], "duplicates": count(row.get("duplicates"))}
+                for row in (bundle.get("api_read_coverage") or {}).get("duplicate_config_get_attempts", [])
+                if row.get("path") in paths],
+            "duplicate_accounting_truncated": (bundle.get("api_read_coverage") or {}).get("duplicate_accounting_truncated") is True,
             "supplemental_exact_reuse": [
                 {"module": module, "scope_views": sum(
                     read.get("reused_exact_collection") is True
