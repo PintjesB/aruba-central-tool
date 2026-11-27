@@ -114,7 +114,9 @@ class LiveProbeTests(unittest.TestCase):
         rows = [{"scope-id": "12345", "device-function": "ACCESS_SWITCH",
                  "profile-type": "dns", "profile-instance": "PRIVATE-" + str(i)}
                 for i in range(5)]
-        previous = {"library": {"assignments": {"rows": rows}},
+        previous = {"library": {"assignments": {"rows": rows + [{**rows[0], "profile-instance": "private/invalid"}]}},
+                    "keyed_assignment_details": {"records": [{"selector": rows[0], "raw": {
+                        "scope-id": 12345, "persona": "ACCESS_SWITCH", "resource": "dns/PRIVATE-0"}}]},
                     "scope_hierarchy_evidence": {"records": [
                         {"scope": "23456", "kind": "device", "status": "request_rejected"},
                         {"scope": "45678", "kind": "device", "status": "request_rejected"}]}}
@@ -131,6 +133,8 @@ class LiveProbeTests(unittest.TestCase):
         self.assertTrue(all(c["http_error"] == 400 for c in result["collections"]))
         self.assertEqual(hierarchy.call_args.args[1], {"sample": [{"id": "23456", "kind": "device"}]})
         self.assertEqual(assignments.call_args.args[1]["rows"], rows[:2])
+        self.assertEqual(result["assignments"]["retained_legacy_identity_matches"], {"identity_observed": 1})
+        self.assertEqual(result["assignments"]["selector_rejection_reasons"], {"unqualified_slash_instance": 1})
         self.assertEqual(assets.call_args.kwargs, {"detail_limit": 2})
         self.assertFalse(result["complete"])
         self.assertFalse(result["safe_to_apply"])
