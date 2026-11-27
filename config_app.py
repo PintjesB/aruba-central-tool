@@ -438,6 +438,16 @@ if(panel.dataset.state==='running')poll();
             return page("Profile evidence", "<p>No captured evidence for this profile type. Collect a fresh audit.</p>", self.nav(name))
         def link(**params):
             return e(root + "unadapted?" + urlencode({"snapshot": name, "module": module, **params}))
+        def individual(persona, scope):
+            from workspace_views import keyed_profile_evidence
+            records = ((bundle.get("keyed_profile_details") or {}).get("profiles", {})
+                       .get(persona, {}).get(str(scope), {}).get(module, {}))
+            if not records:
+                return ""
+            return '<section><h3>Individual profile evidence</h3>' + "".join(
+                '<details><summary>' + e(identity) + '</summary>' +
+                keyed_profile_evidence(bundle, persona, scope, module, identity) + '</details>'
+                for identity in sorted(records)) + '</section>'
         def settings(read):
             payload = read.get("raw")
             if isinstance(payload, dict):
@@ -477,12 +487,14 @@ if(panel.dataset.state==='running')poll();
                         body += property_table(item["settings"])
             body += '<h3>Committed configuration</h3>' + settings(view["committed"])
             body += '<h3>Effective configuration</h3>' + settings(view["effective"]) + '</section>'
+            body += individual(selected_persona, selected_scope)
         else:
             library = evidence["library"]
             body += '<section><h2>Library</h2>'
             if evidence.get("singleton_library", {}).get("settings") is not None:
                 body += property_table(evidence["singleton_library"]["settings"])
             body += settings(library) + '</section>'
+            body += individual("Library", "")
             views = evidence["source_views"]
             if identities:
                 body += '<section><h2>Identity evidence</h2>' + table(("Device function", "Identity field", "Comparable observed source scopes"),
