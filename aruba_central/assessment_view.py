@@ -1,5 +1,5 @@
 """Customer assessment with linked review queues and private JSON report."""
-from .workspace_ui import e, page, intro, metrics, table, tr, module_label, persona_label
+from .workspace_ui import e, page, intro, metrics, table, tr, module_label, persona_label, badge
 from .workspace_views import load, url
 from .history_view import private_export
 
@@ -30,8 +30,10 @@ def assessment_view(workspace, query):
     parsed = coverage.get("parsed", 0)
     confirmed = coverage.get("count_confirmed", 0)
     body = intro("Configuration assessment", "Prioritize the observed optimization opportunities and evidence gaps in this capture.", picker)
-    body += f'<p><a class="button" href="{url(root, "assessment", snapshot=name, mode="health")}">Review health by site, group or device</a></p>'
-    body += f'<p><a class="button" href="{url(root, "assessment", snapshot=name, mode="history")}">Compare optimization workload across snapshots</a></p>'
+    body += '<nav class="assessment-nav" aria-label="Assessment views">' + " ".join(
+        f'<a class="button" href="{url(root, "assessment", snapshot=name, mode=mode)}">{e(label)}</a>'
+        for mode, label in (("health", "Scope health"), ("keyed", "Individual API evidence"),
+                            ("history", "Workload history"), ("customer-report", "Customer report"))) + '</nav>'
     body += metrics([("Device/function pairs", report["device_function_pairs"], "Captured inventory"),
                      ("Parsed scope views", f"{parsed}/{expected}", "Saved and effective reads"),
                      ("Count-confirmed views", f"{confirmed}/{expected}", "Not complete API coverage"),
@@ -68,15 +70,18 @@ def assessment_view(workspace, query):
     from .workspace_views import select
     from .workspace_ui import inspect
     from .review_dispositions import STATES, snapshot_binding, finding_key, read_disposition
+    from .assessment_overview import review_overview, overview_panel
     binding = snapshot_binding(workspace, name, bundle)
     state_filter = query.get("state", "")
     if state_filter and state_filter not in STATES:
         raise ValueError("Unknown review state")
     return_fields = (f'<input type="hidden" name="return_category" value="{e(category)}">'
                      f'<input type="hidden" name="return_state" value="{e(state_filter)}">')
-    def review_row(row):
-        key = finding_key(binding, row)
-        disposition = read_disposition(workspace.directory, key)
+    records = [(row, finding_key(binding, row)) for row in worklist]
+    records = [(row, key, read_disposition(workspace.directory, key)) for row, key in records]
+    overview = review_overview(records)
+    body += overview_panel(root, name, overview, categories, STATES, category, state_filter)
+    def review_row(row, key, disposition):
         reduction = reduction_scenario(row)
         reduction_label = (str(reduction["count"]) + " " + reduction["unit"] if reduction["count"] is not None else "Not estimated")
         reduction_cell = f'<span title="{e(reduction["reason"])}">{e(reduction_label)}</span>'
@@ -95,16 +100,18 @@ def assessment_view(workspace, query):
         return tr(f'<input type="checkbox" data-bulk-key="{e(key)}" aria-label="Select {e(row["profile"])}">', e(categories[row["category"]]), f'<strong>{e(row["profile"])}</strong><small>{e(module_label(row["module"]))}</small>',
            e(persona_label(row["persona"])), str(row["instances"]), e(row["unit"]), reduction_cell, str(row["known"]),
            str(row["unknown"]) if row["unknown"] is not None else "Not assessed", e(row["next_step"]),
-           e(STATES[disposition["state"]]),
+           badge(STATES[disposition["state"]], "warn" if disposition["state"] == "investigate" else "info" if disposition["state"] == "deferred" else "neutral") + (f'<small class="review-note-preview">{e(disposition["note"])}</small>' if disposition["note"] else ""),
            f'<a href="{url(root, row["route"], snapshot=name, **row["params"])}">Review finding</a> · ' + inspect("Review disposition", form, "Set status"))
-    body += '<section><h2>Prioritized optimization worklist</h2>'
+    body += '<section id="optimization-worklist"><h2>Prioritized optimization worklist</h2>'
     body += '<p>Conditional reduction counts are illustrative per proposal, exclude assignment objects, and must not be summed across overlapping proposals. Hover over a count for its assumptions. No reduction is guaranteed.</p>'
     body += '<p>Review larger groups first within each category. Counts describe observed review workload, not proven safe removals or a risk score. Recipient counts mean source recipients for local copies, observed shared deployments for Library names, and captured devices for ports. Unknown impact is not zero.</p>'
     body += (f'<form class="filter-bar" method="get" action="{e(root + "assessment")}"><input type="hidden" name="snapshot" value="{e(name)}">'
              + select("category", [("", "All categories")] + list(categories.items()), category, "Category")
              + select("state", [("", "All review statuses")] + list(STATES.items()), state_filter, "Review status")
              + '<button type="submit">Filter worklist</button></form>')
-    review_rows = [review_row(row) for row in worklist if not category or row["category"] == category]
+    review_rows = [review_row(row, key, disposition) for row, key, disposition in records if not category or row["category"] == category]
+    visible_count = sum(row is not None for row in review_rows)
+    body += f'<p class="filter-hint"><strong>{visible_count}</strong> findings in this worklist · {overview["total"]} total review groups.</p>'
     body += '<div id="bulk-review-table">' + table(("", "Opportunity", "Profile / configuration", "Function", "Count", "Unit", "Conditional reduction", "Observed device/function pairs", "Unknown device/function pairs", "Next step", "Review status", ""),
                   [row for row in review_rows if row is not None], search=True) + '</div>'
     body += ('<div class="table-toolbar"><button type="button" id="bulk-select-page">Select visible page</button>'
@@ -130,7 +137,8 @@ def assessment_view(workspace, query):
         body += "<p>" + e(str(reused)) + " checkpoint observations reused (scope pairs and additional reads). " + ("Mixed-time evidence; not valid for remediation verification." if checkpoint.get("mixed_capture_times") else "No earlier observations reused.") + "</p>"
     body += f'<p><a class="button" href="{url(root, "assessment", snapshot=name, mode="customer-report")}">Open customer assessment report</a></p>'
     body += private_export("configuration-assessment", {"snapshot": name, "assessment": report}) + '</section>'
-    return page("Configuration assessment", body, workspace.nav(name))
+    from .assessment_overview import OVERVIEW_CSS
+    return page("Configuration assessment", body, workspace.nav(name), extra_css=OVERVIEW_CSS)
 
 
 BULK_REVIEW_JS = r"""
