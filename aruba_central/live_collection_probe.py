@@ -507,10 +507,67 @@ def change_audit_probe(client, previous, *, now=None):
     return result
 
 
+def audit_detail_samples(client, combined):
+    """Sample diverse observed audit IDs, exporting only aggregate evidence."""
+    import uuid
+    def audit_uuid(value):
+        if not isinstance(value, str):
+            return None
+        try:
+            return str(uuid.UUID(value)) if len(value) == 36 else None
+        except ValueError:
+            return None
+    candidates = {}
+    for signature in combined.values():
+        row = json.loads(signature)
+        key = audit_uuid(row.get("auditId"))
+        if not key:
+            continue
+        detail = row.get("logDetails")
+        impact = isinstance(detail, dict) and bool(detail.get("impactRadius"))
+        # Diversity in categories and action, but never export those values.
+        group = (str(row.get("category")), str(row.get("subCategory")), str(row.get("action")))
+        candidates.setdefault((impact, group), key)
+    selected = []
+    for impact in (True, False):
+        keys = sorted({key for (has_impact, _), key in candidates.items() if has_impact == impact})
+        selected.extend(key for key in keys if key not in selected and
+                        len([v for v in selected if v in keys]) < 3)
+    outcomes = Counter()
+    fields = Counter()
+    for key in selected[:6]:
+        try:
+            raw = client.get(AUDIT_LOG_PATH + "/" + key)
+        except APIError as exc:
+            if exc.status in (401, 429):
+                raise
+            outcomes["http_" + str(exc.status)] += 1
+            continue
+        except (RuntimeError, OSError, ValueError):
+            outcomes["read_failed"] += 1
+            continue
+        if not isinstance(raw, dict) or key not in (audit_uuid(raw.get("auditId")), audit_uuid(raw.get("id"))):
+            outcomes["identity_unqualified"] += 1
+            continue
+        outcomes["identity_observed"] += 1
+        scope = raw.get("scopeInfo")
+        detail = raw.get("logDetails")
+        if isinstance(scope, dict) and isinstance(scope.get("scopeIds"), list) and scope["scopeIds"]:
+            fields["scope_ids_present"] += 1
+        if isinstance(detail, dict):
+            for name, field in (("impact_radius_present", "impactRadius"),
+                                ("changed_fields_present", "changedFields"),
+                                ("changed_json_present", "changedJson")):
+                if detail.get(field):
+                    fields[name] += 1
+    return {"attempted": min(6, len(selected)), "outcomes": dict(outcomes),
+            "field_presence": dict(fields), "complete": False}
+
+
 def change_window_probe(client, previous, *, now=None):
     """Check a fixed seven-day interval using overlapping daily windows.
 
-    Nine requests at most, excluding workspace continuity and transport retries.
+    Nine list requests and up to six individual audit reads, excluding workspace continuity and retries.
     No offset-based page traversal. Only anonymous counters leave this function.
     Even exact reconciliation cannot establish coverage of all config changes.
     """
@@ -539,8 +596,15 @@ def change_window_probe(client, previous, *, now=None):
         total = raw.get("total")
         count = raw.get("count")
         offset = raw.get("offset")
+        # The API may echo the requested page size as count, even for a
+        # short page. Never use count as evidence of the number of events.
+        # A complete window still requires total == actual unique rows and
+        # independent reconciliation with a stable broader read.
+        count_kind = ("returned_records" if type(count) is int and count == len(rows)
+                      else "requested_limit" if type(count) is int and count == 1000
+                      else "unqualified")
         metadata_ok = (type(total) is int and total >= len(rows)
-                       and type(count) is int and count == len(rows)
+                       and count_kind != "unqualified"
                        and type(offset) is int and offset == 1
                        and len(rows) <= 1000)
         observed, invalid, duplicates, outside, conflicts, impact = {}, 0, 0, 0, 0, 0
@@ -573,7 +637,10 @@ def change_window_probe(client, previous, *, now=None):
         qualified = metadata_ok and not (invalid or duplicates or outside or conflicts)
         return {"status": "response_received", "records": len(rows),
                 "declared_total": total if type(total) is int and total >= 0 else None,
-                "metadata_consistent": metadata_ok, "invalid_records": invalid,
+                "metadata_consistent": metadata_ok, "count_interpretation": count_kind,
+                "reported_count": count if type(count) is int and 0 <= count <= 1000 else None,
+                "reported_offset": offset if type(offset) is int and 0 <= offset <= 1000 else None,
+                "invalid_records": invalid,
                 "duplicate_ids": duplicates, "conflicting_ids": conflicts,
                 "outside_window": outside, "impact_radius_present": impact,
                 "complete_window": bool(qualified and total == len(rows)),
@@ -602,7 +669,9 @@ def change_window_probe(client, previous, *, now=None):
     reconciled = (stable and all(w.get("complete_window") for w in windows)
                   and not conflicts and broad_matches
                   and broad.get("declared_total") == len(combined))
+    details = audit_detail_samples(client, combined)
     return {"schema": 1, "kind": "anonymous_change_window_probe", "window_days": 7,
+            "audit_detail_samples": details,
             "page_limit": 1000, "broad_read": broad, "daily_windows": windows,
             "repeated_broad_read": repeated, "broad_read_stable": stable,
             "unique_daily_events": len(combined), "overlapping_events": overlaps,

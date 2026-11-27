@@ -30,6 +30,30 @@ class LiveProbeTests(unittest.TestCase):
         self.assertFalse(report["incremental_reuse_qualified"])
         self.assertNotIn("PRIVATE", json.dumps(report))
 
+    def test_change_windows_accept_limit_echo_only_with_reconciliation(self):
+        from datetime import datetime, timezone
+        from aruba_central.live_collection_probe import change_window_probe
+        rows = [{"id": "event-one", "auditId": "12345678-1234-1234-1234-123456789abc",
+                 "occurredOn": "2026-11-21T12:00:00.000Z"}]
+        def read(path, **params):
+            if path.endswith("/12345678-1234-1234-1234-123456789abc"):
+                return {"auditId": rows[0]["auditId"], "scopeInfo": {"scopeIds": ["PRIVATE"]},
+                        "logDetails": {"changedFields": [{"value": "PRIVATE"}]}}
+            selected = [r for r in rows if params["start-at"] <= r["occurredOn"] <= params["end-at"]]
+            return {"items": selected, "total": len(selected), "count": 1000, "offset": 1}
+        client = Mock()
+        client.get.side_effect = read
+        with patch("aruba_central.live_collection_probe.qualified_scopes"):
+            result = change_window_probe(client, {}, now=datetime(2026, 11, 27, 12, tzinfo=timezone.utc))
+        self.assertTrue(result["window_counts_reconciled"])
+        self.assertTrue(all(w["count_interpretation"] == "requested_limit" for w in result["daily_windows"]))
+        self.assertEqual(result["audit_detail_samples"]["attempted"], 1)
+        self.assertEqual(result["audit_detail_samples"]["field_presence"]["scope_ids_present"], 1)
+        self.assertEqual(result["audit_detail_samples"]["field_presence"]["changed_fields_present"], 1)
+        self.assertNotIn("PRIVATE", json.dumps(result))
+        self.assertNotIn(rows[0]["auditId"], json.dumps(result))
+        self.assertFalse(result["incremental_reuse_qualified"])
+
     def test_change_window_probe_rejects_inconsistent_window_metadata(self):
         from datetime import datetime, timezone
         from aruba_central.live_collection_probe import change_window_probe
