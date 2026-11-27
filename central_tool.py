@@ -1645,6 +1645,7 @@ def collect_scoped_assignments(client, initial, scopes_by_persona, workers=1, pr
         persona, sid = task
         try:
             result = profile_inventory_view(client, "config-assignments", "config-assignment",
+                                            paginate_uncounted=paginate_uncounted,
                                             **{"scope-id": sid, "device-function": persona})
             records = result.pop("rows")
             if result["status"] not in ("response_received", "partial_response", "count_mismatch"):
