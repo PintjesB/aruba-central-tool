@@ -252,13 +252,12 @@ def operational_vlan_context(bundle, persona, sources, identity):
 
 
 def advisor_view(workspace, query):
-    from .consolidation import profile_recommendations
     loaded, empty = load(workspace, query, "Consolidation advisor", "advisor")
     if empty:
         return empty
     root, name, bundle, picker = loaded
     from .bulk_review import source_recipient_evidence, source_recipient_index
-    findings = profile_recommendations(bundle)
+    findings = [dict(f) for f in workspace.consolidation_snapshot(bundle)]
     if query.get("group"):
         findings = [f for f in findings if f["id"] == query["group"]]
     # Exact deep links from the device override inspector preserve the full group.
