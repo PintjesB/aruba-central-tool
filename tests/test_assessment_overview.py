@@ -33,3 +33,14 @@ class AssessmentOverviewTests(unittest.TestCase):
         result = review_overview([(row, "unused", {"state": "reviewed"})])
         self.assertEqual(result["states"], {"reviewed": 1})
         self.assertEqual(result["categories"]["remove_override"], {"total": 1, "reviewed": 1, "blocked": 1})
+
+
+    def test_compact_worklist_keeps_all_decision_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(fixture()))
+            html = Workspace(directory).assessment({"snapshot": name})
+            self.assertIn('class="compact-review-table"', html)
+            for label in ("Configuration count", "Device/function impact", "Conditional reduction:",
+                          "Preview blocked", "Review finding", "Set status", "How to interpret the counts"):
+                self.assertIn(label, html)
