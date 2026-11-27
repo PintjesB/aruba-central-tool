@@ -1,4 +1,5 @@
 """Review captured Library assignment recipients and conflicting scope definitions."""
+from collections import defaultdict
 from .central_tool import canonical, profile_body, field_differences
 from .consolidation import scope_memberships
 from .inheritance_review import ATOMIC
@@ -9,10 +10,21 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
     collections = library.get("modules", {})
     assignment_view = library.get("assignments") or {}
     entries = bundle["results"]
-    scopes = {p: {s["id"]: s for s in e["scopes"]} for p, e in entries.items()}
-    members = {p: scope_memberships(e["scopes"]) for p, e in entries.items()}
-    views = {p: {m: {s["scope"]: s.get("effective_view", {}) for s in d["scope_results"]}
-                 for m, d in e["modules"].items()} for p, e in entries.items()}
+    scopes, memberships, views = {}, {}, {}
+    def index_persona(persona):
+        if persona in scopes or persona not in entries:
+            return
+        entry = entries[persona]
+        scopes[persona] = {s["id"]: s for s in entry["scopes"]}
+        known, unknown = defaultdict(list), defaultdict(list)
+        for device, membership in scope_memberships(entry["scopes"]).items():
+            known["device", device].append(device)
+            for kind, ancestor in membership.items():
+                if ancestor is None:
+                    unknown[kind].append(device)
+                else:
+                    known[kind, ancestor].append(device)
+        memberships[persona] = (known, unknown)
     seen = set()
     rows = []
     invalid = []
@@ -29,41 +41,44 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
         if key in seen:
             continue
         seen.add(key)
+        index_persona(persona)
         source = scopes.get(persona, {}).get(sid)
         lib = collections.get(module, {})
         expected = lib.get("profiles", {}).get(identity) if lib.get("status") == "list_parsed" else None
         known, unknown = [], []
         if source:
             kind = source["kind"]
-            for device, membership in members[persona].items():
-                if kind == "device":
-                    if sid == device:
-                        known.append(device)
-                elif kind in membership:
-                    if membership[kind] == sid:
-                        known.append(device)
-                    elif membership[kind] is None:
-                        unknown.append(device)
+            by_scope, by_unknown = memberships[persona]
+            known = by_scope.get((kind, sid), [])
+            unknown = by_unknown.get(kind, [])
+        view_key = (persona, module)
+        if view_key not in views:
+            data = entries.get(persona, {}).get("modules", {}).get(module, {})
+            views[view_key] = {s["scope"]: s.get("effective_view", {}) for s in data.get("scope_results", [])}
+        expected_body = profile_body(expected) if expected is not None else None
+        expected_signature = canonical(expected_body) if expected is not None else None
+        known_set, unknown_set = set(known), set(unknown)
         recipients = []
         for device in known + unknown:
-            view = views.get(persona, {}).get(module, {}).get(device, {})
+            view = views[view_key].get(device, {})
             actual = view.get("profiles", {}).get(identity) if view.get("status") == "list_parsed" else None
-            if device in unknown:
+            actual_body = profile_body(actual) if actual is not None else None
+            if device in unknown_set:
                 state = "membership_unverified"
             elif expected is None or view.get("status") != "list_parsed":
                 state = "unverified"
             elif actual is None:
                 state = "not_visible" if view.get("count_confirmed") is True else "unverified"
-            elif canonical(profile_body(actual)) != canonical(profile_body(expected)):
+            elif canonical(actual_body) != expected_signature:
                 state = "different_body"
             elif isinstance(actual.get("@"), dict) and actual["@"].get("aruba-annotation:object_type") == "SHARED":
                 state = "matching_shared"
             else:
                 state = "matching_source_unverified"
             recipients.append({"scope": device, "device": scopes[persona][device].get("name") or device,
-                               "status": state, "differences": field_differences(profile_body(expected), profile_body(actual))
+                               "status": state, "differences": field_differences(expected_body, actual_body)
                                if expected is not None and actual is not None else []})
-            if device in known:
+            if device in known_set:
                 overlap_key = (persona, device, module, "*" if module in ATOMIC else identity)
                 overlaps.setdefault(overlap_key, []).append({"scope": sid, "identity": identity})
         rows.append({"module": module, "identity": identity, "persona": persona, "scope": sid,
