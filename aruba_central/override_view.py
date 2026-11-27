@@ -19,6 +19,12 @@ RESULTS = {
     "global_unknown": "Global comparison unavailable",
     "source_uncertain": "Local source or effective settings disagree",
 }
+REMOVAL_FILTERS = {
+    "review_removal": "Matching fallback: review removal",
+    "verification_required": "Needs evidence or validation",
+    "higher_scope_differs": "Retain: higher scope differs",
+}
+
 NEXT_STEP = {
     "identical": "Review whether removing the local copy preserves these settings",
     "nearest_match": "Review removal against the observed nearest inherited definition",
@@ -155,6 +161,25 @@ def device_override_rows(bundle, persona, *, device="", module_filter=""):
                     removal = "higher_scope_differs"
                 elif removal == "review_removal":
                     removal = "verification_required"
+                # Direct individual responses must not contradict the saved
+                # collection before a matching fallback is offered for review.
+                if fallback["status"] == "matching_fallback":
+                    details = (bundle.get("keyed_profile_details") or {}).get("profiles", {}).get(persona, {})
+                    checks = [(sid, identity, "local", local), (sid, identity, "effective", row["effective"])]
+                    source = fallback.get("source")
+                    if source:
+                        checks.append((source["scope"], source["identity"], "effective", source["body"]))
+                    for scope_id, profile_id, kind, expected in checks:
+                        detail = details.get(str(scope_id), {}).get(module, {}).get(profile_id, {}).get(kind, {})
+                        body = detail.get("profile")
+                        if (detail.get("status") == "identity_observed" and isinstance(body, dict)
+                                and isinstance(expected, dict) and canonical(profile_body(body)) != canonical(expected)):
+                            fallback["status"] = "individual_evidence_conflict"
+                            fallback["blockers"].append("Direct individual configuration differs from collection evidence.")
+                            removal = "verification_required"
+                            break
+                    if evidence and evidence["conflicts"]:
+                        removal = "verification_required"
                 findings.append({"device": sid, "device_name": names[sid], "module": module,
                                  "identity": identity, "result": state, "profile": row, "chain": chain,
                                  "direct_confirmed": direct, "evidence": evidence, "assessment": assessment,
@@ -181,6 +206,9 @@ def overrides_view(workspace, query):
     devices = [(s["id"], s.get("name") or s["id"]) for s in entry["scopes"] if s["kind"] == "device"]
     modules = sorted(m for m, data in entry["modules"].items() if not data.get("device_scope_only"))
     device, module, result = query.get("device", ""), query.get("module", ""), query.get("result", "cleanup")
+    readiness = query.get("readiness", "")
+    if readiness and readiness not in REMOVAL_FILTERS:
+        raise ValueError("Unknown removal readiness")
     if (device and device not in dict(devices)) or (module and module not in modules) or (result and result not in RESULTS and result != "cleanup"):
         raise ValueError("Unknown comparison filter")
     scoped, missing = device_override_rows(bundle, persona, device=device, module_filter=module)
@@ -189,7 +217,8 @@ def overrides_view(workspace, query):
         ("device", "Device", device, device_options),
         ("module", "Configuration", module, lambda entry: module_options(entry, "All modules", comparable=True))),
         submit="Compare with Global", extra_fields=(("result", "Result", result,
-            [("cleanup", "Redundant and likely redundant"), ("", "All local definitions")] + list(RESULTS.items())),))
+            [("cleanup", "Redundant and likely redundant"), ("", "All local definitions")] + list(RESULTS.items())),
+            ("readiness", "Removal readiness", readiness, [("", "All assessments")] + list(REMOVAL_FILTERS.items()))))
     short_action = {
         "identical": "Review redundant local copy",
         "nearest_match": "Review nearest-scope match",
@@ -204,7 +233,11 @@ def overrides_view(workspace, query):
         "source_uncertain": "Validate source",
     }
     rows = []
+    candidates = [f for f in scoped if f["review_candidate"]]
+    readiness_counts = Counter(f["removal"] for f in candidates)
     for f in sorted(scoped, key=lambda f: (list(RESULTS).index(f["result"]), f["device_name"], f["module"], f["identity"])):
+        if readiness and (not f["review_candidate"] or f["removal"] != readiness):
+            continue
         if result == "cleanup":
             if not f["review_candidate"]:
                 continue
@@ -222,7 +255,7 @@ def overrides_view(workspace, query):
             elif f["removal"] == "verification_required":
                 next_step += ". Removal still requires source, field and inheritance verification"
             else:
-                next_step = "Remove the redundant local copy after checking the inherited source and dependencies"
+                next_step = "Review removal preview; confirm the inherited source and dependencies before changing Central"
         comparison = diff_table(p["global_differences"], "Device local", "Global")
         if f["module"] == "layer2-vlan" and p["global_reference"] is not None:
             comparison = vlan_explanation(p["local"], p["global_reference"], p["effective"], f["evidence"]) or comparison
@@ -263,17 +296,21 @@ def overrides_view(workspace, query):
         if f["review_candidate"]:
             action_label = {"higher_scope_differs": "Keep: higher scope differs",
                             "verification_required": "Verify before removal",
-                            "review_removal": "Remove redundant copy (review)"}[f["removal"]]
+                            "review_removal": "Matching fallback: review removal"}[f["removal"]]
         counts_for_row = f["assessment"]["counts"]
         evidence_line = ""
         if p["global_reference"] is not None:
             evidence_line = '<small class="field-counts">' + " · ".join(
                 f'{counts_for_row[key]} {label}' for key, label in (("matching", "match"), ("different", "different"),
                         ("unavailable", "unavailable"), ("conflict", "conflict")) if counts_for_row[key]) + '</small>'
+        source = f["fallback"].get("source")
+        fallback_summary = (e(source["kind"].title() + " / " + source["name"]) if source else '<span class="muted">Not established</span>')
+        fallback_summary += '<small>' + e(f["fallback"]["status"].replace("_", " ")) + '</small>'
         rows.append(tr(f'<strong>{e(f["device_name"])}</strong>',
                        f'<strong>{e(label)}</strong><small>{e(module_label(f["module"]))}</small>',
                        badge(RESULTS[state], "good" if state == "identical" else "warn" if state == "different" else "info" if state in ("partial_match", "effective_match") else "neutral")
-                       + evidence_line + f'<small title="{e(next_step)}">{e(action_label)}</small>',
+                       + evidence_line, fallback_summary,
+                       f'<strong title="{e(next_step)}">{e(action_label)}</strong>',
                        inspect(label, detail, "Compare settings")))
     result_summary = '<div class="result-summary" aria-label="Comparison results">' + "".join(
         f'<span><strong>{counts[key]}</strong> {e(label)}</span>' for key, label in (
@@ -293,7 +330,9 @@ def overrides_view(workspace, query):
             + '<section class="worklist"><div class="worklist-controls">' + filters + '</div>'
             + '<div class="worklist-summary"><h2>Device-local configuration</h2>' + result_summary + '</div>'
             + '<p class="filter-hint">Global matches are not proof of redundancy. Nearest-scope matches use the observed precedence chain. Removal readiness is assessed separately.</p>'
-            + table(("Device", "Profile / configuration", "Assessment", ""), rows, search=True, style="override-table")
+            + '<div class="result-summary" aria-label="Removal readiness">' + "".join(
+                f'<span><strong>{readiness_counts[key]}</strong> {e(label)}</span>' for key, label in REMOVAL_FILTERS.items()) + '</div>'
+            + table(("Device", "Profile / configuration", "Global / reference comparison", "Observed fallback", "Removal assessment", ""), rows, search=True, style="override-table")
             + f'<p class="filter-hint">{len(missing)} device/module reads unavailable. VLAN 1 is protected; device-only interfaces are excluded. Review only.</p></section>'
             + report)
     return page("Device overrides", body, workspace.nav(name))
