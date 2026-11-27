@@ -99,6 +99,52 @@ def raw_profile_shapes(bundle, catalog, modules):
             for (m, v, s), n in sorted(counts.items())]
 
 
+def pagination_evidence(bundle, modules):
+    """Aggregate only allowlisted reasons and counts, never request selectors."""
+    allowed = {"complete", "pagination_exhausted", "request_failed", "read_failed",
+               "schema_changed", "count_or_offset_changed", "count_changed",
+               "initial_response_changed", "duplicate_records", "repeated_page",
+               "duplicate_or_invalid_identity", "page_limit_reached"}
+    counts, pages, empty_last = Counter(), Counter(), Counter()
+
+    def add(module, source, view):
+        if "pagination_status" not in view:
+            return
+        reason = view["pagination_status"]
+        reason = reason if isinstance(reason, str) and reason in allowed else "other"
+        key = (module if module in modules else "other", source, reason)
+        counts[key] += 1
+        raw_pages = view.get("raw_pages", [])
+        if isinstance(raw_pages, list):
+            pages[key] += len(raw_pages)
+            empty_last[key] += bool(raw_pages and raw_pages[-1] == {})
+
+    library = bundle.get("library") or {}
+    for module, view in library.get("modules", {}).items():
+        add(module, "library", view)
+    for module, view in (bundle.get("nac_configuration") or {}).items():
+        add(module, "tenant", view)
+    for entry in bundle.get("results", {}).values():
+        for module, data in entry.get("modules", {}).items():
+            for scope in data.get("scope_results", []):
+                for side in ("local", "effective"):
+                    add(module, side, scope.get(side + "_view", {}))
+    for module, entry in (bundle.get("unadapted_profiles") or {}).items():
+        add(module, "raw_library", entry.get("library", {}))
+        for scope in entry.get("source_views", []):
+            for side in ("committed", "effective"):
+                add(module, "raw_" + side, scope.get(side, {}))
+    assignments = library.get("assignments") or {}
+    add("config-assignments", "tenant", assignments)
+    for scopes in assignments.get("scope_reads", {}).values():
+        for view in scopes.values():
+            add("config-assignments", "scoped", view)
+    add("scope-maps", "tenant", library.get("scope_maps") or {})
+    return [{"module": m, "source": s, "reason": r, "views": n,
+             "pages": pages[(m, s, r)], "last_page_empty_object": empty_last[(m, s, r)]}
+            for (m, s, r), n in sorted(counts.items())]
+
+
 def diagnostics(bundle):
     if bundle.get("schema") != 1 or bundle.get("kind") != "configuration_audit":
         raise ValueError("Expected a configuration audit")
@@ -167,6 +213,7 @@ def diagnostics(bundle):
     # Use the original snapshot evidence, not current adapter assumptions.
     # The keys below are allowlisted; resource identities are never exported.
     keyed = Counter()
+    keyed_differences = Counter()
     selector_shapes = Counter()
     for persona, scopes in (bundle.get("keyed_profile_details") or {}).get("profiles", {}).items():
         function = persona if persona in NETWORK_PERSONAS or persona in ("Library", "NAC", "ALL_DEVICE_FUNCTIONS", "UNFILTERED_SCOPE") else "other"
@@ -178,6 +225,12 @@ def diagnostics(bundle):
                         side = kind if kind in ("local", "effective", "library", "tenant") else "other"
                         state = safe_status(result.get("status"))
                         keyed[(function, name, side, state)] += 1
+                        differences = result.get("differences")
+                        if state == "identity_observed":
+                            comparison = "not_compared" if not isinstance(differences, list) else "different" if differences else "identical"
+                            keyed_differences[(name, side, comparison)] += 1
+                            if isinstance(differences, list) and any(isinstance(d, dict) and d.get("kind") == "missing_local" for d in differences):
+                                keyed_differences[(name, side, "additional_fields_in_detail")] += 1
                         if state == "invalid_selector":
                             shape = ("numeric_port" if re.fullmatch(r"[0-9]{1,4}/[0-9]{1,4}/[0-9]{1,4}", identity)
                                      else "contains_separator" if "/" in identity or "\\" in identity
@@ -210,6 +263,9 @@ def diagnostics(bundle):
     return {
         "schema": 1, "kind": "anonymous_collection_diagnostics",
         "specialized_reads": specialized,
+        "pagination_evidence": pagination_evidence(bundle, modules | {"config-assignments", "scope-maps"}),
+        "keyed_comparison_counts": [{"module": m, "view": v, "comparison": c, "reads": n}
+                                    for (m, v, c), n in sorted(keyed_differences.items())],
         "scoped_status_totals": dict(scope_totals),
         "library_views": library_summary,
         "library_visibility": visibility,
