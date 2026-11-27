@@ -311,7 +311,8 @@ def performance_probe(client, previous, sample=1):
 
     Compare exact source-annotated bodies only within current qualified scopes.
     No inference of absence or universal applicability from a sample.
-    One initial, two explicit page-size and one typed GET per context at most.
+    One initial, two page-size and one typed GET per context, plus up to two
+    bounded conditional validation pairs on real Central clients.
     """
     from central_tool import ALPHA, canonical, documented_offset_collections
     if type(sample) is not int or not 1 <= sample <= 4:
@@ -387,9 +388,27 @@ def performance_probe(client, previous, sample=1):
                             overlap = min(len(raw_rows), len(page_rows))
                             prefix = overlap > 0 and [canonical(r) for r in raw_rows[:overlap]] == [canonical(r) for r in page_rows[:overlap]]
                         pages.append({"requested_limit": limit, **page, "matching_initial_prefix": prefix})
-                    measurements.append({"module": module, "persona": persona, "scope_kind": kind,
-                                         "unfiltered": raw_summary, "typed": typed_summary,
-                                         "projection": comparison, "pages": pages})
+                    measurement = {"module": module, "persona": persona, "scope_kind": kind,
+                                   "unfiltered": raw_summary, "typed": typed_summary,
+                                   "projection": comparison, "pages": pages}
+                    # Qualify immediate conditional behavior on real Central
+                    # clients only. Probe one complete collection and at most
+                    # one positively observed simple keyed identity per context.
+                    if isinstance(client, Central) and typed_summary.get("count_confirmed"):
+                        from urllib.parse import quote
+                        typed_params = {**params, "device-function": persona}
+                        measurement["conditional_collection"] = client.probe_config_validator(
+                            ALPHA + "/" + module, typed_params)
+                        key = keyed_profile_contracts(include_raw=True).get(module)
+                        candidates = [row.get(key) for row in typed_rows] if key else []
+                        identity = next((v for v in candidates if isinstance(v, str)
+                                         and 0 < len(v) <= 256 and v not in (".", "..")
+                                         and not any(c in v for c in ("\\", "%", "/"))
+                                         and all(32 <= ord(c) < 127 for c in v)), None)
+                        if identity is not None:
+                            measurement["conditional_keyed"] = client.probe_config_validator(
+                                ALPHA + "/" + module + "/" + quote(identity, safe=""), typed_params)
+                    measurements.append(measurement)
     validators_after = client.get_validator_metrics() if isinstance(client, Central) else {}
     return {"schema": 1, "kind": "anonymous_performance_probe", "sample_limit": sample,
             "contexts": measurements, "http_config_validators": {

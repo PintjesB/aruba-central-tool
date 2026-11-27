@@ -222,7 +222,7 @@ class Central:
         return (isinstance(cause, (TimeoutError, ConnectionError, IncompleteRead, RemoteDisconnected))
                 or isinstance(cause, socket.gaierror) and cause.errno == socket.EAI_AGAIN)
 
-    def _request(self, request, label):
+    def _request(self, request, label, *, response_headers=None):
         if not hasattr(self._http, "opener"):
             self._http.persistent = PersistentCentralHTTPS()
             self._http.opener = build_opener(NoRedirect(), self._http.persistent)
@@ -253,6 +253,8 @@ class Central:
                             persistent.close()
                         raise
                     self._observe_config_validators(request, response)
+                    if response_headers is not None:
+                        response_headers(getattr(response, "headers", None))
                 if is_get:
                     elapsed = max(0, time.perf_counter() - network_started)
                     with self._get_metrics_lock:
@@ -387,6 +389,56 @@ class Central:
                 response.read()
         except HTTPError as exc:
             raise APIError("Configuration write", exc.code) from None
+
+    def probe_config_validator(self, path, params):
+        """Qualify conditional GET behavior without returning private values.
+
+        Two same-selector reads at most, excluding ordinary GET retries.
+        A 304 proves only an immediate conditional response, not complete
+        coverage of inheritance, deletion, firmware or cross-scope changes.
+        """
+        if (not re.fullmatch(r"/network-config/v1alpha1/[a-z][a-z0-9-]*(?:/[^/?#]+)?", path)
+                or not isinstance(params, dict)
+                or params.get("view-type") not in ("LOCAL", "LIBRARY")):
+            raise ValueError("Unsupported validator probe selector")
+        query = urlencode(params)
+        url = self.base + path + ("?" + query if query else "")
+        etag = None
+        def observe(headers):
+            nonlocal etag
+            value = headers.get("ETag") if headers is not None else None
+            # Do not forward malformed or weak validators. Restrict to one
+            # quoted ASCII opaque tag, never wildcard or a list of tags.
+            etag = value if isinstance(value, str) and re.fullmatch(r'"[!#-~]*"', value) else None
+        def request(extra=None, observer=None):
+            headers = {"Accept": "application/json", "Authorization": "Bearer " + self._token()}
+            headers.update(extra or {})
+            return self._request(Request(url, headers=headers, method="GET"), path,
+                                 response_headers=observer)
+        try:
+            first = request(observer=observe)
+        except APIError as exc:
+            if exc.status in (401, 429):
+                raise
+            return {"status": "initial_rejected", "http_error": exc.status}
+        except (OSError, RuntimeError, ValueError):
+            return {"status": "initial_failed"}
+        if etag is None:
+            return {"status": "strong_validator_unavailable"}
+        initial_tag = etag
+        try:
+            second = request({"If-None-Match": initial_tag}, observe)
+        except APIError as exc:
+            if exc.status in (401, 429):
+                raise
+            if exc.status == 304:
+                return {"status": "not_modified", "http_status": 304}
+            return {"status": "conditional_rejected", "http_error": exc.status}
+        except (OSError, RuntimeError, ValueError):
+            return {"status": "conditional_failed"}
+        identical = canonical(first) == canonical(second)
+        return {"status": "full_response", "http_status": 200,
+                "body_identical": identical, "strong_validator_unchanged": etag == initial_tag}
 
     def get(self, path, **params):
         query = urlencode(params)
