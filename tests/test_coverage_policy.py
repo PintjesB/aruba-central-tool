@@ -30,3 +30,31 @@ class CoveragePolicyTests(unittest.TestCase):
         self.assertNotIn("3 individual candidates", gap_handling({**row, "attempted": 1}, keyed_gap_context(bundle)))
         from aruba_central.filter_presets import selection
         self.assertEqual(selection("assessment", {"mode": "keyed", "module": "roles"}), {"mode": "keyed", "module": "roles"})
+
+
+    def test_nac_empty_collection_explains_why_keyed_reads_were_not_planned(self):
+        from aruba_central.coverage_policy import gap_handling, keyed_gap_context
+        row = {"path": ALPHA + "/skins/:skin-id", "attempted": 0}
+        empty = {"status": "empty_response", "raw": {}}
+        bundle = {"keyed_profile_details": {"supported_modules": ["skins"], "candidate_reads_by_module": {}},
+                  "unadapted_profiles": {"skins": {"library": empty,
+                      "source_views": [{"committed": empty, "effective": empty}]}}}
+        self.assertIn("3 empty collection responses", gap_handling(row, keyed_gap_context(bundle)))
+        self.assertIn("absence not established", gap_handling(row, keyed_gap_context(bundle)))
+        bundle["unadapted_profiles"]["skins"]["library"] = {"status": "response_received", "raw": {
+            "skins": [{"skin-id": "12345678-1234-1234-1234-123456789abc"}]}}
+        self.assertIn("1 collection views contain candidate identities", gap_handling(row, keyed_gap_context(bundle)))
+
+    def test_nac_uuid_selectors_are_validated_before_get(self):
+        from aruba_central.central_tool import keyed_profile_read
+        from unittest.mock import Mock
+        for module, key in (("message-providers", "provider-id"), ("skins", "skin-id"), ("overrides", "override-id")):
+            client = Mock()
+            result = keyed_profile_read(client, module, key, "display-name", {}, None)
+            self.assertEqual(result["status"], "invalid_selector")
+            client.get.assert_not_called()
+            identity = "12345678-1234-1234-1234-123456789abc"
+            client.get.return_value = {key: identity}
+            result = keyed_profile_read(client, module, key, identity, {}, None)
+            client.get.assert_called_once_with(ALPHA + "/" + module + "/" + identity)
+            self.assertEqual(result["status"], "identity_observed")

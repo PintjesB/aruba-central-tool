@@ -1,6 +1,6 @@
 """Separate observed API coverage from current endpoint handling policy."""
 from .nac_service_probe import ENDPOINTS
-from .central_tool import ALPHA, keyed_profile_contracts
+from .central_tool import ALPHA, keyed_profile_contracts, observed_profile_candidates
 import re
 
 NAC_CAPTURE = {"cnac-mac-reg": "MAC registration inventory",
@@ -42,7 +42,8 @@ def coverage_action(row):
 def keyed_gap_context(bundle):
     """Use the actual saved detail plan, not a guessed reason for absence."""
     return {"contracts": keyed_profile_contracts(include_raw=True),
-            "plan": bundle.get("keyed_profile_details") or {}}
+            "plan": bundle.get("keyed_profile_details") or {},
+            "raw": bundle.get("unadapted_profiles") or {}}
 
 
 def gap_handling(row, context):
@@ -65,5 +66,19 @@ def gap_handling(row, context):
     if type(count) is not int or count < 0:
         return "Single-key adapter available; candidate count unqualified"
     if count == 0:
+        module = match[1]
+        if module in {"airpass-approval", "message-providers", "skins", "overrides"}:
+            entry = context.get("raw", {}).get(module)
+            if isinstance(entry, dict):
+                reads = [entry.get("library", {})]
+                reads.extend(v.get(side, {}) for v in entry.get("source_views", [])
+                             for side in ("committed", "effective"))
+                empty = sum(v.get("status") in ("empty_response", "empty_object") for v in reads)
+                positives = sum(bool(observed_profile_candidates(v, match[2])) for v in reads)
+                if positives:
+                    return f"{positives} collection views contain candidate identities; saved detail plan omitted them; review selectors"
+                if empty == len(reads) and empty:
+                    return f"No individual candidates planned; {empty} empty collection responses, absence not established"
+                return f"No individual candidates planned; {empty}/{len(reads)} unverified empty collection responses, other views require review; absence not established"
         return "No individual candidates planned; absence not established"
     return f"{count} individual candidates planned; no matching GET attempt recorded"
