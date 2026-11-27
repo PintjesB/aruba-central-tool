@@ -9,7 +9,7 @@ class TypedDiffTests(unittest.TestCase):
                                    {"flag": "False", "nullable": 0, "ordered": ["b", "a"]})
         html = diff_table(fields, "Saved device", "Nearest scope")
         for label in ("Boolean", "String", "Value types differ", "Missing from second observation",
-                      "Not returned", "Null vs explicit value", "Ordered list", "Values differ"):
+                      "Not returned", "Null vs explicit value", "Ordered list", "Same exact list members, different order"):
             self.assertIn(label, html)
         self.assertIn("Saved device", html)
         self.assertIn("Nearest scope", html)
@@ -24,3 +24,18 @@ class TypedDiffTests(unittest.TestCase):
         self.assertNotIn("<img>", html)
         self.assertIn("&lt;script&gt;", html)
         self.assertIn("&lt;img&gt;", html)
+
+
+    def test_order_only_list_movement_preserves_duplicates_and_types(self):
+        from aruba_central.workspace_ui import ordered_list_movement
+        self.assertEqual(ordered_list_movement(["a", "a", "b"], ["b", "a", "a"]), [(1, 2), (2, 3), (3, 1)])
+        self.assertIsNone(ordered_list_movement([False, 1], [0, 1]))
+        self.assertIsNone(ordered_list_movement(["a", "b"], ["a", "c"]))
+        self.assertEqual(ordered_list_movement(["a"], ["a"]), [])
+        html = diff_table(field_differences({"servers": ["primary", "secondary"]},
+                                           {"servers": ["secondary", "primary"]}))
+        self.assertIn("Same exact list members, different order", html)
+        self.assertIn("Order may be significant", html)
+        self.assertIn("Position 1 to 2", html)
+        self.assertIn("Position 2 to 1", html)
+        self.assertEqual(html.count('class="diff-ordered-list"'), 2)
