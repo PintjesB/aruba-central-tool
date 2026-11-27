@@ -156,6 +156,121 @@ def supplemental_survey_footprint(bundle, modules):
             for (name, kind, selector), row in sorted(counts.items())]
 
 
+def committed_effective_projection_evidence(bundle, modules):
+    """Offline candidate measurement only; never substitutes an effective read.
+
+    Compare explicit LOCAL counts and non-inherited annotations against the
+    independently observed committed view. Effective results can hide
+    overridden objects, so even exact historical agreement is not proof of
+    equivalence for future requests.
+    """
+    from .central_tool import NETWORK_PERSONAS, canonical
+    totals = {}
+    def complete_rows(view, object_type):
+        raw = view.get("raw")
+        if (view.get("status") not in ("list_parsed", "response_received")
+                or view.get("pagination_status") not in (None, "complete")
+                or view.get("http_error") is not None or not isinstance(raw, dict)):
+            return None
+        meta = raw.get("metadata")
+        if not isinstance(meta, dict):
+            return None
+        counts = meta.get("count_objects_in_module", {})
+        if not isinstance(counts, dict):
+            return None
+        expected = counts.get(object_type)
+        total = meta.get("total", expected)
+        lists = [(k, v) for k, v in raw.items() if k != "metadata" and isinstance(v, list)]
+        if (len(lists) == 1 and set(raw) == {"metadata", lists[0][0]}):
+            rows = lists[0][1]
+        elif type(expected) is int and expected == 0 and (
+                set(raw) == {"metadata"} or len(raw) == 2 and any(
+                    k != "metadata" and v is None for k, v in raw.items())):
+            rows = []
+        else:
+            return None
+        if (type(total) is not int or total != len(rows)
+                or expected is not None and (type(expected) is not int or expected != total)
+                or type(meta.get("count", total)) is not int or meta.get("count", total) != total
+                or type(meta.get("offset", 0)) is not int or meta.get("offset", 0) not in (0, total)
+                or not all(isinstance(v, dict) for v in rows)
+                or len({canonical(v) for v in rows}) != total):
+            return None
+        return rows, counts
+
+    def body(row):
+        return canonical({k: v for k, v in row.items() if k != "@"})
+
+    def examine(module, kind, selector, source, committed, effective, local_only):
+        key = (module if module in modules else "other", kind, selector, source)
+        row = totals.setdefault(key, Counter())
+        row["pairs"] += 1
+        if committed.get("raw") == {} and effective.get("raw") == {}:
+            row["both_empty_unqualified"] += 1
+        c = complete_rows(committed, "LOCAL" if local_only else "ANY")
+        e = complete_rows(effective, "ANY")
+        if c is None or e is None:
+            row["unqualified_pair"] += 1
+            return
+        row["count_qualified_pair"] += 1
+        crows, _ = c
+        erows, counts = e
+        if Counter(map(canonical, crows)) == Counter(map(canonical, erows)):
+            row["identical_full_records"] += 1
+        expected = counts.get("LOCAL")
+        if type(expected) is not int or expected < 0:
+            row["effective_local_count_missing"] += 1
+            return
+        def local(rows):
+            result = []
+            for profile in rows:
+                ann = profile.get("@")
+                if (not isinstance(ann, dict)
+                        or ann.get("aruba-annotation:object_type") not in ("LOCAL", "SHARED")
+                        or type(ann.get("aruba-annotation:inherited")) is not bool):
+                    return None
+                if ann["aruba-annotation:object_type"] == "LOCAL" and not ann["aruba-annotation:inherited"]:
+                    result.append(body(profile))
+            return result
+        projected = local(erows)
+        actual = list(map(body, crows)) if local_only else local(crows)
+        if projected is None or actual is None:
+            row["source_annotations_missing"] += 1
+        elif len(projected) != expected:
+            row["effective_local_count_disagrees"] += 1
+        elif Counter(projected) != Counter(actual):
+            row["local_projection_differs"] += 1
+        else:
+            row["local_projection_matches"] += 1
+            row["local_projection_positive" if actual else "local_projection_empty"] += 1
+    valid_kinds = {"global", "site", "collection", "group", "device"}
+    kinds = {}
+    for persona, entry in bundle.get("results", {}).items():
+        for scope in entry.get("scopes", []):
+            if scope.get("kind") in valid_kinds:
+                kinds.setdefault(str(scope["id"]), set()).add(scope["kind"])
+        for module, data in entry.get("modules", {}).items():
+            for scope in data.get("scope_results", []):
+                kind = scope.get("scope_kind")
+                if kind in valid_kinds:
+                    kinds.setdefault(str(scope["scope"]), set()).add(kind)
+                examine(module, kind if kind in valid_kinds else "unknown",
+                        persona if persona in NETWORK_PERSONAS else "other", "structured",
+                        scope.get("local_view", {}), scope.get("effective_view", {}), True)
+    for module, entry in (bundle.get("unadapted_profiles") or {}).items():
+        for scope in entry.get("source_views", []):
+            known = kinds.get(str(scope.get("scope")), set())
+            kind = next(iter(known)) if len(known) == 1 else "unknown"
+            persona = scope.get("persona")
+            selector = persona if persona in NETWORK_PERSONAS else (
+                "unfiltered" if persona in ("ALL_DEVICE_FUNCTIONS", "UNFILTERED_SCOPE") else "other")
+            examine(module, kind, selector, "supplemental",
+                    scope.get("committed", {}), scope.get("effective", {}), False)
+    return {"groups": [{"module": m, "scope_kind": k, "selector": p, "source": s, **dict(v)}
+                       for (m, k, p, s), v in sorted(totals.items())],
+            "projection_qualified": False, "complete": False}
+
+
 def pagination_evidence(bundle, modules):
     """Aggregate only allowlisted reasons and counts, never request selectors."""
     allowed = {"complete", "pagination_exhausted", "request_failed", "read_failed",
@@ -489,6 +604,7 @@ def diagnostics(bundle):
                          for (p, m, k, v, s, c, h), n in sorted(scoped.items(), key=lambda row: str(row[0]))],
         "raw_profile_shapes": raw_profile_shapes(bundle, catalog, modules),
         "supplemental_survey_footprint": supplemental_survey_footprint(bundle, modules),
+        "committed_effective_projection": committed_effective_projection_evidence(bundle, modules),
         "raw_scope_outcomes": [{"module": m, "status": s, "views": n}
                                for (m, s), n in sorted(raw.items())],
         "nac": nac, "attempted_operations": sorted(operations, key=lambda row: row["path"]),
