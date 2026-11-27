@@ -320,6 +320,10 @@ def advisor_view(workspace, query):
             for x in f["fallbacks"]:
                 if x.get("source"):
                     fallback_html += '<h4>' + e(x["name"]) + '</h4>' + diff_table(x.get("differences"), "Local", "Nearest higher scope")
+                for conflict in x.get("individual_conflicts", []):
+                    fallback_html += '<h4>Conflicting individual evidence</h4><p>' + e(
+                        str(conflict["scope"]) + " / " + str(conflict["identity"]) + " / " + conflict["view"]) + '</p>'
+                    fallback_html += diff_table(conflict["differences"], "Collection", "Individual read")
         dep = f["dependency_review"]
         dependency_rows = []
         for key, label in (("consumers", "Consumer"), ("dependencies", "Prerequisite"), ("unresolved_target_observations", "Unresolved target")):
