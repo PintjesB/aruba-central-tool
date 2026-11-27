@@ -3013,7 +3013,31 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
     saved_selectors = {(p, sid, m, identity) for p, sid, m, identity, kind, _ in tasks
                        if kind == "local"}
     saved_by_scope = {(sid, m, identity) for _, sid, m, identity in saved_selectors}
+    # Device-persona-mapping is documented as a device-type to supported
+    # device-function reference list. Keep every fresh collection at every
+    # scope, but qualify redundant keyed checks of identical reference pairs.
+    # Do not apply this exception to ordinary local configuration modules.
+    mapping_pairs = defaultdict(dict)
+    for task in tasks:
+        p, sid, m, identity, kind, profile = task
+        if m == "device-persona-mapping" and p in NETWORK_PERSONAS and kind in ("local", "effective"):
+            mapping_pairs[p, sid, identity][kind] = profile
+
+    def mapping_signature(persona, sid, identity):
+        pair = mapping_pairs[persona, sid, identity]
+        if set(pair) != {"local", "effective"} or not all(isinstance(v, dict) for v in pair.values()):
+            return None
+        if profile_body(pair["local"]) != profile_body(pair["effective"]):
+            return None
+        for value in pair.values():
+            annotation = value.get("@")
+            if annotation is not None and (not isinstance(annotation, dict)
+                    or annotation.get("aruba-annotation:object_type") == "LOCAL"):
+                return None
+        return canonical(pair)
+
     direct, groups = [], defaultdict(list)
+    reference_groups = defaultdict(list)
     for task in tasks:
         persona, sid, module, identity, kind, profile = task
         scope_kind = scope_kinds.get((persona, sid))
@@ -3021,6 +3045,13 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
         mixed = persona in unfiltered_personas
         if mixed and len(kinds_by_scope[sid]) == 1:
             scope_kind = next(iter(kinds_by_scope[sid]))
+        if (adaptive and module == "device-persona-mapping" and persona in NETWORK_PERSONAS
+                and kind in ("local", "effective")
+                and scope_kind in {"device", "site", "collection", "group"}):
+            signature = mapping_signature(persona, sid, identity)
+            if signature is not None:
+                reference_groups[(persona, scope_kind, identity, signature)].append(task)
+                continue
         # Keep mixed and typed requests in separate groups. Only positive
         # inherited/shared/default annotation evidence is eligible; an
         # unfiltered selector must not sample a known saved local counterpart.
@@ -3046,7 +3077,21 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
             direct.extend(group)
         else:
             samples.extend((group[0], group[-1]))
-            pending_groups.append(group)
+            pending_groups.append((group[1:-1], (group[0], group[-1]), "inherited_profile"))
+    for group in reference_groups.values():
+        by_scope = defaultdict(list)
+        for task in group:
+            by_scope[task[1]].append(task)
+        if len(by_scope) <= 2 or any(len(pair) != 2 for pair in by_scope.values()):
+            direct.extend(group)
+            continue
+        # Sample both views at the first and last scope, then require all
+        # four checks to agree before skipping any paired reference detail.
+        scopes = list(by_scope.values())
+        representatives = scopes[0] + scopes[-1]
+        samples.extend(representatives)
+        pending_groups.append(([task for pair in scopes[1:-1] for task in pair],
+                               representatives, "device_persona_reference"))
     initial = direct + samples
     print(f"Keyed profile details: {len(tasks)} candidates; {len(initial)} initial reads; "
           f"mode={'adaptive' if adaptive else 'exhaustive'}", flush=True)
@@ -3066,19 +3111,19 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
         retain(selector, evidence)
     expanded = []
     skipped = Counter()
-    for group in pending_groups:
-        sample_evidence = [checked[task[:5]] for task in (group[0], group[-1])]
+    for remaining, representatives, reason in pending_groups:
+        sample_evidence = [checked[task[:5]] for task in representatives]
         if all(e.get("status") == "identity_observed" and e.get("differences") == []
                for e in sample_evidence):
-            for task in group[1:-1]:
+            for task in remaining:
                 persona, sid, module, identity, kind, profile = task
                 # This is a coverage marker, NOT a fetched detail or an inferred body.
                 observations.setdefault(persona, {}).setdefault(sid, {}).setdefault(module, {}).setdefault(
                     identity, {})[kind] = {"status": "collection_only_sampled", "safe_to_apply": False,
-                                           "source_verified": False}
+                                           "source_verified": False, "sampling_reason": reason}
                 skipped[module] += 1
         else:
-            expanded.extend(group[1:-1])
+            expanded.extend(remaining)
     if expanded:
         audit_progress(progress, "Profile detail expansion", 0, len(expanded),
                        "Verifying groups with different or unavailable detail responses")
