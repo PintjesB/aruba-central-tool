@@ -256,7 +256,7 @@ class AdvancedTests(unittest.TestCase):
 
 
     def test_network_group_exclusion_counts_as_library_usage(self):
-        from advanced_review import explicit_references
+        from advanced_review import explicit_references, library_usage
         body = {"name": "parent", "exclude": "child", "items": [{"exclude": "unrelated"}]}
         self.assertEqual(list(explicit_references(body, module="net-groups")),
                          [("net-groups", "child", ("exclude",))])
