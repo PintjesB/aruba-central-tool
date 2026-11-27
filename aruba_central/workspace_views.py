@@ -358,22 +358,29 @@ def advisor_view(workspace, query):
         unknown = len(observed.get("unknown", []))
         device_summary = f'<strong>{matching} / {sum(len(v) for v in observed.values())}</strong>' + (f'<small>{unknown} not comparable</small>' if unknown else "") if observed else '<span class="muted">Not assessed</span>'
         # Filter by row metadata; the inspector and plan payload are inert.
+        selectable = action in OPPORTUNITIES and f["preview_selectable"]
+        readiness = ("destination" if selectable and action == "promote_local" else
+                     "selectable" if selectable else "blocked" if action in OPPORTUNITIES else "review")
+        readiness_text = {"destination": "Choose destination", "selectable": "Preview available",
+                          "blocked": "Evidence blocks preview", "review": "Inspection only"}[readiness]
         rows.append(tr(
-            f'<input type="checkbox" class="choose" aria-label="Select {e(profile)}" data-plan="{e(json.dumps(f, ensure_ascii=False))}"{" disabled" if action not in OPPORTUNITIES or not f["preview_selectable"] else ""}>',
-            summary, badge(short[action], "warn" if action in ("conflict", "default_review") else "info" if action in OPPORTUNITIES else "neutral") + f'<small>{e(SHORT_REASON[action])}</small>',
+            f'<input type="checkbox" class="choose" aria-label="Select {e(profile)}" data-plan="{e(json.dumps(f, ensure_ascii=False))}"{" disabled" if not selectable else ""}>',
+            summary, badge(short[action], "warn" if action in ("conflict", "default_review") else "info" if action in OPPORTUNITIES else "neutral") + f'<small>{e(SHORT_REASON[action])}</small><small><strong>{e(readiness_text)}</strong></small>',
             f'<strong>{len(sources)}</strong><small>{e(names or "Library definition")}</small>', placement, device_summary,
             inspect(profile, details, "Review"),
-            attrs=f' data-action="{e(action)}" data-module="{e(f["module"])}" data-persona="{e(f["persona"])}" data-search="{e(profile+" "+str([s["name"] for s in sources]))}"'))
+            attrs=f' data-readiness="{readiness}" data-source-count="{len(sources)}" data-action="{e(action)}" data-module="{e(f["module"])}" data-persona="{e(f["persona"])}" data-search="{e(profile+" "+str([s["name"] for s in sources]))}"'))
     filters = (
         '<div class="filter-bar advisor-filters">'
         + select("finding-type", recommendation_options, selected_recommendation, "Recommendation")
         + select("module", [("", "All modules")] + [(m, module_label(m)) for m in sorted({f["module"] for f in findings})], label="Module")
         + select("persona", [("", "All functions")] + [(p, persona_label(p)) for p in sorted({f["persona"] for f in findings})], label="Device function")
+        + select("readiness", [("", "All findings"), ("preview", "Preview candidates"), ("blocked", "Evidence blocks preview"), ("review", "Inspection only")], label="Review readiness")
+        + select("advisor-sort", [("", "Default recommendation order"), ("copies", "Most local copies first")], label="Sort")
         + '<label class="searchbox">Search<input id="search" type="search" placeholder="Profile or scope"></label>'
         '<button id="clear" type="button" class="quiet">Reset</button></div>')
     listing = '<div id="advisor-table">' + table(("Select", "Profile", "Why flagged", "Local copies", "Suggested next step", "Devices with identical settings", ""), rows) + '</div>'
     bar = ('<div class="selection-bar"><div><strong id="selected" aria-live="polite">0 selected</strong>'
-           '<small>Preview only · no Central writes</small></div><div class="selection-actions">'
+           '<small id="hidden-selected" aria-live="polite"></small><small>Preview only · no Central writes</small></div><div class="selection-actions">'
            '<button id="select-visible" type="button">Select all filtered</button><button id="clear-selection" type="button">Clear</button>'
            '<button id="open-preview" type="button" class="primary" disabled>Review selected</button></div></div>')
     dialog = ('<dialog id="plan-dialog" class="inspector" aria-labelledby="plan-title"><div class="inspector-head"><h2 id="plan-title">Selected change preview</h2>'
@@ -406,9 +413,14 @@ const categories={opportunities:['remove_override','promote_local','reuse_librar
 let page=0, filtered=[];const size=30;
 function filter(reset=true){
  if(reset)page=0;
- const q=$('search').value.toLowerCase().trim();
+ const terms=$('search').value.toLowerCase().trim().split(/\s+/).filter(Boolean);
  const action=$('finding-type').value;
- filtered=rows.filter(r=>(!action||(categories[action]?categories[action].includes(r.dataset.action):r.dataset.action===action))&&(!$('module').value||r.dataset.module===$('module').value)&&(!$('persona').value||r.dataset.persona===$('persona').value)&&((r.dataset.search+' '+r.textContent).toLowerCase().includes(q)));
+ const readiness=$('readiness').value;
+ filtered=rows.filter(r=>(!action||(categories[action]?categories[action].includes(r.dataset.action):r.dataset.action===action))&&(!$('module').value||r.dataset.module===$('module').value)&&(!$('persona').value||r.dataset.persona===$('persona').value)&&(!readiness||(readiness==='preview'?['selectable','destination'].includes(r.dataset.readiness):r.dataset.readiness===readiness))&&terms.every(term=>(r.dataset.search+' '+r.textContent).toLowerCase().includes(term)));
+ const ordered=$('advisor-sort').value==='copies'?rows.slice().sort((a,b)=>Number(b.dataset.sourceCount)-Number(a.dataset.sourceCount)):rows;
+ const included=new Set(filtered);filtered=ordered.filter(r=>included.has(r));
+ const tbody=rows[0]?.parentElement;
+ if(tbody){const fragment=document.createDocumentFragment();for(const row of ordered)fragment.append(row);tbody.append(fragment);}
  const pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.min(page,pages-1);
  const visible=new Set(filtered.slice(page*size,(page+1)*size));
  for(const r of rows)r.hidden=!visible.has(r);
@@ -416,6 +428,12 @@ function filter(reset=true){
  $('advisor-page').textContent=(page+1)+' / '+pages;$('advisor-prev').disabled=page===0;$('advisor-next').disabled=page+1>=pages;
  $('advisor-empty').hidden=filtered.length>0;
  $('advisor-prev').parentElement.hidden=pages<=1;
+ updateHiddenSelection();
+}
+function updateHiddenSelection(){
+ const included=new Set(filtered);
+ const hidden=checks.filter(c=>c.checked&&!c.disabled&&!included.has(c.closest('tr'))).length;
+ $('hidden-selected').textContent=hidden?hidden+' selected outside current filters':'';
 }
 function dependencyOrder(chosen){
  const byId=new Map(chosen.map(f=>[f.id,f]));
@@ -524,6 +542,7 @@ function selection(){
   return f;
  });
  $('selected').textContent=chosen.length+' selected';
+ updateHiddenSelection();
  $('clear-selection').disabled=!chosen.length;
  $('open-preview').disabled=!chosen.length;
  const review=bulkReview(chosen);
@@ -577,9 +596,9 @@ function preview(){
  }
  if(chosen.some(f=>f.action==='promote_local'&&!f.selected_destination))$('preview').append(el('p','Select a destination for each consolidation recommendation before exporting.'));
 }
-for(const k of ['module','persona','finding-type'])$(k).addEventListener('change',()=>filter());
+for(const k of ['module','persona','finding-type','readiness','advisor-sort'])$(k).addEventListener('change',()=>filter());
 $('search').addEventListener('input',()=>filter());
-$('clear').addEventListener('click',()=>{$('finding-type').value='opportunities';$('module').value='';$('persona').value='';$('search').value='';filter();});
+$('clear').addEventListener('click',()=>{$('finding-type').value='opportunities';$('module').value='';$('persona').value='';$('readiness').value='';$('advisor-sort').value='';$('search').value='';filter();});
 $('advisor-prev').addEventListener('click',()=>{page--;filter(false);});$('advisor-next').addEventListener('click',()=>{page++;filter(false);});
 for(const c of checks)c.addEventListener('change',selection);
 for(const field of document.querySelectorAll('.destination'))field.addEventListener('change',selection);
