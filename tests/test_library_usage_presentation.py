@@ -28,3 +28,12 @@ class LibraryUsagePresentationTests(unittest.TestCase):
         self.assertIn("scope=3", html)
         self.assertIn("device=3", html)
         self.assertIn("module=roles", html)
+
+
+    def test_usage_summary_does_not_embed_all_device_rows(self):
+        from aruba_central.library_usage_presentation import visibility_detail_link
+        usage = {"identity": "Office", "shared_devices": [{"name": "PrivateSwitch"}] * 100}
+        html = visibility_detail_link(usage, root="/test/", snapshot="capture.json", module="roles")
+        self.assertIn("profile=Office", html)
+        self.assertIn("100", html)
+        self.assertNotIn("PrivateSwitch", html)
