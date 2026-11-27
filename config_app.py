@@ -214,6 +214,11 @@ class Workspace:
         self.csrf = secrets.token_urlsafe(32)
         self.refresh = refresh
         self.lock = threading.Lock()
+        # Keep at most one reviewed snapshot per local workspace. Separate
+        # this lock from progress reporting so expensive parsing never blocks
+        # the collection status endpoint.
+        self.snapshot_lock = threading.Lock()
+        self._reviewed_snapshot = None
         self.state = "idle"
         self.phase = ""
         self.detail = ""
@@ -322,6 +327,36 @@ class Workspace:
                 self.done = self.total = 0
         threading.Thread(target=run, daemon=True).start()
         return True
+
+    def reviewed_snapshot(self, name):
+        """Load and review one unchanged private capture per workspace.
+
+        Returned bundles are shared read-only by the rendering functions.
+        Never cache failed loads or reuse evidence after a file replacement.
+        """
+        from central_tool import refresh_configuration_review
+        with self.snapshot_lock:
+            path = next((p for p in audit_files(self.directory) if p.name == name), None)
+            if path is None:
+                raise ValueError("Unknown snapshot")
+
+            def fingerprint():
+                if path.is_symlink():
+                    raise ValueError("Unknown snapshot")
+                stat = path.stat()
+                return (path.name, stat.st_dev, stat.st_ino, stat.st_size,
+                        stat.st_mtime_ns, stat.st_ctime_ns)
+
+            before = fingerprint()
+            if self._reviewed_snapshot is not None and self._reviewed_snapshot[0] == before:
+                return self._reviewed_snapshot[1]
+            # Release the previous large bundle before parsing another file.
+            self._reviewed_snapshot = None
+            bundle = refresh_configuration_review(read_audit(self.directory, name))
+            if before != fingerprint():
+                raise ValueError("Snapshot changed while loading; open it again")
+            self._reviewed_snapshot = (before, bundle)
+            return bundle
 
     def nav(self, snapshot=None):
         return navigation("/" + self.token + "/", snapshot)
@@ -677,8 +712,8 @@ def handler_for(workspace):
                 elif parsed.path == root + "report":
                     body = workspace.report(query)
                 elif parsed.path == root + "legacy-report":
-                    from central_tool import configuration_html, refresh_configuration_review
-                    bundle = refresh_configuration_review(read_audit(workspace.directory, query["snapshot"]))
+                    from central_tool import configuration_html
+                    bundle = workspace.reviewed_snapshot(query["snapshot"])
                     body = configuration_html(bundle).replace("<main>", f'<main><p><a href="{root}report?{e(urlencode({"snapshot": query["snapshot"]}))}">Back to workspace</a></p>', 1)
                 elif parsed.path == root + "overrides":
                     body = workspace.overrides(query)
