@@ -27,6 +27,21 @@ class CheckpointTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ScopeCheckpoint(path, "manifest", resume=True)
 
+    def test_fresh_checkpoint_misses_do_not_open_database(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            cp = ScopeCheckpoint(Path(tmp) / "checkpoint.db", "manifest")
+            with patch.object(cp, "_connect", wraps=cp._connect) as connect:
+                self.assertIsNone(cp.get("ACCESS_SWITCH", "dns", "1"))
+                self.assertEqual(cp.observe("raw_catalog", ["missing"],
+                                            lambda: {"ok": False}, lambda v: v["ok"]), {"ok": False})
+                connect.assert_not_called()
+                cp.observe("raw_catalog", ["saved"], lambda: {"ok": True}, lambda v: v["ok"])
+                self.assertEqual(connect.call_count, 1)
+                self.assertEqual(cp.observe("raw_catalog", ["saved"], lambda: self.fail("unexpected read"),
+                                            lambda v: v["ok"]), {"ok": True})
+                self.assertEqual(connect.call_count, 2)
+
     def test_expiry_and_inventory_binding(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "checkpoint.db"
