@@ -3353,6 +3353,8 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     audit_progress(progress, "NAC registrations", 0, 0, "Reading Central NAC MAC registrations")
     nac_registrations = read_mac_registrations(client, progress)
     print(f"NAC MAC registration coverage: {nac_registrations['status']}; observed={len(nac_registrations['rows'])}", flush=True)
+    from nac_assets import capture_portal_assets
+    nac_assets = capture_portal_assets(client, workers, progress) if deep_catalog else None
     health = capture_configuration_health(client, records, workers, progress)
     keyed_details = capture_keyed_profile_details(client, results, library, workers, progress, checkpoint=checkpoint, nac_configuration=nac_configuration, unadapted=unadapted) if deep_catalog else None
     from scope_evidence import hierarchy_capture, keyed_assignment_capture
@@ -3369,6 +3371,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             "profile_type_discovery": profile_types, "unadapted_profiles": unadapted,
             "operational_vlans": operational, "vlan_instance_details": details, "switch_vlan_cli": cli,
             "configuration_health": health, "nac_registrations": nac_registrations, "nac_configuration": nac_configuration,
+            "nac_portal_assets": nac_assets,
             "keyed_profile_details": keyed_details,
             "scope_hierarchy_evidence": hierarchy_evidence, "keyed_assignment_details": assignment_details,
             "api_read_coverage": client.report(),
