@@ -104,7 +104,8 @@ def pagination_evidence(bundle, modules):
     allowed = {"complete", "pagination_exhausted", "request_failed", "read_failed",
                "schema_changed", "count_or_offset_changed", "count_changed",
                "initial_response_changed", "duplicate_records", "repeated_page",
-               "duplicate_or_invalid_identity", "page_limit_reached"}
+               "duplicate_or_invalid_identity", "page_limit_reached",
+               "library_pagination_unavailable", "offset_behavior_unverified"}
     counts, pages, empty_last = Counter(), Counter(), Counter()
 
     def add(module, source, view):
