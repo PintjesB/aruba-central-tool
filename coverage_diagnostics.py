@@ -66,6 +66,27 @@ def diagnostics(bundle):
                     if k in ("response_received", "read_failed") or re.fullmatch(r"http_[45][0-9]{2}", k)}
         operations.append({"path": row["path"], "attempted": count(row["attempted"]),
                            "received": count(row.get("received")), "outcomes": outcomes})
+    # Only use pinned vendor templates. Never export observed URL selectors.
+    # A missing operation is not necessarily applicable to this tenant.
+    groups = {}
+    for request in catalog["get_requests"]:
+        if request["method"] == "GET":
+            groups.setdefault(request["path"], set()).add(request["group"])
+    for request in catalog.get("release_note_collections", []):
+        groups.setdefault(request["path"], set()).add("Additional documented profiles")
+    attempted = {row["path"] for row in operations}
+    gaps = []
+    operation_groups = {}
+    for path in sorted(paths):
+        group = " / ".join(sorted(groups.get(path, {"Other"})))
+        totals = operation_groups.setdefault(group, {"documented": 0, "attempted": 0, "not_attempted": 0})
+        totals["documented"] += 1
+        if path in attempted:
+            totals["attempted"] += 1
+            continue
+        totals["not_attempted"] += 1
+        gaps.append({"path": path, "group": group,
+                     "selector_required": any(part.startswith((":", "{")) for part in path.split("/"))})
     from nac_authorization import nac_collection
     nac = {module: view_summary(nac_collection(bundle, module))
            for module in ("auth-profiles", "authz-policies", "identity-stores", "static-tag")}
@@ -128,7 +149,8 @@ def diagnostics(bundle):
         "raw_scope_outcomes": [{"module": m, "status": s, "views": n}
                                for (m, s), n in sorted(raw.items())],
         "nac": nac, "attempted_operations": sorted(operations, key=lambda row: row["path"]),
-        "catalog_operations": len(paths), "complete": False,
+        "catalog_operations": len(paths), "operation_groups": operation_groups,
+        "unattempted_operations": gaps, "complete": False,
     }
 
 

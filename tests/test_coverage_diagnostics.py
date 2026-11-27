@@ -48,3 +48,18 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(report["nac"]["mac-registrations"]["status"], "not_collected")
         for value in ("PRIVATE-SCOPE", "PRIVATE-NAME", "1/1/24"):
             self.assertNotIn(value, json.dumps(report))
+
+
+    def test_operation_gap_inventory_reconciles_catalog(self):
+        bundle = {"schema": 1, "kind": "configuration_audit", "api_read_coverage": {
+            "operations": [{"path": "/network-config/v1alpha1/layer2-vlan",
+                            "attempted": 1, "received": 1}]}}
+        report = diagnostics(bundle)
+        gaps = report["unattempted_operations"]
+        groups = report["operation_groups"].values()
+        self.assertEqual(len(gaps) + len(report["attempted_operations"]), report["catalog_operations"])
+        self.assertEqual(sum(g["documented"] for g in groups), report["catalog_operations"])
+        self.assertEqual(sum(g["not_attempted"] for g in groups), len(gaps))
+        self.assertEqual(sum(g["attempted"] for g in groups), 1)
+        self.assertTrue(any(row["selector_required"] for row in gaps))
+        self.assertNotIn("/network-config/v1alpha1/layer2-vlan", {row["path"] for row in gaps})
