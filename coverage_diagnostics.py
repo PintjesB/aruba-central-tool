@@ -362,6 +362,12 @@ def diagnostics(bundle):
             "strategy": strategy if strategy in ("standard", "deep", "targeted") else "unknown",
             "detail_strategy": detail_strategy if detail_strategy in ("adaptive", "exhaustive") else "unknown",
             "logical_gets": sum(row["attempted"] for row in operations),
+            "exact_collection_gets_reused": count((bundle.get("api_read_coverage") or {}).get("exact_collection_gets_reused")),
+            "detail_read_plan": [{"module": m,
+                                  "candidates": count((details.get("candidate_reads_by_module") or {}).get(m)),
+                                  "initial_reads": count((details.get("initial_reads_by_module") or {}).get(m)),
+                                  "expanded_reads": count((details.get("expanded_reads_by_module") or {}).get(m))}
+                                 for m in sorted(modules & set(details.get("candidate_reads_by_module") or {}))],
             "http_get_transport": ({key: count(transport.get(key)) for key in transport_fields}
                                    if isinstance(transport, dict) else None),
             "elapsed_before_save_seconds": seconds(timing.get("elapsed_before_save_seconds")),
