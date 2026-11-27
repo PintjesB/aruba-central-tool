@@ -135,3 +135,17 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(performance["detail_strategy"], "adaptive")
         self.assertEqual(len(report["keyed_read_outcomes"]), 1)
         self.assertNotIn("PRIVATE-", json.dumps(report))
+
+
+    def test_specialized_shapes_exclude_unrecognized_keys_and_customer_values(self):
+        private = "PRIVATE-CUSTOMER"
+        bundle = {"schema": 1, "kind": "configuration_audit",
+                  "keyed_assignment_details": {"records": [
+                      {"raw": {"items": [{"scope-id": private, private: private}]}}]},
+                  "nac_portal_assets": {"list_read": {"raw": {"items": [{"imageId": private}]}}}}
+        result = diagnostics(bundle)["specialized_reads"]
+        assignment = result["assignments"]["response_shapes"][0]["shape"]
+        self.assertEqual(assignment["record_fields"]["items"], {"scope-id": 1})
+        assets = result["portal-assets"]["response_shapes"][0]["shape"]
+        self.assertEqual(assets["record_fields"]["items"], {"imageId": 1})
+        self.assertNotIn(private, json.dumps(result))
