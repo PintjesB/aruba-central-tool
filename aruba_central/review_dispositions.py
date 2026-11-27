@@ -97,3 +97,12 @@ def update_dispositions(workspace, snapshot, keys, state, note, *, replace_notes
 
 def update_disposition(workspace, snapshot, key, state, note):
     return update_dispositions(workspace, snapshot, [key], state, note, replace_notes=True)[0]
+
+
+def review_return_filters(category, state):
+    """Allow only known local worklist filters, never a caller-supplied URL."""
+    if category not in ("", "remove_override", "promote_local", "reuse_library", "duplicates", "ports"):
+        raise ValueError("Invalid return category")
+    if state and state not in STATES:
+        raise ValueError("Invalid return state")
+    return {key: value for key, value in (("category", category), ("state", state)) if value}
