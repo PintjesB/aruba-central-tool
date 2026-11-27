@@ -12,7 +12,7 @@ ROUTES = {
     "report": {"mode", "persona", "module", "scope", "view", "q", "evidence", "presentation", "group"},
     "compare": {"mode", "persona", "module", "left", "right", "view", "identity", "fields", "depth", *("scope" + str(i) for i in range(1, 6))},
     "scopes": {"mode", "persona", "device"},
-    "library": {"module"},
+    "library": {"module", "visibility", "profile"},
     "advanced": {"workflow", "group"},
     "assignments": {"module", "persona", "identity"},
     "advisor": {"finding", "group", "persona", "module", "scope", "identity"},
@@ -20,7 +20,7 @@ ROUTES = {
 LABELS = {"assessment": "Configuration assessment", "overrides": "Device overrides",
           "report": "Configuration explorer", "compare": "Compare", "library": "Library",
           "scopes": "Inventory", "advanced": "Engineering", "assignments": "Library assignments", "advisor": "Consolidation"}
-TARGET_FIELDS = {"device", "scope", "left", "right", "identity", "group", "drill", "evidence", "previous", *("scope" + str(i) for i in range(1, 6))}
+TARGET_FIELDS = {"profile", "device", "scope", "left", "right", "identity", "group", "drill", "evidence", "previous", *("scope" + str(i) for i in range(1, 6))}
 ID = re.compile(r"[0-9a-f]{32}")
 
 
