@@ -1076,6 +1076,9 @@ def library_view(workspace, query):
 
 
 def inventory_view(workspace, query):
+    if query.get("mode") == "device":
+        from .device_review import device_view
+        return device_view(workspace, query)
     loaded, empty = load(workspace, query, "Scopes", "scopes")
     if empty:
         return empty
@@ -1088,7 +1091,7 @@ def inventory_view(workspace, query):
             qualified = sum(v["review"]["qualified"] for v in views)
             href = url(root, "report", snapshot=name, persona=persona, scope=sid)
             rows.append(tr(f'<strong>{e(s.get("name") or sid)}</strong>', e(pretty(s["kind"])), e(persona_label(persona)),
-                           f'{qualified}/{len(views)}', (f'<a href="{url(root, "overrides", snapshot=name, persona=persona, device=sid)}">Compare overrides</a> · ' if s["kind"] == "device" else "") + f'<a href="{href}">Open configuration</a>'))
+                           f'{qualified}/{len(views)}', (f'<a href="{url(root, "scopes", snapshot=name, mode="device", persona=persona, device=sid)}">Review device</a> · ' if s["kind"] == "device" else "") + f'<a href="{href}">Open configuration</a>'))
     return page("Scopes", intro("Inventory", "Browse captured devices and configuration scopes.", picker)
                 + '<section>' + table(("Scope / device", "Type", "Function", "Qualified modules", ""), rows, search=True) + '</section>', workspace.nav(name))
 
