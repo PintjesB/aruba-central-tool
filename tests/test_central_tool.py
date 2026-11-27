@@ -1064,6 +1064,23 @@ class Tests(unittest.TestCase):
         self.assertNotIn("lacp", CONFIG_MODULES)
         self.assertNotIn("policy-groups", CONFIG_MODULES)
 
+    def test_shared_scope_discovery_reuses_tenant_inventory(self):
+        from central_tool import discover_scopes
+        from unittest.mock import patch
+        shared = [{"id": "1", "kind": "global", "name": "Global"},
+                  {"id": "2", "kind": "site", "name": "Site"}]
+        devices = [{"deviceFunction": "Campus AP", "scopeId": 3},
+                   {"deviceFunction": "Access Switch", "scopeId": 4}]
+        with patch("central_tool.discover_shared_scopes", return_value=shared) as read:
+            ap, _ = discover_scopes(object(), "CAMPUS_AP", devices)
+            switch, _ = discover_scopes(object(), "ACCESS_SWITCH", devices,
+                                        shared_scopes=[s for s in ap if s["kind"] != "device"])
+        read.assert_called_once()
+        self.assertEqual(ap[:2], switch[:2])
+        self.assertEqual(ap[-1]["kind"], "device")
+        self.assertEqual(switch[-1]["kind"], "device")
+        self.assertNotEqual(ap[-1]["id"], switch[-1]["id"])
+
     def test_configuration_audit_uses_persona_catalog(self):
         from central_tool import configuration_audit
         from unittest.mock import patch
