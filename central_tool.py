@@ -2595,15 +2595,28 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
                         and annotation.get("aruba-annotation:device_function", persona) == persona):
                     add(persona, sid, module, identity, "local", profile)
                     add(persona, sid, module, identity, "effective", None)
-        covered = {(sid, m, identity, kind) for p, sid, m, identity, kind in existing
-                   if p in NETWORK_PERSONAS}
+        # A matching identity alone does not establish the same body or
+        # source. Deduplicate only exact observed profile+annotation evidence.
+        covered = defaultdict(set)
+        for p, sid, m, identity, kind, profile in tasks:
+            if p in NETWORK_PERSONAS and m == module and isinstance(profile, dict):
+                covered[sid, identity, kind].add(canonical(profile))
         for view in views:
             persona, sid = view.get("persona"), str(view.get("scope", ""))
             if persona not in ("ALL_DEVICE_FUNCTIONS", "UNFILTERED_SCOPE") or not sid.isdigit():
                 continue
-            for identity, profile in sorted(parsed_profiles(view.get("effective", {}), key).items()):
-                if (sid, module, identity, "effective") not in covered:
+            effective = parsed_profiles(view.get("effective", {}), key)
+            for identity, profile in sorted(effective.items()):
+                if canonical(profile) not in covered[sid, identity, "effective"]:
                     add(persona, sid, module, identity, "effective", profile)
+            for identity, profile in sorted(parsed_profiles(view.get("committed", {}), key).items()):
+                annotation = profile.get("@")
+                if (isinstance(annotation, dict)
+                        and annotation.get("aruba-annotation:object_type") == "LOCAL"
+                        and annotation.get("aruba-annotation:inherited") is False
+                        and canonical(profile) not in covered[sid, identity, "local"]):
+                    add(persona, sid, module, identity, "local", profile)
+                    add(persona, sid, module, identity, "effective", effective.get(identity))
 
     def collect(task):
         persona, sid, module, identity, kind, profile = task
@@ -2628,7 +2641,8 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
     # Individual Ethernet reads are the only source of additional fields in
     # the first live exhaustive validation. Keep device-specific interface
     # reads and the effective counterpart of every saved local profile direct.
-    direct_modules = {"ethernet-interfaces", "vlan-interfaces", "portchannels", "layer2-vlan"}
+    # Server-group ordering also differed in live individual responses.
+    direct_modules = {"ethernet-interfaces", "vlan-interfaces", "portchannels", "layer2-vlan", "server-groups"}
     saved_selectors = {(p, sid, m, identity) for p, sid, m, identity, kind, _ in tasks
                        if kind == "local"}
     direct, groups = [], defaultdict(list)
