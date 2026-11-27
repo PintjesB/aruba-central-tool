@@ -1256,7 +1256,7 @@ class Tests(unittest.TestCase):
         initial = {"profiles": [a]}
         pages = [initial, {"profiles": [a, b]}, {"profiles": [c]}, {"profiles": []}]
         fake = Fake(pages)
-        view = read_module_view(fake, "dns", "name", {"view-type": "LIBRARY"}, paginate_uncounted=True)
+        view = read_module_view(fake, "dns", "name", {"view-type": "LOCAL"}, paginate_uncounted=True)
         self.assertEqual(set(view["profiles"]), {"a", "b", "c"})
         self.assertFalse(view["count_confirmed"])
         self.assertEqual(view["pagination_status"], "pagination_exhausted")
@@ -1265,6 +1265,22 @@ class Tests(unittest.TestCase):
         raw = read_raw_profile_collection(Fake(pages), "dns", {}, paginate_uncounted=True)
         self.assertEqual(raw["raw"]["profiles"], [a, b, c])
         self.assertFalse(raw["collection_count_verified"])
+
+    def test_uncounted_library_and_persona_mapping_preserve_unverified_records(self):
+        from central_tool import read_module_view, read_raw_profile_collection
+        for module, key, params, reason in (
+            ("dns", "name", {"view-type": "LIBRARY"}, "library_pagination_unavailable"),
+            ("device-persona-mapping", "device-type", {"view-type": "LOCAL"}, "offset_behavior_unverified")):
+            initial = {"profiles": [{key: "example"}]}
+            for read in (lambda c: read_module_view(c, module, key, params, paginate_uncounted=True),
+                         lambda c: read_raw_profile_collection(c, module, params, paginate_uncounted=True)):
+                fake = Fake([initial])
+                view = read(fake)
+                self.assertEqual(len(fake.calls), 1)
+                self.assertEqual(view["raw"], initial)
+                self.assertEqual(view["pagination_status"], reason)
+                self.assertFalse(view.get("count_confirmed", view.get("collection_count_verified")))
+                self.assertEqual(view["raw_pages"], [])
 
     def test_uncounted_pages_reject_ignored_offsets_and_conflicting_identities(self):
         from central_tool import read_module_view, read_raw_profile_collection
