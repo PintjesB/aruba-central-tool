@@ -2166,10 +2166,10 @@ def keyed_profile_read(client, module, identity_key, identity, params, collectio
 
 
 def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKERS, progress=None, *, checkpoint=None, nac_configuration=None):
-    """Deep survey of observed Library definitions and saved local identities.
+    """Deep survey of observed Library, local and effective profile identities.
 
-    Effective reads are paired with each local identity. Do not query guessed
-    identifiers, inherited-only profiles, or special multi-key resources.
+    Effective reads are paired with local identities and include inherited-only
+    profiles. Never query guessed identifiers or special multi-key resources.
     """
     contracts = keyed_profile_contracts()
     from nac_authorization import NAC_TENANT_MODULES
@@ -2192,13 +2192,14 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
                 sid = str(view["scope"])
                 local = view["local_view"]
                 effective = view["effective_view"]
-                if not sid.isdigit() or local.get("status") != "list_parsed":
+                if not sid.isdigit():
                     continue
-                for identity, profile in sorted(local["profiles"].items()):
+                saved = local.get("profiles", {}) if local.get("status") == "list_parsed" else {}
+                applied = effective.get("profiles", {}) if effective.get("status") == "list_parsed" else {}
+                for identity, profile in sorted(saved.items()):
                     tasks.append((persona, sid, module, identity, "local", profile))
-                    tasks.append((persona, sid, module, identity, "effective",
-                                  effective.get("profiles", {}).get(identity)
-                                  if effective.get("status") == "list_parsed" else None))
+                for identity in sorted(saved.keys() | applied.keys()):
+                    tasks.append((persona, sid, module, identity, "effective", applied.get(identity)))
 
     def collect(task):
         persona, sid, module, identity, kind, profile = task
