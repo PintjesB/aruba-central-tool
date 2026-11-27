@@ -200,6 +200,31 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(rows["b"]["status"], "partial")
         self.assertEqual(rows["c"]["status"], "unqualified")
 
+    def test_tenant_snapshot_names_are_safe_and_preserve_private_label(self):
+        from aruba_central.config_app import snapshot_filename, tenant_label
+        self.assertEqual(snapshot_filename("20261127-123456-000000", "Example Customer"),
+                         "config-audit-Example-Customer-20261127-123456-000000.json")
+        self.assertNotIn("/", snapshot_filename("stamp", "../../Customer"))
+        self.assertEqual(snapshot_filename("stamp", ""), "config-audit-stamp.json")
+        with self.assertRaises(ValueError):
+            tenant_label("x\nname")
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory, lambda progress=None: self.fixture())
+            self.assertTrue(workspace.start_refresh(tenant_name="Example & Customer"))
+            deadline = time.monotonic() + 3
+            while workspace.state == "running" and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertEqual(workspace.state, "complete")
+            files = audit_files(Path(directory))
+            self.assertEqual(len(files), 1)
+            self.assertTrue(files[0].name.startswith("config-audit-Example-Customer-"))
+            data = read_audit(Path(directory), files[0].name)
+            self.assertEqual(data["tenant_name"], "Example & Customer")
+            self.assertEqual(data["tenant_name_source"], "operator_label")
+            self.assertIn("Example &amp; Customer", workspace.home())
+            from aruba_central.coverage_diagnostics import diagnostics
+            self.assertNotIn("Example & Customer", json.dumps(diagnostics(data)))
+
     def test_one_shot_credentials_are_not_saved_or_retained(self):
         from unittest.mock import patch
         from aruba_central.config_app import credential_refresh
