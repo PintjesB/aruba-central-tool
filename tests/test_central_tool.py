@@ -1657,6 +1657,28 @@ class Tests(unittest.TestCase):
         client._successful_get_latency.extend([.05] * 128)
         self.assertEqual(client.recommended_audit_workers(AUDIT_WORKERS), AUDIT_WORKERS)
 
+    def test_pacing_gate_rechecks_cooldown_after_sleep(self):
+        from unittest.mock import patch
+        client = Central(EU_REGIONS[0], token="test")
+        clock = [100.0]
+        sleeps = []
+        client._next_request_at = 100.1
+        def sleep(seconds):
+            sleeps.append(seconds)
+            clock[0] += seconds
+            if len(sleeps) == 1:
+                # A concurrent response can extend the shared cooldown
+                # while the next admission waits.
+                client._rate_limit_response(2)
+        with patch("aruba_central.central_tool.time.monotonic", side_effect=lambda: clock[0]), patch(
+            "aruba_central.central_tool.time.sleep", side_effect=sleep
+        ):
+            client._wait_rate_limit()
+        self.assertEqual(len(sleeps), 2)
+        self.assertAlmostEqual(sleeps[0], .1)
+        self.assertAlmostEqual(sleeps[1], 2)
+        self.assertAlmostEqual(client._next_request_at, clock[0] + 1 / 8)
+
     def test_rate_limit_backoff_and_gradual_recovery_respects_cap(self):
         from unittest.mock import patch
         client = Central(EU_REGIONS[0], token="test")
