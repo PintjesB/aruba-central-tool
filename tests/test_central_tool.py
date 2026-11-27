@@ -872,6 +872,33 @@ class Tests(unittest.TestCase):
         self.assertEqual(sum("/server-groups/" in p for p, _ in client.calls), 5)
         self.assertEqual(result["collection_only_by_module"], {"dns": 1})
 
+    def test_adaptive_inherited_higher_scopes_are_grouped_by_scope_kind(self):
+        from central_tool import capture_keyed_profile_details
+        profile = {"name": "dns", "@": {"aruba-annotation:inherited": True}}
+        scopes = [{"scope": str(i), "scope_kind": kind,
+                   "local_view": {"status": "list_parsed", "profiles": {}},
+                   "effective_view": {"status": "list_parsed", "profiles": {"dns": profile}}}
+                  for kind, numbers in (("site", range(1, 5)), ("group", range(5, 8)))
+                  for i in numbers]
+        results = {"ACCESS_SWITCH": {"modules": {"dns": {"scope_results": scopes}}}}
+        class Client:
+            def __init__(self):
+                self.calls = []
+            def get(self, path, **params):
+                self.calls.append(params["scope-id"])
+                return {"name": "dns"}
+        client = Client()
+        result = capture_keyed_profile_details(client, results, {}, workers=1, adaptive=True)
+        self.assertEqual(client.calls, ["1", "4", "5", "7"])
+        self.assertEqual(result["candidate_reads_by_module"], {"dns": 7})
+        self.assertEqual(result["initial_reads_by_module"], {"dns": 4})
+        self.assertEqual(result["collection_only_by_module"], {"dns": 3})
+        self.assertEqual(result["profiles"]["ACCESS_SWITCH"]["2"]["dns"]["dns"]["effective"]["status"],
+                         "collection_only_sampled")
+        client = Client()
+        capture_keyed_profile_details(client, results, {}, workers=1, adaptive=False)
+        self.assertEqual(len(client.calls), 7)
+
     def test_adaptive_keyed_details_keep_scope_data_and_expand_on_disagreement(self):
         from central_tool import capture_keyed_profile_details
         profile = {"name": "dns", "enable": True, "@": {
