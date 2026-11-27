@@ -585,6 +585,32 @@ class Tests(unittest.TestCase):
         self.assertFalse(coverage["complete"])
         self.assertFalse(result["safe_to_apply"])
 
+    def test_single_supplemental_module_uses_parallel_scope_workers(self):
+        from central_tool import inspect_unadapted_profiles
+        import threading
+        barrier = threading.Barrier(2)
+        lock = threading.Lock()
+        calls = []
+
+        class ScopeClient:
+            def get(self, path, **params):
+                with lock:
+                    calls.append(dict(params))
+                if params.get("scope-id") in ("12", "13") and params.get("effective") == "false":
+                    barrier.wait(timeout=5)
+                return {}
+
+        discovery = {"unknown_adapter_modules": [], "survey_modules": ["example"],
+                     "modules": {}, "documented_catalog": {"modules": {
+                         "example": {"source": "vendor_collection", "all_function_scope": True}}}}
+        scopes = {"ACCESS_SWITCH": [{"id": "12", "kind": "device"},
+                                   {"id": "13", "kind": "device"}]}
+        result = inspect_unadapted_profiles(ScopeClient(), discovery, {}, {}, workers=2,
+                    scopes_by_persona=scopes, deep_catalog=True)["example"]
+        self.assertEqual([view["scope"] for view in result["source_views"]], ["12", "13"])
+        self.assertEqual(len(calls), 5)
+        self.assertEqual(result["catalog_scope_coverage"]["unfiltered_scopes_not_surveyed"], 0)
+
     def test_targeted_catalog_limits_empty_modules_and_expands_positive_evidence(self):
         from central_tool import inspect_unadapted_profiles
         discovery = {"unknown_adapter_modules": [], "survey_modules": ["example"],

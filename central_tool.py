@@ -2173,17 +2173,24 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
         except (RuntimeError, OSError, ValueError):
             return {"status": "read_failed", "collection_count_verified": False}
 
+    # The module coordinators do not perform network reads. A separate shared
+    # executor schedules individual scope pairs with one bounded HTTP worker
+    # budget for the entire supplemental survey, including its slow tail.
+    def scope_map(function, items):
+        futures = [scope_pool.submit(function, item) for item in items]
+        return [future.result() for future in futures]
+
     def inspect(module):
-        evidence = []
-        for (m, persona, sid), instances in sorted(targets.items()):
-            if m != module:
-                continue
+        def read_typed_scope(task):
+            persona, sid, instances = task
             base = {"view-type": "LOCAL", "scope-id": sid, "device-function": persona, "detailed": "true"}
-            committed = capture(module, {**base, "effective": "false"})
-            effective = capture(module, {**base, "effective": "true"})
-            evidence.append({"persona": persona, "scope": sid,
-                             "observed_instances": sorted(instances), "committed": committed,
-                             "effective": effective})
+            return {"persona": persona, "scope": sid, "observed_instances": sorted(instances),
+                    "committed": capture(module, {**base, "effective": "false"}),
+                    "effective": capture(module, {**base, "effective": "true"})}
+
+        evidence = scope_map(read_typed_scope, (
+            (persona, sid, instances) for (m, persona, sid), instances in sorted(targets.items())
+            if m == module))
         # Documented collections absent from discovery still receive a Global
         # read for all functions. Keep the mixed-function results separate from
         # identified profile evidence and never use them to qualify a change.
@@ -2194,7 +2201,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
         survey_ids = all_scope_ids if deep_catalog and (all_functions or documented_scope) else (
             global_ids if all_functions else [])
         survey_label = "ALL_DEVICE_FUNCTIONS" if all_functions else "UNFILTERED_SCOPE"
-        library_read = capture(module, {"view-type": "LIBRARY", "detailed": "true"}) if targeted_catalog else None
+        library_read = scope_pool.submit(capture, module, {"view-type": "LIBRARY", "detailed": "true"}).result() if targeted_catalog else None
         def read_catalog_scope(sid):
             base = {"view-type": "LOCAL", "scope-id": sid, "detailed": "true"}
             return {"persona": survey_label, "scope": sid, "observed_instances": [],
@@ -2210,7 +2217,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
             # Missing evidence does not prove absence. Keep skipped scopes explicit.
             candidate_ids = set(survey_ids)
             initial_ids = sorted(candidate_ids & set(global_ids))
-            catalog_views.extend(read_catalog_scope(sid) for sid in initial_ids)
+            catalog_views.extend(scope_map(read_catalog_scope, initial_ids))
             observed = (bool(discovery["modules"].get(module)) or bool(evidence)
                         or has_settings(library_read)
                         or any(has_settings(v[side]) for v in catalog_views for side in ("committed", "effective"))
@@ -2219,9 +2226,9 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                                for scope in entry["modules"].get(module, {}).get("scope_results", [])
                                for side in ("local", "effective")))
             survey_ids = sorted(candidate_ids) if observed else initial_ids
-            catalog_views.extend(read_catalog_scope(sid) for sid in survey_ids if sid not in initial_ids)
+            catalog_views.extend(scope_map(read_catalog_scope, (sid for sid in survey_ids if sid not in initial_ids)))
         else:
-            catalog_views.extend(read_catalog_scope(sid) for sid in survey_ids)
+            catalog_views.extend(scope_map(read_catalog_scope, survey_ids))
         # Discover functions from explicit Global annotations. Positive data
         # warrants targeted scope reads even if the assignment inventory missed
         # the module. An empty Global response is never proof of no local data.
@@ -2247,20 +2254,19 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                                 if view["scope"] in global_ids:
                                     global_functions.add(function)
         visited = {(v["persona"], v["scope"]) for v in evidence}
+        additional_targets = []
         for function in sorted(observed_functions):
             for scope in (scopes_by_persona or {}).get(function, []):
                 sid = str(scope["id"])
                 if not sid.isdigit() or (function, sid) in visited:
                     continue
-                base = {"view-type": "LOCAL", "scope-id": sid, "device-function": function, "detailed": "true"}
-                evidence.append({"persona": function, "scope": sid, "observed_instances": [],
-                                 "committed": capture(module, {**base, "effective": "false"}),
-                                 "effective": capture(module, {**base, "effective": "true"})})
+                additional_targets.append((function, sid, ()))
                 visited.add((function, sid))
+        evidence.extend(scope_map(read_typed_scope, additional_targets))
         result = {"status": "supplemental_raw" if module in CONFIG_MODULES else "unqualified_adapter",
                   "source_views": evidence + catalog_views,
                   "scope_read_outcomes": dict(Counter(v[k]["status"] for v in evidence + catalog_views for k in ("committed", "effective"))),
-                  "library": library_read if targeted_catalog else capture(module, {"view-type": "LIBRARY", "detailed": "true"}),
+                  "library": library_read if targeted_catalog else scope_pool.submit(capture, module, {"view-type": "LIBRARY", "detailed": "true"}).result(),
                   "catalog_scope_coverage": {"global_scopes_attempted": sum(v["scope"] in global_ids for v in catalog_views),
                        "global_observed_functions": sorted(global_functions),
                        "observed_functions": sorted(observed_functions),
@@ -2281,9 +2287,10 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
               f"Library={result['library']['status']}", flush=True)
         return module, result
     audit_progress(progress, "Additional profile types", 0, len(unknown), "Inspecting discovered modules")
-    return dict(ordered_parallel(sorted(unknown), inspect, workers,
-                lambda done, total: audit_progress(progress, "Additional profile types", done, total,
-                                                   "Inspecting discovered modules")))
+    with ThreadPoolExecutor(max_workers=max(1, min(AUDIT_WORKERS, workers))) as scope_pool:
+        return dict(ordered_parallel(sorted(unknown), inspect, workers,
+                    lambda done, total: audit_progress(progress, "Additional profile types", done, total,
+                                                       "Inspecting discovered modules")))
 
 
 def library_inventory(client, modules, assignment_view=None, scope_map_view=None, workers=1, progress=None, *, checkpoint=None, paginate_uncounted=False):
