@@ -66,7 +66,8 @@ class ReadCoverage:
         """
         if (path not in self.exact
                 or not re.fullmatch(r"/network-config/v1alpha1/[a-z][a-z0-9-]*", path)
-                or params.get("view-type") not in ("LOCAL", "LIBRARY")):
+                or params.get("view-type") not in ("LOCAL", "LIBRARY")
+                or {"limit", "offset"} & params.keys()):
             return self._get(path, **params)
         key = (path, json.dumps(params, sort_keys=True, separators=(",", ":")))
         while True:
@@ -84,9 +85,7 @@ class ReadCoverage:
             future.result()
         try:
             result = self._get(path, **params)
-            if isinstance(result, dict) and any(
-                    k not in ("metadata", "@") and isinstance(v, (list, dict)) and v
-                    for k, v in result.items()):
+            if self._complete_positive_collection(result, params):
                 payload = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                 if len(payload) <= 64 * 1024 * 1024:
                     with self.lock:
@@ -100,6 +99,26 @@ class ReadCoverage:
             with self.lock:
                 self.inflight.pop(key, None)
                 future.set_result(None)
+
+    @staticmethod
+    def _complete_positive_collection(result, params):
+        if not isinstance(result, dict):
+            return False
+        meta = result.get("metadata")
+        lists = [(k, v) for k, v in result.items() if k != "metadata" and isinstance(v, list)]
+        if not isinstance(meta, dict) or len(lists) != 1 or set(result) != {"metadata", lists[0][0]}:
+            return False
+        rows = lists[0][1]
+        counts = meta.get("count_objects_in_module", {})
+        if not rows or not isinstance(counts, dict) or not all(isinstance(v, dict) for v in rows):
+            return False
+        expected = counts.get(params.get("object-type", "ANY"))
+        total = meta.get("total", expected)
+        return (type(total) is int and total == len(rows)
+                and (expected is None or type(expected) is int and expected == total)
+                and type(meta.get("count", total)) is int and meta.get("count", total) == total
+                and type(meta.get("offset", 0)) is int and meta.get("offset", 0) in (0, total)
+                and len({json.dumps(row, sort_keys=True) for row in rows}) == total)
 
     def _get(self, path, **params):
         from central_tool import APIError
