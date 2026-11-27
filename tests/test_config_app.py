@@ -61,6 +61,37 @@ class WorkspaceTests(unittest.TestCase):
         profiles["b"] = scope(detail(True))
         self.assertEqual(compare_devices(bundle, "ACCESS_SWITCH", "a", "b")[0]["status"], "exact_match")
 
+    def test_supplemental_browser_lists_and_compares_observed_profiles(self):
+        data = self.fixture()
+        def captured(*rows):
+            return {"status": "response_received", "raw": {"portals": list(rows)}}
+        local = {"portal-id": "portal-a", "description": "Local"}
+        effective = {"portal-id": "portal-a", "description": "Effective"}
+        data["unadapted_profiles"] = {"portals": {"status": "supplemental_raw",
+            "library": captured(local), "source_views": [{"persona": "ACCESS_SWITCH",
+                "scope": "a", "observed_instances": [], "committed": captured(local),
+                "effective": captured(effective, {"portal-id": "portal-b", "enable": False})}]}}
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            name = "config-audit-supplemental.json"
+            (Path(directory) / name).write_text(json.dumps(data), encoding="utf-8")
+            query = {"snapshot": name, "module": "portals", "persona": "ACCESS_SWITCH", "scope": "a"}
+            with patch("central_tool.refresh_configuration_review", side_effect=lambda data: data) as review:
+                html = workspace.unadapted(query)
+                self.assertIn("Observed profiles", html)
+                self.assertIn("Different observed settings", html)
+                self.assertIn("One view observed; other unverified", html)
+                html = workspace.unadapted({**query, "profile": "portal-a"})
+                self.assertIn("Local", html)
+                self.assertIn("Effective", html)
+                self.assertIn("Back to observed profiles", html)
+                self.assertEqual(review.call_count, 1)
+                with self.assertRaises(ValueError):
+                    workspace.unadapted({**query, "profile": "unknown"})
+                html = workspace.unadapted({"snapshot": name, "module": "portals"})
+                self.assertIn("Observed profiles", html)
+                self.assertIn("portal-a", html)
+
     def test_reviewed_snapshot_cache_is_bounded_and_invalidated_by_file_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace(directory)

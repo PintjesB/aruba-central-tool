@@ -540,11 +540,11 @@ if(panel.dataset.state==='running')poll();
         return library_view(self, query)
 
     def unadapted(self, query):
-        from workspace_ui import property_table, table, tr, status, raw, module_label, persona_label, badge
-        from central_tool import qualify_observed_identities
+        from workspace_ui import property_table, table, tr, status, raw, module_label, persona_label, badge, diff_table
+        from central_tool import qualify_observed_identities, keyed_profile_contracts, observed_profile_candidates, field_differences, profile_body
         root = "/" + self.token + "/"
         name, module = query["snapshot"], query["module"]
-        bundle = read_audit(self.directory, name)
+        bundle = self.reviewed_snapshot(name)
         evidence = bundle.get("unadapted_profiles", {}).get(module)
         if evidence is None:
             return page("Profile evidence", "<p>No captured evidence for this profile type. Collect a fresh audit.</p>", self.nav(name))
@@ -568,6 +568,45 @@ if(panel.dataset.state==='running')poll();
             else:
                 display = '<p class="empty">Structured settings unavailable.</p>'
             return status(read["status"]) + display + raw(read, "Complete captured response")
+        identity_key = keyed_profile_contracts(include_raw=True).get(module)
+        selected_identity = query.get("profile")
+        def profile_table(reads, persona=None, scope=None):
+            if not identity_key:
+                return ""
+            candidates = {label: observed_profile_candidates(read, identity_key)
+                          for label, read in reads.items()}
+            identities = sorted(set().union(*(set(rows) for rows in candidates.values())))
+            if not identities:
+                return ""
+            params = {} if persona is None else {"persona": persona, "scope": scope}
+            def comparison(identity):
+                if len(candidates) != 2:
+                    return "Observed"
+                left, right = (rows.get(identity) for rows in candidates.values())
+                if left is None or right is None:
+                    return "One view observed; other unverified"
+                return "Identical observed settings" if profile_body(left) == profile_body(right) else "Different observed settings"
+            html = '<section><h3>Observed profiles</h3><p>Positive identities from the documented key. Missing records are not proof of absence; source and completeness remain unverified.</p>'
+            if selected_identity is not None:
+                if selected_identity not in identities:
+                    raise ValueError("Unknown observed profile")
+                html += '<p><a href="' + link(**params) + '">Back to observed profiles</a></p><h4>' + e(selected_identity) + '</h4>'
+                for label, rows in candidates.items():
+                    html += '<h4>' + e(label) + '</h4>'
+                    if selected_identity in rows:
+                        html += property_table(profile_body(rows[selected_identity]))
+                    else:
+                        html += '<p class="note">No independently qualified record observed.</p>'
+                if len(candidates) == 2:
+                    left, right = (rows.get(selected_identity) for rows in candidates.values())
+                    if left is not None and right is not None:
+                        html += diff_table(field_differences(profile_body(left), profile_body(right)),
+                                           *candidates.keys())
+                return html + '</section>'
+            return html + table(("Profile", *candidates.keys(), "Comparison", ""), [
+                tr(e(identity), *("Observed" if identity in rows else "Unverified" for rows in candidates.values()),
+                   e(comparison(identity)), '<a href="' + link(**params, profile=identity) + '">Inspect profile</a>')
+                for identity in identities], search=True) + '</section>'
         names = {(persona, str(s["id"])): s.get("name") or s["id"]
                  for persona, entry in bundle["results"].items() for s in entry["scopes"]}
         identities = qualify_observed_identities(evidence)
@@ -597,15 +636,18 @@ if(panel.dataset.state==='running')poll();
                     body += f'<h4>{e(side.title())} settings</h4>' + status(item["status"])
                     if item.get("settings") is not None:
                         body += property_table(item["settings"])
-            body += '<h3>Committed configuration</h3>' + settings(view["committed"])
-            body += '<h3>Effective configuration</h3>' + settings(view["effective"]) + '</section>'
+            body += profile_table({"Committed": view["committed"], "Effective": view["effective"]},
+                                  selected_persona, selected_scope)
+            body += '<details><summary>Committed configuration (complete response)</summary>' + settings(view["committed"]) + '</details>'
+            body += '<details><summary>Effective configuration (complete response)</summary>' + settings(view["effective"]) + '</details></section>'
             body += individual(selected_persona, selected_scope)
         else:
             library = evidence["library"]
             body += '<section><h2>Library</h2>'
             if evidence.get("singleton_library", {}).get("settings") is not None:
                 body += property_table(evidence["singleton_library"]["settings"])
-            body += settings(library) + '</section>'
+            body += profile_table({"Library": library})
+            body += '<details><summary>Complete Library response</summary>' + settings(library) + '</details></section>'
             body += individual("Library", "")
             views = evidence["source_views"]
             if identities:
