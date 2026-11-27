@@ -62,6 +62,33 @@ def valid_assignment_selector(identity):
             and not any(ord(c) < 32 or ord(c) == 127 for c in instance))
 
 
+def legacy_assignment_status(raw, identity):
+    """Validate the observed scope-map representation of a keyed assignment.
+
+    The resource string is module/instance (split only once, since an
+    Ethernet interface name itself contains slashes). Bare resources do
+    not independently establish a named profile instance.
+    """
+    if not isinstance(raw, dict) or type(raw.get("scope-id")) not in (int, str):
+        return "schema_unresolved"
+    sid, persona, module, instance = identity
+    if str(raw["scope-id"]) != sid or any(
+            key in raw and str(raw[key]) != expected
+            for key, expected in zip(ASSIGNMENT_KEYS[1:], identity[1:])):
+        return "identity_unresolved"
+    if "persona" in raw and raw["persona"] != persona:
+        return "identity_unresolved"
+    if "resource" in raw:
+        resource = raw["resource"]
+        if not isinstance(resource, str):
+            return "identity_unresolved"
+        if resource not in (module, module + "/" + instance):
+            return "identity_unresolved"
+        if resource == module + "/" + instance and raw.get("persona") == persona:
+            return "identity_observed"
+    return "scope_only_observed"
+
+
 def keyed_assignment_capture(client, assignments, workers=1, progress=None):
     tasks = {}
     invalid = 0
@@ -90,20 +117,13 @@ def keyed_assignment_capture(client, assignments, workers=1, progress=None):
                     value = raw.get("config-assignment")
                     rows = value if isinstance(value, list) else [value] if isinstance(value, dict) else None
             if rows is None:
-                # Live keyed reads can return a scope object instead of the
-                # documented assignment. A matching scope is positive scope
-                # evidence only; never infer a missing assignment identity
-                # from the URL or count it as a verified assignment.
-                if isinstance(raw, dict) and type(raw.get("scope-id")) in (int, str):
-                    if str(raw["scope-id"]) != sid or any(
-                            key in raw and str(raw[key]) != expected
-                            for key, expected in zip(ASSIGNMENT_KEYS[1:], identity[1:])):
-                        result["status"] = "identity_unresolved"
-                    else:
-                        result["status"] = "scope_only_observed"
-                        result["missing_identity_fields"] = [key for key in ASSIGNMENT_KEYS if key not in raw]
-                else:
-                    result["status"] = "schema_unresolved"
+                result["status"] = legacy_assignment_status(raw, identity)
+                if result["status"] == "identity_observed":
+                    result["identity_format"] = "scope_map_resource"
+                    # Different response representations are not directly
+                    # comparable as full bodies.
+                elif result["status"] == "scope_only_observed":
+                    result["missing_identity_fields"] = [key for key in ASSIGNMENT_KEYS if key not in raw]
             elif len(rows) != 1 or assignment_identity(rows[0]) != identity:
                 result["status"] = "identity_unresolved"
             else:
