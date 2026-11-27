@@ -11,7 +11,7 @@ TOPOLOGY_REVIEW = {"ospfv2", "ospfv3", "bgp", "stp", "stp-gw"}
 SUPPORTED = ADDITIVE | ATOMIC
 
 
-def nearest_fallback(entry, module, device, identity, local, effective, annotations):
+def nearest_fallback(entry, module, device, identity, local, effective, annotations, *, index=None):
     """Find the first directly observed ancestor definition, not merely a Global match.
 
     Unknown membership, incomplete absence, conflicting source evidence and
@@ -35,12 +35,15 @@ def nearest_fallback(entry, module, device, identity, local, effective, annotati
             or annotations.get("aruba-annotation:object_type") != "LOCAL"):
         result["blockers"].append("Device-local source or saved/effective equality not confirmed")
         return result
-    membership = scope_memberships(entry["scopes"]).get(device)
+    if index is None:
+        index = (scope_memberships(entry["scopes"]),
+                 {s["id"]: s for s in entry["scopes"]},
+                 {s["scope"]: s for s in entry["modules"].get(module, {}).get("scope_results", [])})
+    members, scopes, views = index
+    membership = members.get(device)
     if not membership:
         result["blockers"].append("Device membership unavailable")
         return result
-    scopes = {s["id"]: s for s in entry["scopes"]}
-    views = {s["scope"]: s for s in entry["modules"].get(module, {}).get("scope_results", [])}
     if atomic:
         for key in ("local_view", "effective_view"):
             view = views.get(device, {}).get(key, {})
