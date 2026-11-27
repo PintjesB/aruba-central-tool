@@ -9,7 +9,7 @@ def report_view(workspace, query):
     if empty:
         return empty
     root, name, bundle, picker = loaded
-    report = assessment(bundle, engineering=workspace.advanced_snapshot(bundle))
+    report = assessment(bundle, findings=workspace.consolidation_snapshot(bundle), engineering=workspace.advanced_snapshot(bundle))
     coverage = report["coverage"]
     expected, parsed, confirmed = (coverage.get(key, 0) for key in ("expected", "parsed", "count_confirmed"))
     actions, engineering, assignments = (report[k] for k in ("actions", "engineering", "assignments"))
