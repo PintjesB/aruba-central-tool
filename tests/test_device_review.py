@@ -79,3 +79,20 @@ class DeviceReviewTests(unittest.TestCase):
             self.assertIn("Review discrepancies", html)
             self.assertIn("mode=keyed", html)
             self.assertIn("scope=3", html)
+
+
+    def test_unqualified_module_has_visible_diagnostic_action(self):
+        bundle = fixture()
+        entry = bundle["results"]["ACCESS_SWITCH"]
+        row = next(v for v in entry["modules"]["layer2-vlan"]["scope_results"] if v["scope"] == "3")
+        row["effective_view"] = {"status": "request_rejected", "http_error": 400, "profiles": {}}
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(bundle))
+            html = Workspace(directory).scopes({"snapshot": name, "mode": "device", "persona": "ACCESS_SWITCH", "device": "3"})
+            self.assertIn("structured modules need evidence review", html)
+            self.assertIn("API request rejected", html)
+            self.assertIn("Review incomplete evidence", html)
+            self.assertIn("Evidence gap", html)
+            self.assertIn("module=layer2-vlan&amp;view=diagnostics", html)
+            self.assertIn("Not assessed", html)
