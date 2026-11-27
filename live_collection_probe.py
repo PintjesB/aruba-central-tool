@@ -281,7 +281,7 @@ def specialized_probe(client, previous):
         used[persona] += 1
         sampled.append(row)
     assignments = keyed_assignment_capture(client, {"rows": sampled})
-    assets = capture_portal_assets(client)
+    assets = capture_portal_assets(client, detail_limit=2)
     return {"schema": 1, "kind": "anonymous_specialized_live_probe",
             "collections": collections, "hierarchy": hierarchy_rows,
             "assignments": {"sampled": len(sampled), "outcomes": assignments["outcomes"]},
