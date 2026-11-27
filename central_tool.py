@@ -7,7 +7,8 @@ import sys
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
+import math
 from functools import lru_cache
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -132,11 +133,28 @@ class Central:
         self._get_metrics_lock = threading.Lock()
         self._get_metrics = Counter()
         self._validator_metrics = Counter()
+        self._successful_get_latency = deque(maxlen=128)
+        self._network_metrics = Counter()
 
     def get_transport_metrics(self):
         """Cumulative GET transport attempts, not identifiers or query values."""
         with self._get_metrics_lock:
             return dict(self._get_metrics)
+
+    def get_network_metrics(self):
+        with self._get_metrics_lock:
+            return dict(self._network_metrics)
+
+    def recommended_audit_workers(self, default):
+        """Adapt the next phase to successful GET latency, not retry delays."""
+        with self._rate_lock:
+            throttled = self._request_interval > 1 / 9
+        with self._get_metrics_lock:
+            samples = sorted(self._successful_get_latency)
+        if throttled or len(samples) < 32:
+            return default
+        p90 = samples[math.ceil(len(samples) * .90) - 1]
+        return min(AUDIT_MAX_WORKERS, max(default, math.ceil(9 * p90 * 1.25) + 2))
 
     def get_validator_metrics(self):
         """Aggregate validator availability; never retain header values."""
@@ -217,9 +235,12 @@ class Central:
         is_get = request.get_method() == "GET"
         for attempt in range(4):
             if is_get:
+                wait_started = time.perf_counter()
                 self._wait_rate_limit()
+                network_started = time.perf_counter()
                 with self._get_metrics_lock:
                     self._get_metrics["http_get_attempts"] += 1
+                    self._network_metrics["rate_wait_ms"] += round((network_started - wait_started) * 1000)
                     if attempt:
                         self._get_metrics["http_get_retries"] += 1
             try:
@@ -232,6 +253,12 @@ class Central:
                             persistent.close()
                         raise
                     self._observe_config_validators(request, response)
+                if is_get:
+                    elapsed = max(0, time.perf_counter() - network_started)
+                    with self._get_metrics_lock:
+                        self._successful_get_latency.append(elapsed)
+                        self._network_metrics["successful_gets"] += 1
+                        self._network_metrics["successful_get_ms"] += round(elapsed * 1000)
                 if custom_get:
                     with self._rate_lock:
                         self._custom_api_terminal_500s = 0
@@ -2024,6 +2051,7 @@ def qualify_observed_identities(evidence):
 
 
 AUDIT_WORKERS = 12
+AUDIT_MAX_WORKERS = 24
 
 
 def ordered_parallel(items, function, workers=1, completed=None, item_completed=None, result_completed=None):
@@ -2041,7 +2069,7 @@ def ordered_parallel(items, function, workers=1, completed=None, item_completed=
                 item_completed(len(result), len(items), item)
         return result
     result = [None] * len(items)
-    active = min(AUDIT_WORKERS, workers, len(items))
+    active = min(AUDIT_MAX_WORKERS, workers, len(items))
     with ThreadPoolExecutor(max_workers=active) as pool:
         # Bound queued work as well as active threads. Avoid creating thousands
         # of futures at once and stop admitting work after a fatal response.
@@ -2474,7 +2502,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
               f"Library={result['library']['status']}", flush=True)
         return module, result
     audit_progress(progress, "Additional profile types", 0, len(unknown), "Inspecting discovered modules")
-    with ThreadPoolExecutor(max_workers=max(1, min(AUDIT_WORKERS, workers))) as scope_pool:
+    with ThreadPoolExecutor(max_workers=max(1, min(AUDIT_MAX_WORKERS, workers))) as scope_pool:
         return dict(ordered_parallel(sorted(unknown), inspect, workers,
                     lambda done, total: audit_progress(progress, "Additional profile types", done, total,
                                                        "Inspecting discovered modules")))
