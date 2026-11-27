@@ -8,6 +8,7 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter, defaultdict
+from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError
@@ -1449,7 +1450,88 @@ def annotated_committed_local(payload, identity):
             "qualification": "annotated_committed_local"}
 
 
-def read_module_view(client, module, identity, params):
+@lru_cache(maxsize=1)
+def documented_offset_collections():
+    """Only paginate collection paths with explicit vendor limit/offset parameters."""
+    catalog = json.loads(Path(__file__).with_name("central_api_catalog.json").read_text(encoding="utf-8"))
+    return frozenset(m.group(1) for request in catalog["get_requests"]
+                     if request["method"] == "GET"
+                     and (m := re.fullmatch(r"/network-config/v1alpha1/([a-z][a-z0-9-]*)", request["path"]))
+                     and {"limit", "offset"} <= set(request["query"]))
+
+
+def uncounted_profile_pages(client, module, params, raw, identity=None):
+    """Follow explicit offsets when no total is advertised, retaining all raw evidence.
+
+    Exhaustion is not a verified total and does not authorize absence or changes.
+    Reject ignored offsets, contradictory metadata, and changing identities.
+    """
+    if module not in documented_offset_collections() or {"limit", "offset"} & params.keys():
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    lists = [(key, value) for key, value in raw.items() if key != "metadata" and isinstance(value, list)]
+    if len(lists) != 1 or set(raw) - {"metadata", lists[0][0]}:
+        return {}
+    envelope, initial = lists[0]
+    if not initial or not all(isinstance(row, dict) for row in initial):
+        return {}
+    meta = raw.get("metadata", {})
+    if not isinstance(meta, dict):
+        return {}
+    object_type = params.get("object-type", "ANY")
+    def valid_metadata(metadata, size, offset):
+        if not isinstance(metadata, dict):
+            return False
+        counts = metadata.get("count_objects_in_module", {})
+        return (isinstance(counts, dict) and counts == meta.get("count_objects_in_module", {})
+                and metadata.get("total") is None and counts.get(object_type) is None
+                and type(metadata.get("count", size)) is int and metadata.get("count", size) == size
+                and type(metadata.get("offset", offset)) is int
+                and metadata.get("offset", offset) in (offset, offset + size))
+    if not valid_metadata(meta, len(initial), 0):
+        return {}
+    pages, combined, seen, seen_ids = [], [], set(), set()
+    def incomplete(reason, **extra):
+        return {"pagination_status": reason, "raw_pages": pages, **extra}
+    for _ in range(10000):
+        try:
+            page = client.get(ALPHA + "/" + module, **params, limit=100, offset=len(combined))
+        except APIError as exc:
+            if exc.status in (401, 429):
+                raise
+            return incomplete("request_failed", http_error=exc.status)
+        except (RuntimeError, OSError, ValueError):
+            return incomplete("read_failed")
+        pages.append(page)
+        if not isinstance(page, dict) or set(page) - {"metadata", envelope} or envelope not in page:
+            return incomplete("schema_changed")
+        batch = page[envelope]
+        if (not isinstance(batch, list) or len(batch) > 100 or not all(isinstance(row, dict) for row in batch)
+                or not valid_metadata(page.get("metadata", {}), len(batch), len(combined))):
+            return incomplete("count_or_offset_changed")
+        if not batch:
+            if Counter(canonical(item) for item in initial) - Counter(canonical(item) for item in combined):
+                return incomplete("initial_response_changed")
+            merged = {envelope: combined}
+            if "metadata" in raw:
+                merged["metadata"] = {**meta, "count": len(combined), "offset": 0}
+            return {"pagination_status": "pagination_exhausted", "raw_pages": pages,
+                    "initial_raw": raw, "raw": merged}
+        signatures = [canonical(item) for item in batch]
+        if len(set(signatures)) != len(signatures) or seen.intersection(signatures):
+            return incomplete("duplicate_records")
+        if identity is not None:
+            parsed = module_view({envelope: batch}, identity, object_type)
+            if parsed["status"] != "list_parsed" or seen_ids.intersection(parsed["profiles"]):
+                return incomplete("duplicate_or_invalid_identity")
+            seen_ids.update(parsed["profiles"])
+        seen.update(signatures)
+        combined.extend(batch)
+    return incomplete("page_limit_reached")
+
+
+def read_module_view(client, module, identity, params, *, paginate_uncounted=False):
     try:
         raw = client.get(ALPHA + "/" + module, **params)
     except APIError as exc:
@@ -1459,6 +1541,11 @@ def read_module_view(client, module, identity, params):
                 "http_error": exc.status, "profiles": {}}
     object_type = params.get("object-type", "ANY")
     parsed = module_view(raw, identity, object_type)
+    if paginate_uncounted and parsed["status"] == "list_parsed" and not parsed.get("count_confirmed"):
+        evidence = uncounted_profile_pages(client, module, params, raw, identity)
+        if "raw" in evidence:
+            parsed = module_view(evidence["raw"], identity, object_type)
+        return {**parsed, "raw": raw, **evidence}
     # Central often returns complete unpaginated views. Recover only a proven
     # truncated collection, never reinterpret contradictory source counts.
     if parsed["status"] != "count_mismatch" or not isinstance(raw, dict):
@@ -1517,7 +1604,7 @@ def read_module_view(client, module, identity, params):
     return incomplete("page_limit_reached")
 
 
-def recover_local_view(client, module, identity, params, local, effective=None):
+def recover_local_view(client, module, identity, params, local, effective=None, *, paginate_uncounted=False):
     retry_empty = (local["status"] == "empty_object" and effective is not None
                    and effective["status"] == "list_parsed"
                    and check_empty_local(list(effective["profiles"].values())) == "contradictory_local_profile")
@@ -1526,7 +1613,7 @@ def recover_local_view(client, module, identity, params, local, effective=None):
     # Query unfiltered committed configuration and require explicit source
     # annotations, rather than assuming the API honored object-type=LOCAL.
     fallback = read_module_view(client, module, identity,
-                                {**params, "effective": "false", "detailed": "true"})
+                                {**params, "effective": "false", "detailed": "true"}, paginate_uncounted=paginate_uncounted)
     recovered = annotated_committed_local(fallback["raw"], identity) if "raw" in fallback else {}
     if recovered.get("status") == "list_parsed":
         return {**recovered, "raw": local["raw"], "alternate_raw": fallback["raw"]}
@@ -1534,9 +1621,9 @@ def recover_local_view(client, module, identity, params, local, effective=None):
             **({"alternate_raw": fallback["raw"]} if "raw" in fallback else {})}
 
 
-def profile_inventory_view(client, endpoint, envelope, **params):
+def profile_inventory_view(client, endpoint, envelope, *, paginate_uncounted=False, **params):
     """Preserve positive inventory observations, even when pagination is incomplete."""
-    read = read_raw_profile_collection(client, endpoint, params)
+    read = read_raw_profile_collection(client, endpoint, params, paginate_uncounted=paginate_uncounted)
     if "raw" not in read:
         return {**read, "rows": []}
     try:
@@ -1546,7 +1633,7 @@ def profile_inventory_view(client, endpoint, envelope, **params):
     return {**read, "rows": records}
 
 
-def collect_scoped_assignments(client, initial, scopes_by_persona, workers=1, progress=None):
+def collect_scoped_assignments(client, initial, scopes_by_persona, workers=1, progress=None, *, paginate_uncounted=False):
     """Cross-check tenant-wide assignments against documented scope/function reads.
 
     A scoped response is only evidence for the exact requested scope/function.
@@ -1558,6 +1645,7 @@ def collect_scoped_assignments(client, initial, scopes_by_persona, workers=1, pr
         persona, sid = task
         try:
             result = profile_inventory_view(client, "config-assignments", "config-assignment",
+                                            paginate_uncounted=paginate_uncounted,
                                             **{"scope-id": sid, "device-function": persona})
             records = result.pop("rows")
             if result["status"] not in ("response_received", "partial_response", "count_mismatch"):
@@ -1828,7 +1916,7 @@ def documented_profile_catalog():
 
 
 
-def read_raw_profile_collection(client, module, params):
+def read_raw_profile_collection(client, module, params, *, paginate_uncounted=False):
     """Preserve all pages of an explicitly truncated collection without assuming identity."""
     try:
         raw = client.get(ALPHA + "/" + module, **params)
@@ -1859,6 +1947,10 @@ def read_raw_profile_collection(client, module, params):
             or ("offset" in meta and (type(meta["offset"]) is not int or meta["offset"] not in (0, len(initial))))):
         return {**result, "status": "count_mismatch"}
     if total is None:
+        if paginate_uncounted:
+            evidence = uncounted_profile_pages(client, module, params, raw)
+            if evidence:
+                return {**result, **evidence, "status": "response_received" if "raw" in evidence else "partial_response"}
         return result
     if total == len(initial):
         if len({canonical(item) for item in initial}) != total:
@@ -1962,7 +2054,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
 
     def capture(module, params):
         try:
-            read = lambda: read_raw_profile_collection(client, module, params)
+            read = lambda: read_raw_profile_collection(client, module, params, paginate_uncounted=deep_catalog)
             return checkpoint.observe("raw_catalog", [module, params], read, lambda v: v.get("collection_count_verified") is True) if checkpoint else read()
         except APIError as exc:
             if exc.status in (401, 429):
@@ -2057,13 +2149,13 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                                                    "Inspecting discovered modules")))
 
 
-def library_inventory(client, modules, assignment_view=None, scope_map_view=None, workers=1, progress=None, *, checkpoint=None):
+def library_inventory(client, modules, assignment_view=None, scope_map_view=None, workers=1, progress=None, *, checkpoint=None, paginate_uncounted=False):
     """Read tenant-wide shared profiles once per module and preserve assignment evidence."""
     applicable = sorted(m for m in modules if not CONFIG_MODULES[m][2])
     def read(module):
         identity, _, _ = CONFIG_MODULES[module]
         params = {} if module == "auth-profiles" else {"view-type": "LIBRARY", "detailed": "true"}
-        read = lambda: read_module_view(client, module, identity, params)
+        read = lambda: read_module_view(client, module, identity, params, paginate_uncounted=paginate_uncounted and module != "auth-profiles")
         view = checkpoint.observe("library", [module, identity, params], read, lambda v: v.get("status") == "list_parsed" and v.get("count_confirmed") is True) if checkpoint else read()
         print(f"  Library {module}: {view['status']}; profiles={len(view['profiles'])}", flush=True)
         return module, view
@@ -3063,7 +3155,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
         if selected_persona not in personas:
             raise ValueError("Selected persona is not in inventory")
         personas = [selected_persona]
-    assignments = profile_inventory_view(client, "config-assignments", "config-assignment")
+    assignments = profile_inventory_view(client, "config-assignments", "config-assignment", paginate_uncounted=deep_catalog)
     # The vendor SDK still uses deprecated scope-maps as read-only evidence
     # for local profiles. Its absence never means there are no local profiles.
     scope_maps = profile_inventory_view(client, "scope-maps", "scope-map")
@@ -3075,7 +3167,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             continue
         audit_progress(progress, "Discovery", 0, 0, f"Discovering {persona} scopes")
         scopes_by_persona[persona], _ = discover_scopes(client, persona, devices)
-    assignments = collect_scoped_assignments(client, assignments, scopes_by_persona, workers, progress)
+    assignments = collect_scoped_assignments(client, assignments, scopes_by_persona, workers, progress, paginate_uncounted=deep_catalog)
     print("Assignment evidence coverage: " + canonical({
         "additional_assignments": assignments["additional_assignments"],
         "scope_reads": assignments["scope_read_outcomes"]}), flush=True)
@@ -3135,9 +3227,9 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
                 return module, scope, previous["local"], previous["effective"]
             params = {"view-type": "LOCAL", "scope-id": scope["id"], "device-function": persona}
             local = read_module_view(client, module, identity, {**params, "object-type": "LOCAL",
-                                                                "effective": "false", "detailed": "false"})
-            effective = read_module_view(client, module, identity, {**params, "effective": "true", "detailed": "true"})
-            local = recover_local_view(client, module, identity, params, local, effective)
+                                                                "effective": "false", "detailed": "false"}, paginate_uncounted=deep_catalog)
+            effective = read_module_view(client, module, identity, {**params, "effective": "true", "detailed": "true"}, paginate_uncounted=deep_catalog)
+            local = recover_local_view(client, module, identity, params, local, effective, paginate_uncounted=deep_catalog)
             if checkpoint:
                 checkpoint.save(persona, module, scope["id"], local, effective)
             return module, scope, local, effective
@@ -3181,7 +3273,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     # function. Always survey the entire explicitly supported Library catalog.
     applicable_modules = set(CONFIG_MODULES)
     print("Reading tenant Library and assignments", flush=True)
-    library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress, checkpoint=checkpoint)
+    library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress, checkpoint=checkpoint, paginate_uncounted=deep_catalog)
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress,
                                            scopes_by_persona=scopes_by_persona, deep_catalog=deep_catalog, checkpoint=checkpoint)
     from nac_authorization import capture_nac_configuration
