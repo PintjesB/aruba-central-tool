@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aruba_central.configuration_search import search_configuration
+from aruba_central.configuration_search import search_configuration, grouped_search
 from aruba_central.config_app import Workspace
 from test_consolidation import fixture
 
@@ -75,3 +75,25 @@ class ConfigurationSearchTests(unittest.TestCase):
             html = Workspace(directory).report({"snapshot": name, "mode": "search", "q": "10", "offset": "300"})
             self.assertIn("Previous result batch", html)
             self.assertIn("loaded batch only", html)
+
+    def test_grouped_search_preserves_types_and_evidence_sources(self):
+        bundle = fixture()
+        entry = bundle["results"]["ACCESS_SWITCH"]
+        for scope in entry["modules"]["layer2-vlan"]["scope_results"]:
+            if scope["scope"] in ("3", "4"):
+                scope["effective_view"] = {"status": "list_parsed", "profiles": {"10": {"test-needle": False}}}
+        entry["modules"]["layer2-vlan"]["scope_results"][0]["effective_view"]["profiles"]["10"]["test-needle"] = 0
+        groups = grouped_search(bundle, "test-needle", module="layer2-vlan")
+        false_group = next(g for g in groups["groups"] if g["selector"][-1] is False)
+        self.assertEqual(false_group["devices"], 2)
+        self.assertEqual(false_group["observations"], 2)
+        self.assertTrue(any(type(g["selector"][-1]) is int for g in groups["groups"]))
+        rows = search_configuration(bundle, "test-needle", module="layer2-vlan", group=false_group["id"])
+        self.assertEqual(rows["total"], 2)
+        self.assertTrue(all(r["value"] is False for r in rows["matches"]))
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(bundle))
+            html = Workspace(directory).report({"snapshot": name, "mode": "search", "q": "test-needle", "presentation": "grouped"})
+            self.assertIn("distinct field/value groups", html)
+            self.assertIn("Inspect matching observations", html)

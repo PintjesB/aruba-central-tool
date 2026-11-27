@@ -61,20 +61,71 @@ def evidence_id(record):
     return hashlib.sha256(canonical([selector, record["body"]]).encode()).hexdigest()
 
 
-def search_configuration(bundle, query, *, module="", persona="", limit=300, offset=0):
+def matching_fields(bundle, query, *, module="", persona=""):
     terms = query.casefold().split()
-    if not terms or len(query) > 200 or not 1 <= limit <= 1000 or type(offset) is not int or offset < 0:
+    if not terms or len(query) > 200:
         raise ValueError("Invalid search")
-    rows, total, scanned = [], 0, 0
     for record in configuration_sources(bundle):
         if (module and module != record["module"]) or (persona and persona != record["persona"]):
             continue
-        scanned += 1
         context = " ".join(str(record[k]) for k in ("persona", "module", "name", "scope", "identity", "view")).casefold()
+        def matches(body, context):
+            for path, value in leaves(body):
+                haystack = context + " " + ".".join(path).casefold() + " " + canonical(value).casefold()
+                if all(term in haystack for term in terms):
+                    yield path, value
+        yield record, matches(record["body"], context)
+
+
+def field_group(record, path, value):
+    # Preserve capture view and source type: local, effective and raw evidence
+    # must not be conflated even when their displayed values are identical.
+    return [record["persona"], record["module"], record["view"], record["source"], list(path), value]
+
+
+def group_id(group):
+    return hashlib.sha256(canonical(group).encode()).hexdigest()
+
+
+def grouped_search(bundle, query, *, module="", persona="", offset=0, limit=300):
+    if type(offset) is not int or offset < 0 or not 1 <= limit <= 1000:
+        raise ValueError("Invalid search bounds")
+    device_scopes = {(p, str(s["id"])) for p, entry in bundle["results"].items() for s in entry["scopes"] if s["kind"] == "device"}
+    groups = {}
+    total = 0
+    for record, matches in matching_fields(bundle, query, module=module, persona=persona):
+        for path, value in matches:
+            total += 1
+            selector = field_group(record, path, value)
+            key = canonical(selector)
+            if key not in groups:
+                groups[key] = {"selector": selector, "observations": 0, "scopes": set(), "devices": set()}
+            group = groups[key]
+            group["observations"] += 1
+            scope = (record["persona"], record["scope"])
+            if record["scope"]:
+                group["scopes"].add(scope)
+            if scope in device_scopes:
+                group["devices"].add(scope)
+    ordered = sorted(groups.values(), key=lambda g: (-len(g["devices"]), -g["observations"], canonical(g["selector"])))
+    rows = []
+    for group in ordered[offset:offset + limit]:
+        rows.append({"selector": group["selector"], "id": group_id(group["selector"]),
+                     "observations": group["observations"], "scopes": len(group["scopes"]), "devices": len(group["devices"])})
+    return {"groups": rows, "total_groups": len(groups), "total": total, "truncated": len(groups) > offset + len(rows)}
+
+
+def search_configuration(bundle, query, *, module="", persona="", limit=300, offset=0, group=""):
+    if not 1 <= limit <= 1000 or type(offset) is not int or offset < 0:
+        raise ValueError("Invalid search")
+    if group and (len(group) != 64 or any(c not in "0123456789abcdef" for c in group)):
+        raise ValueError("Invalid group identity")
+    rows, total, scanned = [], 0, 0
+    for record, matches in matching_fields(bundle, query, module=module, persona=persona):
+        scanned += 1
         source_id = None
-        for path, value in leaves(record["body"]):
-            haystack = context + " " + ".".join(path).casefold() + " " + canonical(value).casefold()
-            if not all(term in haystack for term in terms):
+        for path, value in matches:
+            if group and group_id(field_group(record, path, value)) != group:
                 continue
             total += 1
             if offset < total <= offset + limit:
@@ -104,12 +155,36 @@ def search_view(workspace, query):
              + select("persona", [("", "All functions")] + [(p, p) for p in personas], persona, "Device function")
              + '<button type="submit">Search configuration</button></form>'
              '<p class="note">Search is local and includes parsed structured profiles, unparsed structured responses, supplemental raw responses and directly observed individual profiles. Sampled markers, operational telemetry and uncaptured configuration are not searched. Repeated observations may appear independently.</p></section>')
+    presentation = query.get("presentation", "fields")
+    group = query.get("group", "")
+    if presentation not in ("fields", "grouped"):
+        raise ValueError("Unknown search presentation")
     if text.strip():
+        common = {"snapshot": name, "mode": "search", "q": text, "module": module, "persona": persona}
+        body += f'<p><a class="button" href="{url(root, "report", **common, presentation="grouped")}">Group identical values</a> <a class="button" href="{url(root, "report", **common)}">All individual matches</a></p>'
         try:
             offset = int(query.get("offset", "0"))
         except (TypeError, ValueError) as exc:
             raise ValueError("Invalid search offset") from exc
-        result = search_configuration(bundle, text, module=module, persona=persona, offset=offset)
+        if presentation == "grouped":
+            result = grouped_search(bundle, text, module=module, persona=persona, offset=offset)
+            rows = []
+            for row in result["groups"]:
+                function, mod, view, source, path, value = row["selector"]
+                link = url(root, "report", **common, group=row["id"])
+                rows.append(tr(e(function), e(mod), e(view), e(source.replace("_", " ")), e(".".join(path) or "(root)"),
+                               setting_value(value), str(row["devices"]), str(row["scopes"]), str(row["observations"]),
+                               f'<a href="{link}">Inspect matching observations</a>'))
+            body += f'<section><h2>{result["total_groups"]} distinct field/value groups</h2><p>{result["total"]} matching observations. Counts are observed device/function pairs, not an inferred deployment impact. Higher-scope observations are not expanded into recipients.</p>'
+            if offset:
+                body += f'<a class="button" href="{url(root, "report", **common, presentation="grouped", offset=max(0, offset - 300))}">Previous group batch</a> '
+            if result["truncated"]:
+                body += f'<a class="button" href="{url(root, "report", **common, presentation="grouped", offset=offset + 300)}">Next group batch</a>'
+            body += table(("Function", "Module", "View", "Source", "Field path", "Value", "Observed devices", "Observed scopes", "Observations", ""), rows, search=True) + '</section>'
+            return page("Configuration explorer", body, workspace.nav(name))
+        result = search_configuration(bundle, text, module=module, persona=persona, offset=offset, group=group)
+        if group:
+            body += '<p class="note">Showing only the selected exact field/value group.</p>'
         rows = []
         for row in result["matches"]:
             link = url(root, "report", snapshot=name, mode="evidence", persona=row["persona"],
@@ -120,7 +195,7 @@ def search_view(workspace, query):
         first = offset + 1 if rows else 0
         last = offset + len(rows) if rows else 0
         body += f'<section><h2>{result["total"]} matching fields</h2><p>{result["sources_searched"]} captured sources searched. Showing {first}–{last}.</p>'
-        params = {"snapshot": name, "mode": "search", "q": text, "module": module, "persona": persona}
+        params = {**common, **({"group": group} if group else {})}
         if offset:
             body += f'<a class="button" href="{url(root, "report", **params, offset=max(0, offset - 300))}">Previous result batch</a> '
         if result["truncated"]:
