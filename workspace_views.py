@@ -1111,6 +1111,50 @@ def comparison_view(workspace, query):
     return page("Compare devices", body, workspace.nav(name))
 
 
+def collection_gap_rows(bundle):
+    """Summarize captured gaps without interpreting failures as missing settings."""
+    counts = Counter()
+    def record(module, source, view, count_key):
+        state = view.get("status", "not_collected")
+        error = view.get("http_error")
+        if state in ("empty_object", "empty_response"):
+            reason = "Unverified empty response"
+        elif error is not None:
+            reason = "HTTP " + str(error)
+        elif state not in ("list_parsed", "response_received"):
+            reason = pretty(state)
+        elif view.get("pagination_status") not in (None, "complete", "pagination_exhausted"):
+            reason = "Pagination unverified: " + pretty(view["pagination_status"])
+        elif view.get(count_key) is not True:
+            reason = "Record count unverified"
+        else:
+            return
+        counts[module, source, reason] += 1
+    for persona, entry in bundle.get("results", {}).items():
+        for module, data in entry.get("modules", {}).items():
+            for scope in data.get("scope_results", []):
+                for side in ("local", "effective"):
+                    record(module, persona + " / " + side, scope.get(side + "_view", {}), "count_confirmed")
+    for module, view in (bundle.get("library") or {}).get("modules", {}).items():
+        record(module, "Library", view, "count_confirmed")
+    for module, entry in (bundle.get("unadapted_profiles") or {}).items():
+        if not entry.get("library", {}).get("reused_exact_collection"):
+            record(module, "Supplemental Library", entry.get("library", {}), "collection_count_verified")
+        for scope in entry.get("source_views", []):
+            for side in ("committed", "effective"):
+                view = scope.get(side, {})
+                if not view.get("reused_exact_collection"):
+                    record(module, "Supplemental / " + str(scope.get("persona", "unknown")) + " / " + side,
+                           view, "collection_count_verified")
+        skipped = entry.get("catalog_scope_coverage", {}).get("unfiltered_scopes_not_surveyed")
+        if type(skipped) is int and skipped > 0:
+            counts[module, "Supplemental scope survey", "Scopes not surveyed"] += skipped
+    return [{"module": module, "source": source, "reason": reason, "observations": n}
+            for (module, source, reason), n in sorted(counts.items(),
+                key=lambda item: (0 if item[0][2].startswith("HTTP ") else 1,
+                                  -item[1], item[0]))]
+
+
 def coverage_view(workspace, query):
     from config_app import module_coverage
     loaded, empty = load(workspace, query, "Module coverage", "coverage")
@@ -1136,6 +1180,21 @@ def coverage_view(workspace, query):
                      ("Qualified modules", f"{counts['qualified']}/{len(records)}", "All requested scopes interpretable"),
                      ("Observed types without adapter", len(unknown), "Raw evidence only"),
                      ("Distinct Library collections", len(set(library.get("modules", {})) | set(additional)), "Structured and supplemental evidence deduplicated")])
+    gaps = collection_gap_rows(bundle)
+    body += '<section><h2>Collection gaps requiring review</h2><p>Failed requests, incomplete counts and unverified empty responses are not evidence of absent configuration. Counts below represent observations, not missing profiles. Reused identical responses are not counted twice.</p>'
+    gap_rows = []
+    for g in gaps:
+        module, source = g["module"], g["source"]
+        if source.startswith("Supplemental"):
+            link = url(root, "unadapted", snapshot=name, module=module)
+        elif source == "Library":
+            link = url(root, "library", snapshot=name, module=module)
+        else:
+            link = url(root, "report", snapshot=name, persona=source.split(" / ", 1)[0],
+                       module=module, view="diagnostics")
+        gap_rows.append(tr(e(module_label(module)), e(source), e(g["reason"]),
+                           str(g["observations"]), '<a href="' + link + '">Inspect evidence</a>'))
+    body += table(("Module", "Collection context", "Coverage gap", "Observations", ""), gap_rows, search=True) + '</section>'
     health = bundle.get("configuration_health")
     if health:
         from central_tool import health_serial
@@ -1186,12 +1245,17 @@ def coverage_view(workspace, query):
         body += '<section><h2>Direct hierarchy and assignment evidence</h2>'
         body += '<p class="note">Independent reads of discovered scopes and observed assignment identities. They do not establish complete hierarchy or assignment coverage.</p>'
         if hierarchy:
-            body += '<h3>Scope hierarchy</h3>' + table(("Scope", "Type", "Status", ""), [
-                tr(e(r["scope"]), e(r["kind"]), status(r["status"]),
+            body += '<h3>Scope hierarchy</h3>' + table(("Scope", "Type", "Status", "Endpoint", "HTTP result", ""), [
+                tr(e(r["scope"]), e(r["kind"]), status(r["status"]), e(r.get("endpoint_version", "v1")),
+                   e("HTTP " + str(r["http_error"]) if r.get("http_error") else "Response received" if r["status"] == "response_received" else "Unavailable") +
+                   (('<small>Alternative: ' + e("HTTP " + str(r["alternate_read"]["http_error"]) if r["alternate_read"].get("http_error") else pretty(r["alternate_read"].get("status", "unknown"))) + '</small>') if r.get("alternate_read") else ""),
                    inspect("Scope hierarchy", raw(r, "Captured hierarchy response"), "Inspect"))
                 for r in hierarchy.get("records", [])], search=True)
         if individual:
             body += '<h3>Individual assignments</h3><p>' + e(", ".join(f"{pretty(k)}: {v}" for k, v in sorted(individual.get("outcomes", {}).items()))) + '</p>'
+            if individual.get("selector_rejections"):
+                body += '<h4>Selectors not queried</h4>' + table(("Reason", "Records"), [
+                    tr(e(pretty(k)), str(v)) for k, v in sorted(individual["selector_rejections"].items())])
             body += table(("Scope", "Device function", "Module", "Profile", "Status", "Body comparison", ""), [
                 tr(e(r["selector"]["scope-id"]), e(persona_label(r["selector"]["device-function"])),
                    e(module_label(r["selector"]["profile-type"])), e(r["selector"]["profile-instance"]),
