@@ -1077,20 +1077,23 @@ def library_view(workspace, query):
                             keyed_profile_evidence(bundle, "Library", "", module, identity)))
                         for identity, profile in sorted(candidates.items())], search=True) + '</section>'
             return page("Library", body, workspace.nav(name))
-        comparison = library_profile_comparison(bundle, module)
-        usage = library_usage(bundle, module, view["profiles"], workspace.advanced_snapshot(bundle)["references"])
-        from .library_usage_presentation import visibility_filter, usage_summary
+        from .library_usage_presentation import visibility_filter, usage_summary, STATES
         visibility = query.get("visibility", "all")
-        filtered = visibility_filter(usage, visibility)
+        if visibility not in {"all", *(key for key, _ in STATES)}:
+            raise ValueError("Unknown Library visibility filter")
         selected_profile = query.get("profile")
         if selected_profile is not None:
-            if selected_profile not in usage:
+            if selected_profile not in view["profiles"]:
                 raise ValueError("Unknown Library profile")
             from .library_usage_presentation import device_visibility
+            usage = library_usage(bundle, module, [selected_profile], workspace.advanced_snapshot(bundle)["references"])
             body += '<section><h2>' + e(selected_profile) + ' · Device visibility</h2>'
             body += f'<p><a href="{url(root, "library", snapshot=name, module=module, visibility=visibility)}">Back to profile collection</a></p>'
             body += device_visibility(usage[selected_profile], root=root, snapshot=name, module=module) + '</section>'
             return page("Library", body, workspace.nav(name))
+        comparison = library_profile_comparison(bundle, module)
+        usage = library_usage(bundle, module, view["profiles"], workspace.advanced_snapshot(bundle)["references"])
+        filtered = visibility_filter(usage, visibility)
         body += usage_summary(root, name, module, usage, visibility)
         rows = []
         for identity, profile in sorted(view["profiles"].items()):
@@ -1127,13 +1130,17 @@ def inventory_view(workspace, query):
     root, name, bundle, picker = loaded
     rows = []
     for persona, entry in sorted(bundle["results"].items()):
+        totals, qualified_counts = Counter(), Counter()
+        for data in entry["modules"].values():
+            for view in data["scope_results"]:
+                totals[view["scope"]] += 1
+                qualified_counts[view["scope"]] += bool(view["review"]["qualified"])
         for s in sorted(entry["scopes"], key=lambda s: (s["kind"] != "device", s["kind"], s.get("name") or s["id"])):
             sid = s["id"]
-            views = [v for m in entry["modules"].values() for v in m["scope_results"] if v["scope"] == sid]
-            qualified = sum(v["review"]["qualified"] for v in views)
+            qualified = qualified_counts[sid]
             href = url(root, "report", snapshot=name, persona=persona, scope=sid)
             rows.append(tr(f'<strong>{e(s.get("name") or sid)}</strong>', e(pretty(s["kind"])), e(persona_label(persona)),
-                           f'{qualified}/{len(views)}', ((f'<a href="{url(root, "scopes", snapshot=name, mode="device", persona=persona, device=sid)}">Review device</a> · ' + f'<a href="{url(root, "overrides", snapshot=name, persona=persona, device=sid)}">Compare overrides</a> · ') if s["kind"] == "device" else "") + f'<a href="{href}">Open configuration</a>'))
+                           f'{qualified}/{totals[sid]}', ((f'<a href="{url(root, "scopes", snapshot=name, mode="device", persona=persona, device=sid)}">Review device</a> · ' + f'<a href="{url(root, "overrides", snapshot=name, persona=persona, device=sid)}">Compare overrides</a> · ') if s["kind"] == "device" else "") + f'<a href="{href}">Open configuration</a>'))
     return page("Scopes", intro("Inventory", "Browse captured devices and configuration scopes.", picker)
                 + '<section>' + table(("Scope / device", "Type", "Function", "Qualified modules", ""), rows, search=True) + '</section>', workspace.nav(name))
 
