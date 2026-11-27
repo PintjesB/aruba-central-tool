@@ -147,3 +147,29 @@ class ConfigurationSearchTests(unittest.TestCase):
                 evidence = workspace.report({"snapshot": name, "mode": "evidence", "persona": persona,
                                              "module": module, "scope": row["scope"], "evidence": row["evidence_id"]})
                 self.assertIn("unique-needle", evidence)
+
+
+    def test_optimized_matching_matches_reference_search_and_skips_unneeded_encoding(self):
+        from unittest.mock import patch
+        from aruba_central.configuration_search import configuration_sources, leaves, matching_fields, group_id
+        from aruba_central.central_tool import canonical
+        bundle = fixture()
+        bundle["nac_configuration"] = {"authz-policies": {"status": "list_parsed",
+            "profiles": {"p": {"name": "Straße", "nested": {"flag": False, "null": None}, "items": [0, "a b"]}}}}
+        for query in ("NAC", "NAC nested false", "strasse", "items 0", "name a", "flag null", "not-found", "a b"):
+            expected = []
+            for record in configuration_sources(bundle):
+                context = " ".join(str(record[k]) for k in ("persona", "module", "name", "scope", "identity", "view")).casefold()
+                for path, value in leaves(record["body"]):
+                    haystack = context + " " + ".".join(path).casefold() + " " + canonical(value).casefold()
+                    if all(term in haystack for term in query.casefold().split()):
+                        expected.append((record, path, value))
+            actual = [(record, path, value) for record, matches in matching_fields(bundle, query)
+                      for path, value in matches]
+            self.assertEqual(actual, expected)
+        with patch("aruba_central.configuration_search.canonical", side_effect=AssertionError("Unneeded serialization")):
+            rows = [(path, value) for _, matches in matching_fields(bundle, "NAC", persona="NAC")
+                    for path, value in matches]
+            self.assertGreater(len(rows), 0)
+        groups = grouped_search(bundle, "NAC")
+        self.assertTrue(all(row["id"] == group_id(row["selector"]) for row in groups["groups"]))

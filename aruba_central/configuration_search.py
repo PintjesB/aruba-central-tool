@@ -107,12 +107,23 @@ def matching_fields(bundle, query, *, module="", persona=""):
         raise ValueError("Invalid search")
     for record in configuration_sources(bundle, module=module, persona=persona):
         context = " ".join(str(record[k]) for k in ("persona", "module", "name", "scope", "identity", "view")).casefold()
-        def matches(body, context):
+        def matches(body, missing):
+            # Terms are whitespace-delimited; the original separators were
+            # spaces, so a term cannot straddle context/path/value boundaries.
+            # Avoid serializing each leaf when context or path already matches.
             for path, value in leaves(body):
-                haystack = context + " " + ".".join(path).casefold() + " " + canonical(value).casefold()
-                if all(term in haystack for term in terms):
+                if not missing:
                     yield path, value
-        yield record, matches(record["body"], context)
+                    continue
+                path_text = ".".join(path).casefold()
+                remaining = [term for term in missing if term not in path_text]
+                if not remaining:
+                    yield path, value
+                    continue
+                value_text = canonical(value).casefold()
+                if all(term in value_text for term in remaining):
+                    yield path, value
+        yield record, matches(record["body"], [term for term in terms if term not in context])
 
 
 def field_group(record, path, value):
@@ -145,10 +156,10 @@ def grouped_search(bundle, query, *, module="", persona="", offset=0, limit=300)
                 group["scopes"].add(scope)
             if scope in device_scopes:
                 group["devices"].add(scope)
-    ordered = sorted(groups.values(), key=lambda g: (-len(g["devices"]), -g["observations"], canonical(g["selector"])))
+    ordered = sorted(groups.items(), key=lambda item: (-len(item[1]["devices"]), -item[1]["observations"], item[0]))
     rows = []
-    for group in ordered[offset:offset + limit]:
-        rows.append({"selector": group["selector"], "id": group_id(group["selector"]),
+    for key, group in ordered[offset:offset + limit]:
+        rows.append({"selector": group["selector"], "id": hashlib.sha256(key.encode()).hexdigest(),
                      "observations": group["observations"], "scopes": len(group["scopes"]), "devices": len(group["devices"])})
     return {"groups": rows, "total_groups": len(groups), "total": total, "truncated": len(groups) > offset + len(rows)}
 
