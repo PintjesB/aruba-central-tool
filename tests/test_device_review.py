@@ -57,3 +57,23 @@ class DeviceReviewTests(unittest.TestCase):
             self.assertIn("device-specific", html)
             self.assertNotIn("other-device", html)
             self.assertIn('name="scope" value="3"', html)
+
+
+    def test_individual_evidence_summary_keeps_request_selectors_separate(self):
+        bundle = fixture()
+        def observation(status):
+            return {"roles": {"role": {"effective": {"status": status}}}}
+        bundle["keyed_profile_details"] = {"profiles": {
+            "ACCESS_SWITCH": {"3": observation("collection_only_sampled"), "4": observation("schema_unresolved")},
+            "ALL_DEVICE_FUNCTIONS": {"3": observation("schema_unresolved")}}}
+        result = device_review(bundle, "ACCESS_SWITCH", "3")
+        self.assertEqual({r["selector"]: r["counts"] for r in result["keyed"]},
+                         {"ACCESS_SWITCH": {"sampled": 1}, "ALL_DEVICE_FUNCTIONS": {"unqualified": 1}})
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(bundle))
+            html = Workspace(directory).scopes({"snapshot": name, "mode": "device", "persona": "ACCESS_SWITCH", "device": "3"})
+            self.assertIn("Individual profile evidence", html)
+            self.assertIn("Review discrepancies", html)
+            self.assertIn("mode=keyed", html)
+            self.assertIn("scope=3", html)
