@@ -866,16 +866,20 @@ def engineering_view(workspace, query):
                 continue
             keep = r["suggested_keep"]
             usage = r["usage"]
-            comparison = [tr(e(identity), *usage_cells(u),
-                             badge("Suggested to keep", "info") if identity == keep else "Review")
-                          for identity, u in usage.items()]
+            from .retention_review import retention_comparison
+            retention = retention_comparison(usage, keep)
+            comparison = [tr(f'<strong>{e(row["identity"])}</strong>' + ('<small>Suggested retention candidate</small>' if row["suggested"] else ""),
+                             str(row["saved_references"]), e(row["assignments"]), str(row["referencing_objects"]),
+                             str(row["shared_devices"]), str(row["different_devices"]), str(row["unknown_devices"]))
+                          for row in retention["rows"]]
             choose_keep = '<label>Profile to retain<select data-keep>' + '<option value="">Choose a profile</option>' + "".join(f'<option value="{e(identity)}"{" selected" if identity == keep else ""}>{e(identity)}</option>' for identity in usage) + '</select></label>'
             from .advanced_review import duplicate_migration_preview
             preview_data = {identity: {"assignments": usage_cells(u)[0], "shared_devices": len(u["shared_devices"]), "referencing_objects": u["reference_count"], "unknown_reads": len(u["unknown_devices"])} for identity, u in usage.items()}
             migration_plans = {identity: duplicate_migration_preview(r["module"], usage, identity, bundle=bundle) for identity in usage}
             unresolved = r["unresolved_reference_count"]
             detail = ('<div class="review-decision"><div><strong>Choose the canonical Library profile</strong><p>Use observed references and assignments to estimate migration work. No profile is proven safe to delete.</p></div></div>'
-                      + table(("Profile", "Assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Suggestion"), comparison)
+                      + '<p class="note">' + e(retention["explanation"]) + '</p>'
+                      + table(("Profile", "Saved referring objects", "Assignments", "All referring objects", "Shared devices", "Different body", "Unknown reads"), comparison)
                       + f'<div data-duplicate-preview data-usage="{e(json.dumps(preview_data))}" data-migration-plans="{e(json.dumps(migration_plans))}"><h3>Migration preview</h3>{choose_keep}<div data-migration-summary aria-live="polite">Choose a profile to preview the observed migration workload.</div></div>'
                       + (f'<p class="note"><strong>{unresolved} unresolved reference observations in this module.</strong> Their target identities are not established; they may affect this migration.</p>' if unresolved else "")
                       + "".join(f'<details><summary>{e(identity)} · Where it is used</summary>{usage_detail(u)}</details>' for identity, u in usage.items())
@@ -886,12 +890,13 @@ def engineering_view(workspace, query):
             group_usage = ('<table class="group-usage"><thead><tr>' + "".join(
                 f'<th scope="col">{e(label)}</th>' for label in ("Profile", "Assignments", "Devices", "References", "Unknown reads"))
                 + '</tr></thead><tbody>' + "".join(
-                    tr(f'<strong>{e(identity)}</strong>' + (' <span class="retain-mark">Keep</span>' if identity == keep else ""),
+                    tr(f'<strong>{e(identity)}</strong>' + (' <span class="retain-mark">Suggested</span>' if identity == keep else ""),
                        *usage_cells(u)) for identity, u in usage.items()) + '</tbody></table>')
             rows.append(tr(e(module_label(r["module"])), group_usage,
+                           f'<strong>{e(keep) if keep else "Manual choice"}</strong><small>{e(retention["short_reason"])}</small>',
                            inspect(", ".join(r["identities"]), detail, "Plan consolidation")))
     panel("duplicates", "Duplicate Library profiles", "Compare observed usage for each name before choosing which profile to retain. Suggested names are based on observed migration effort, not safe deletion.",
-          ("Module", "Profiles and observed usage", ""), rows, counts["duplicates"])
+          ("Module", "Profiles and observed usage", "Retention candidate", "Action"), rows, counts["duplicates"])
     for key, label in (("references", "Reference review"), ("resolved", "Observed references")):
         records = reference_rows[key]
         rows = [tr(e(r["device"]), f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
