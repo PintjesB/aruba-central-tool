@@ -99,6 +99,63 @@ def raw_profile_shapes(bundle, catalog, modules):
             for (m, v, s), n in sorted(counts.items())]
 
 
+def supplemental_survey_footprint(bundle, modules):
+    """Anonymous actual footprint, not a proof of selector applicability."""
+    from .central_tool import NETWORK_PERSONAS
+    kinds = {}
+    valid_kinds = {"global", "site", "collection", "group", "device"}
+    for entry in bundle.get("results", {}).values():
+        for scope in entry.get("scopes", []):
+            kind = scope.get("kind")
+            if kind in valid_kinds:
+                kinds.setdefault(str(scope.get("id")), set()).add(kind)
+        for module in entry.get("modules", {}).values():
+            for scope in module.get("scope_results", []):
+                kind = scope.get("scope_kind")
+                if kind in valid_kinds:
+                    kinds.setdefault(str(scope.get("scope")), set()).add(kind)
+    counts = {}
+    def classify(view):
+        raw = view.get("raw")
+        status = view.get("status")
+        if status not in ("response_received", "empty_response"):
+            return "unqualified"
+        if not isinstance(raw, dict):
+            return "unqualified"
+        if view.get("collection_count_verified") is True:
+            # A verified count is not a declaration of applicability.
+            return "counted_positive" if any(isinstance(v, list) and v for k, v in raw.items() if k != "metadata") else "counted_empty"
+        if not raw:
+            return "empty_object"
+        if any(k not in ("metadata", "@") and v not in (None, {}, []) for k, v in raw.items()):
+            return "positive_uncounted"
+        return "metadata_or_empty_collection"
+    for module, data in (bundle.get("unadapted_profiles") or {}).items():
+        name = module if module in modules else "other"
+        for source in data.get("source_views", []):
+            known = kinds.get(str(source.get("scope")), set())
+            kind = next(iter(known)) if len(known) == 1 else "unknown"
+            persona = source.get("persona")
+            selector = persona if persona in NETWORK_PERSONAS else (
+                "unfiltered" if persona in ("ALL_DEVICE_FUNCTIONS", "UNFILTERED_SCOPE") else "other")
+            key = (name, kind, selector)
+            row = counts.setdefault(key, Counter())
+            for side in ("committed", "effective"):
+                view = source.get(side, {})
+                row["views"] += 1
+                row[classify(view)] += 1
+                row["reused_views"] += view.get("reused_exact_collection") is True
+                pages = view.get("raw_pages")
+                if isinstance(pages, list):
+                    row["pagination_responses"] += len(pages)
+                if view.get("pagination_status") in ("request_failed", "read_failed"):
+                    row["pagination_failures"] += 1
+                if view.get("http_error") in (400, 403, 404, 500):
+                    row["http_" + str(view["http_error"])] += 1
+    return [{"module": name, "scope_kind": kind, "selector": selector, **dict(row)}
+            for (name, kind, selector), row in sorted(counts.items())]
+
+
 def pagination_evidence(bundle, modules):
     """Aggregate only allowlisted reasons and counts, never request selectors."""
     allowed = {"complete", "pagination_exhausted", "request_failed", "read_failed",
@@ -425,6 +482,7 @@ def diagnostics(bundle):
                           "count_confirmed": c, "http_error": h, "views": n}
                          for (p, m, k, v, s, c, h), n in sorted(scoped.items(), key=lambda row: str(row[0]))],
         "raw_profile_shapes": raw_profile_shapes(bundle, catalog, modules),
+        "supplemental_survey_footprint": supplemental_survey_footprint(bundle, modules),
         "raw_scope_outcomes": [{"module": m, "status": s, "views": n}
                                for (m, s), n in sorted(raw.items())],
         "nac": nac, "attempted_operations": sorted(operations, key=lambda row: row["path"]),
