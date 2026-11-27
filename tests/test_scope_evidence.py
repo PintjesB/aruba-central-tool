@@ -92,3 +92,31 @@ class ScopeEvidenceTests(unittest.TestCase):
         for bad in ({**raw, "scope-id": 99}, {**raw, "profile-type": "ntp"}):
             result = keyed_assignment_capture(Client(bad), {"rows": [row]})
             self.assertEqual(result["outcomes"], {"identity_unresolved": 1})
+
+
+    def test_legacy_assignment_resource_preserves_exact_full_identity(self):
+        from scope_evidence import legacy_assignment_status
+        row = {"scope-id": 12, "device-function": "ACCESS_SWITCH",
+               "profile-type": "ethernet-interfaces", "profile-instance": "1/1/24"}
+        identity = ("12", "ACCESS_SWITCH", "ethernet-interfaces", "1/1/24")
+        raw = {"scope-id": 12, "scope-name": "example", "persona": "ACCESS_SWITCH",
+               "resource": "ethernet-interfaces/1/1/24"}
+        class Client:
+            def get(self, path, **params):
+                return raw
+        result = keyed_assignment_capture(Client(), {"rows": [row]})
+        self.assertEqual(result["outcomes"], {"identity_observed": 1})
+        self.assertEqual(result["records"][0]["identity_format"], "scope_map_resource")
+        self.assertNotIn("body_matches_inventory", result["records"][0])
+        self.assertEqual(result["records"][0]["raw"], raw)
+        self.assertFalse(result["complete"])
+        self.assertFalse(result["safe_to_apply"])
+        for bad in ({"resource": "ethernet-interfaces/1/1/25"},
+                    {"resource": "ethernet-interfaces/1/1/24/extra"},
+                    {"resource": "dns/1/1/24"}, {"persona": "CAMPUS_AP"},
+                    {"scope-id": 99}, {"profile-instance": "wrong"}, {"resource": None}):
+            self.assertEqual(legacy_assignment_status({**raw, **bad}, identity), "identity_unresolved")
+        self.assertEqual(legacy_assignment_status({**raw, "resource": "ethernet-interfaces"}, identity),
+                         "scope_only_observed")
+        self.assertEqual(legacy_assignment_status({k: v for k, v in raw.items() if k != "persona"}, identity),
+                         "scope_only_observed")
