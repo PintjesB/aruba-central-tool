@@ -6,6 +6,47 @@ from live_collection_probe import probe, qualified_scopes
 
 
 class LiveProbeTests(unittest.TestCase):
+    def test_change_audit_probe_uses_fixed_window_and_anonymous_aggregate(self):
+        from datetime import datetime, timezone
+        from live_collection_probe import change_audit_probe, AUDIT_LOG_PATH
+        row = {"id": "PRIVATE-ID", "category": "PRIVATE-CATEGORY", "scopeInfo": {
+            "scopeIds": ["PRIVATE-SCOPE"]}, "logDetails": {
+            "impactRadius": ["PRIVATE-IMPACT"], "changedJson": {"private": "PRIVATE-BODY"}}}
+        client = Mock()
+        client.get.side_effect = [{"items": [row], "total": 2},
+                                  {"items": [row], "total": 2},
+                                  {"items": [{"id": "PRIVATE-SECOND"}], "total": 2}]
+        with patch("live_collection_probe.qualified_scopes") as guard:
+            result = change_audit_probe(client, {}, now=datetime(2026, 11, 27, 12, tzinfo=timezone.utc))
+        guard.assert_called_once_with(client, {})
+        self.assertEqual([c.args[0] for c in client.get.call_args_list], [AUDIT_LOG_PATH] * 3)
+        self.assertEqual([c.kwargs["offset"] for c in client.get.call_args_list], [1, 1, 101])
+        self.assertEqual(client.get.call_args_list[0].kwargs["start-at"], "2026-11-20T11:59:30.000Z")
+        self.assertEqual(client.get.call_args_list[0].kwargs["end-at"], "2026-11-27T11:59:30.000Z")
+        self.assertTrue(result["first_page_stable"])
+        self.assertEqual(result["overlapping_records"], 0)
+        self.assertEqual(result["first_page"]["field_presence"]["scope_ids_present"], 1)
+        self.assertEqual(result["first_page"]["field_presence"]["impact_radius_present"], 1)
+        self.assertFalse(result["incremental_reuse_qualified"])
+        self.assertFalse(result["complete"])
+        self.assertNotIn("PRIVATE", json.dumps(result))
+
+    def test_change_audit_probe_stops_on_unavailable_schema(self):
+        from central_tool import APIError
+        from live_collection_probe import change_audit_probe
+        for response in ({"unknownEnvelope": [{"private": "PRIVATE"}]}, APIError("audit", 403)):
+            client = Mock()
+            if isinstance(response, Exception):
+                client.get.side_effect = response
+            else:
+                client.get.return_value = response
+            with patch("live_collection_probe.qualified_scopes"):
+                result = change_audit_probe(client, {})
+            client.get.assert_called_once()
+            self.assertIn(result["first_page"]["status"], ("schema_unresolved", "request_rejected"))
+            self.assertFalse(result["incremental_reuse_qualified"])
+            self.assertNotIn("PRIVATE", json.dumps(result))
+
     def test_performance_probe_compares_exact_typed_projection_and_page_limits(self):
         from live_collection_probe import performance_probe
         scopes = {"ACCESS_SWITCH": {"scopes": [{"id": "12345", "kind": "device"}]}}
