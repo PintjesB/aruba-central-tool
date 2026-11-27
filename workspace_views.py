@@ -9,14 +9,13 @@ from workspace_ui import (e, page, intro, metrics, snapshot_picker, module_label
 
 
 def load(workspace, query, title, route):
-    from config_app import audit_files, read_audit
-    from central_tool import refresh_configuration_review
+    from config_app import audit_files
     root = "/" + workspace.token + "/"
     files = audit_files(workspace.directory)
     if not files:
         return None, page(title, intro(title) + '<section class="empty">No snapshots available. Connect from Overview.</section>', workspace.nav())
     name = query.get("snapshot", files[0].name)
-    bundle = refresh_configuration_review(read_audit(workspace.directory, name))
+    bundle = workspace.reviewed_snapshot(name)
     picker = snapshot_picker(root, route, files, name)
     if bundle.get("collection_checkpoint", {}).get("mixed_capture_times"):
         picker += '<p class="note">Resumed collection: some scope evidence predates the final capture. Do not use this snapshot to verify remediation.</p>'
