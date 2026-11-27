@@ -1511,6 +1511,25 @@ class Tests(unittest.TestCase):
         self.assertLessEqual(peak, AUDIT_WORKERS)
         self.assertEqual(updates, [(i, 12) for i in range(1, 13)])
 
+    def test_config_validator_metrics_are_aggregate_and_ignore_other_requests(self):
+        from central_tool import Central, ALPHA
+        from urllib.request import Request
+        from types import SimpleNamespace
+        base = "https://de1.api.central.arubanetworks.com"
+        client = Central(base, token="token")
+        def observe(path, headers, method="GET"):
+            client._observe_config_validators(Request(base + path, method=method),
+                                              SimpleNamespace(headers=headers))
+        observe(ALPHA + "/dns", {"ETag": '"private-tag"', "Last-Modified": "private-date"})
+        observe(ALPHA + "/dns/example", {"ETag": 'W/"private-weak"'})
+        observe(ALPHA + "/dns", {})
+        observe(ALPHA + "/dns", {"ETag": '"private-post"'}, "POST")
+        observe("/network-monitoring/v1/devices", {"ETag": '"private-other"'})
+        self.assertEqual(client.get_validator_metrics(),
+                         {"collection_responses": 2, "collection_strong_etag": 1,
+                          "collection_last_modified": 1, "keyed_responses": 1,
+                          "keyed_weak_etag": 1})
+
     def test_repeated_custom_api_500s_reduce_retries_without_skipping_gets(self):
         from io import BytesIO
         from urllib.error import HTTPError
