@@ -6,6 +6,48 @@ from live_collection_probe import probe, qualified_scopes
 
 
 class LiveProbeTests(unittest.TestCase):
+    def test_performance_probe_compares_exact_typed_projection_and_page_limits(self):
+        from live_collection_probe import performance_probe
+        scopes = {"ACCESS_SWITCH": {"scopes": [{"id": "12345", "kind": "device"}]}}
+        one = {"name": "PRIVATE-A", "@": {"aruba-annotation:device_function": "ACCESS_SWITCH"}}
+        two = {"name": "PRIVATE-B", "@": {"aruba-annotation:device_function": "CAMPUS_AP"}}
+        def page(rows, total, **meta):
+            return {"metadata": {"total": total, "count": len(rows), **meta}, "profiles": rows}
+        client = Mock()
+        client.get.side_effect = [page([one, two], 2), page([one], 1),
+                                  page([one, two], 2, limit=100, offset=0),
+                                  page([one, two], 2, limit=500, offset=0)]
+        with patch("live_collection_probe.qualified_scopes", return_value=scopes), patch(
+            "central_tool.documented_offset_collections", return_value={"net-services"}
+        ), patch("live_collection_probe.PERFORMANCE_MODULES", ("net-services",)), patch.dict(
+            "live_collection_probe.CONFIG_MODULES", {"net-services": ("name", {"ACCESS_SWITCH"}, False)}
+        ):
+            result = performance_probe(client, {}, 1)
+        self.assertEqual(client.get.call_count, 4)
+        context = result["contexts"][0]
+        self.assertEqual(context["projection"], "exact_projection")
+        self.assertEqual([p["requested_limit"] for p in context["pages"]], [100, 500])
+        self.assertTrue(all(p["matching_initial_prefix"] for p in context["pages"]))
+        self.assertFalse(result["complete"])
+        for private in ("12345", "PRIVATE-A", "PRIVATE-B"):
+            self.assertNotIn(private, json.dumps(result))
+
+    def test_performance_probe_does_not_qualify_unconfirmed_or_unannotated_projection(self):
+        from live_collection_probe import performance_probe
+        scopes = {"ACCESS_SWITCH": {"scopes": [{"id": "12345", "kind": "device"}]}}
+        for raw in ({"profiles": [{"name": "x"}]},
+                    {"metadata": {"total": 1}, "profiles": [{"name": "x"}]}):
+            client = Mock()
+            client.get.return_value = raw
+            with patch("live_collection_probe.qualified_scopes", return_value=scopes), patch(
+                "central_tool.documented_offset_collections", return_value={"net-services"}
+            ), patch("live_collection_probe.PERFORMANCE_MODULES", ("net-services",)), patch.dict(
+            "live_collection_probe.CONFIG_MODULES", {"net-services": ("name", {"ACCESS_SWITCH"}, False)}
+        ):
+                result = performance_probe(client, {}, 1)
+            self.assertEqual(result["contexts"][0]["projection"], "unqualified")
+            self.assertFalse(result["safe_to_apply"])
+
     def test_identity_guard_filters_replaced_devices(self):
         previous = {"region": "region", "inventory": [{"inventory": {"serial": "S1"}}],
                     "results": {"ACCESS_SWITCH": {"scopes": [{"id": "1", "kind": "global"}]}}}
