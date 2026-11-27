@@ -2442,9 +2442,44 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
     # The module coordinators do not perform network reads. A separate shared
     # executor schedules individual scope pairs with one bounded HTTP worker
     # budget for the entire supplemental survey, including its slow tail.
+    scope_workers = max(1, min(AUDIT_MAX_WORKERS, workers))
+    scope_slots = threading.BoundedSemaphore(scope_workers * 2)
+
+    def scope_submit(function, *args):
+        scope_slots.acquire()
+        try:
+            future = scope_pool.submit(function, *args)
+        except BaseException:
+            scope_slots.release()
+            raise
+        future.add_done_callback(lambda _: scope_slots.release())
+        return future
+
     def scope_map(function, items):
-        futures = [scope_pool.submit(function, item) for item in items]
-        return [future.result() for future in futures]
+        items = list(items)
+        if not items:
+            return []
+        result = [None] * len(items)
+        indices = iter(range(len(items)))
+        pending = {}
+        def replenish():
+            while len(pending) < scope_workers * 2:
+                index = next(indices, None)
+                if index is None:
+                    break
+                pending[scope_submit(function, items[index])] = index
+        try:
+            replenish()
+            while pending:
+                finished, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in finished:
+                    result[pending.pop(future)] = future.result()
+                replenish()
+        except BaseException:
+            for future in pending:
+                future.cancel()
+            raise
+        return result
 
     targets_by_module = defaultdict(list)
     for (module, persona, sid), instances in sorted(targets.items()):
@@ -2469,7 +2504,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
         survey_ids = all_scope_ids if deep_catalog and (all_functions or documented_scope) else (
             global_ids if all_functions else [])
         survey_label = "ALL_DEVICE_FUNCTIONS" if all_functions else "UNFILTERED_SCOPE"
-        library_read = scope_pool.submit(capture, module, {"view-type": "LIBRARY", "detailed": "true"}).result() if targeted_catalog else None
+        library_read = scope_submit(capture, module, {"view-type": "LIBRARY", "detailed": "true"}).result() if targeted_catalog else None
         def read_catalog_scope(sid):
             base = {"view-type": "LOCAL", "scope-id": sid, "detailed": "true"}
             return {"persona": survey_label, "scope": sid, "observed_instances": [],
@@ -2534,7 +2569,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
         result = {"status": "supplemental_raw" if module in CONFIG_MODULES else "unqualified_adapter",
                   "source_views": evidence + catalog_views,
                   "scope_read_outcomes": dict(Counter(v[k]["status"] for v in evidence + catalog_views for k in ("committed", "effective"))),
-                  "library": library_read if targeted_catalog else scope_pool.submit(capture, module, {"view-type": "LIBRARY", "detailed": "true"}).result(),
+                  "library": library_read if targeted_catalog else scope_submit(capture, module, {"view-type": "LIBRARY", "detailed": "true"}).result(),
                   "catalog_scope_coverage": {"global_scopes_attempted": sum(v["scope"] in global_ids for v in catalog_views),
                        "global_observed_functions": sorted(global_functions),
                        "observed_functions": sorted(observed_functions),
@@ -2555,10 +2590,21 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
               f"Library={result['library']['status']}", flush=True)
         return module, result
     audit_progress(progress, "Additional profile types", 0, len(unknown), "Inspecting discovered modules")
-    with ThreadPoolExecutor(max_workers=max(1, min(AUDIT_MAX_WORKERS, workers))) as scope_pool:
-        return dict(ordered_parallel(sorted(unknown), inspect, workers,
-                    lambda done, total: audit_progress(progress, "Additional profile types", done, total,
-                                                       "Inspecting discovered modules")))
+    def estimated_scope_work(module):
+        contract = documented.get(module, {})
+        survey_count = (len(all_scope_ids) if deep_catalog and
+                        (contract.get("all_function_scope") or contract.get("source") == "vendor_collection")
+                        else len(global_ids) if contract.get("all_function_scope") else 0)
+        return len(targets_by_module[module]) + survey_count
+
+    # Start the largest known surveys first. Keep serial/test behavior and
+    # returned module order unchanged; only concurrent scheduling is reordered.
+    modules = sorted(unknown) if workers == 1 else sorted(unknown, key=lambda m: (-estimated_scope_work(m), m))
+    with ThreadPoolExecutor(max_workers=scope_workers) as scope_pool:
+        collected = dict(ordered_parallel(modules, inspect, workers,
+                         lambda done, total: audit_progress(progress, "Additional profile types", done, total,
+                                                            "Inspecting discovered modules")))
+    return {module: collected[module] for module in sorted(collected)}
 
 
 def library_inventory(client, modules, assignment_view=None, scope_map_view=None, workers=1, progress=None, *, checkpoint=None, paginate_uncounted=False):
