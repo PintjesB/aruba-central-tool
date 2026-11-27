@@ -106,6 +106,7 @@ def device_view(workspace, query):
         body += table(("Module", "Request selector", "Committed read", "Effective read", "Count-confirmed reads", ""), [
             tr(e(module_label(row["module"])), e(persona_label(row["selector"])), e(row["committed"]), e(row["effective"]),
                str(row["count_confirmed"]) + "/2",
+               f'<a href="{url(root, "unadapted", snapshot=name, persona=row["selector"], module=row["module"], scope=device)}">Inspect complete response</a> · '
                f'<a href="{url(root, "report", snapshot=name, mode="search", persona=row["selector"], module=row["module"], scope=device, q=device)}">Search captured settings</a>')
             for row in supplemental], search=True) + '</section>'
     if report["keyed"]:
