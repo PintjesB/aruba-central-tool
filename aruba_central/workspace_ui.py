@@ -681,6 +681,7 @@ function renderInspector(template,button){
  body.replaceChildren(content);
  for(const grid of body.querySelectorAll('[data-paginated]'))initGrid(grid);
  openInspector(button);
+ document.dispatchEvent(new Event('workspace-inspector-loaded'));
 }
 document.addEventListener('click',async event=>{
  const button=event.target.closest('[data-inspect]');
