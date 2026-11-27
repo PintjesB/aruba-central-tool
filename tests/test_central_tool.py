@@ -715,6 +715,42 @@ class Tests(unittest.TestCase):
         self.assertEqual(set(result["profiles"]["CAMPUS_AP"]["12"]["portals"]["shared"]), {"effective"})
         self.assertFalse(result["safe_to_apply"])
 
+    def test_adaptive_keyed_details_keep_scope_data_and_expand_on_disagreement(self):
+        from central_tool import capture_keyed_profile_details
+        profile = {"name": "dns", "enable": True, "@": {
+            "aruba-annotation:inherited": True, "aruba-annotation:object_type": "SHARED"}}
+        scopes = [{"scope": str(i), "scope_kind": "device",
+                   "local_view": {"status": "list_parsed", "profiles": {}},
+                   "effective_view": {"status": "list_parsed", "profiles": {"dns": profile}}}
+                  for i in range(1, 7)]
+        results = {"ACCESS_SWITCH": {"modules": {"dns": {"scope_results": scopes}}}}
+        class Client:
+            def __init__(self, differs=False):
+                self.calls = []
+                self.differs = differs
+            def get(self, path, **params):
+                self.calls.append(params["scope-id"])
+                return {"name": "dns", "enable": True, **({"new-field": 1} if self.differs else {})}
+        client = Client()
+        result = capture_keyed_profile_details(client, results, {}, workers=1, adaptive=True)
+        self.assertEqual(client.calls, ["1", "6"])
+        self.assertEqual(result["actual_reads"], 2)
+        self.assertEqual(result["candidate_reads"], 6)
+        self.assertEqual(result["collection_only_by_module"], {"dns": 4})
+        skipped = result["profiles"]["ACCESS_SWITCH"]["2"]["dns"]["dns"]["effective"]
+        self.assertEqual(skipped["status"], "collection_only_sampled")
+        self.assertNotIn("profile", skipped)
+        self.assertEqual(scopes[1]["effective_view"]["profiles"]["dns"], profile)
+        client = Client(differs=True)
+        result = capture_keyed_profile_details(client, results, {}, workers=1, adaptive=True)
+        self.assertEqual(len(client.calls), 6)
+        self.assertEqual(result["expanded_groups_reads"], 4)
+        self.assertEqual(result["collection_only_by_module"], {})
+        client = Client()
+        result = capture_keyed_profile_details(client, results, {}, workers=1, adaptive=False)
+        self.assertEqual(len(client.calls), 6)
+        self.assertEqual(result["detail_strategy"], "exhaustive")
+
     def test_partial_profile_candidates_keep_valid_rows_and_exclude_conflicts(self):
         from central_tool import observed_profile_candidates, capture_keyed_profile_details
         a, b, c = ({"name": name, "enable": False} for name in ("a", "b", "c"))

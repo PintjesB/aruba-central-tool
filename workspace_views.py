@@ -936,6 +936,9 @@ def keyed_profile_evidence(bundle, persona, scope, module, identity):
     body = '<h3>Individual profile reads</h3><p class="note">Additional evidence from the individual profile endpoint. Source and completeness are not verified; these values do not replace the collection or authorize changes.</p>'
     for kind, evidence in sorted(reads.items()):
         body += '<h4>' + e(labels.get(kind, kind)) + '</h4>' + status(evidence["status"])
+        if evidence["status"] == "collection_only_sampled":
+            body += '<p class="note">This scope has its own captured collection settings. Individual verification was skipped after two equivalent profiles returned identical details. No detail values were copied from another scope.</p>'
+            continue
         if evidence.get("profile") is not None:
             body += property_table(evidence["profile"])
             if evidence.get("differences"):
@@ -1239,8 +1242,9 @@ def coverage_view(workspace, query):
         body += '<section><h2>Individual profile evidence</h2>' + metrics([
             ("Supported keyed modules", len(keyed.get("supported_modules", [])), "Documented single-key selectors"),
             ("Individual reads", sum(outcomes.values()), "Includes failed or invalid selectors"),
+            ("Collection-only observations", sum(keyed.get("collection_only_by_module", {}).values()), "Adaptive verification; no individual GET"),
             ("Identity observed", outcomes.get("identity_observed", 0), "Source not qualified"),
-        ]) + '<p class="note">Open a profile in Library or Configuration to compare individual and collection responses. Observed Library, saved local and inherited effective identities are queried where a documented single-key contract exists. Other resource types require separate adapters.</p>'
+        ]) + '<p class="note">Open a profile in Library or Configuration to compare individual and collection responses. Library and saved local identities receive individual reads. Adaptive verification reduces repeated individual reads for identical inherited effective device profiles; exhaustive mode verifies every observed identity. Other resource types require separate adapters.</p>'
         body += '<p>' + e(", ".join(f"{pretty(k)}: {v}" for k, v in sorted(outcomes.items())) or "No observed profile identities") + '</p></section>'
     else:
         body += '<section><h2>Individual profile evidence</h2><p class="muted">Not collected. Select Deep catalog collection to retrieve additional individual profile settings.</p></section>'

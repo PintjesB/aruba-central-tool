@@ -2420,7 +2420,7 @@ def observed_profile_candidates(view, identity):
     return {key: value for key, value in observations.items() if key not in conflicts}
 
 
-def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKERS, progress=None, *, checkpoint=None, nac_configuration=None, unadapted=None):
+def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKERS, progress=None, *, checkpoint=None, nac_configuration=None, unadapted=None, adaptive=False):
     """Deep survey of observed Library, local and effective profile identities.
 
     Effective reads are paired with local identities and include inherited-only
@@ -2520,19 +2520,81 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
         read = lambda: keyed_profile_read(client, module, contracts[module], identity, params, profile)
         evidence = checkpoint.observe("keyed_details", [*task[:5], contracts[module], params, profile], read, lambda v: v.get("status") == "identity_observed") if checkpoint else read()
         return task[:5], evidence
-    print(f"Keyed profile details: {len(tasks)} observed profile reads; additional evidence only", flush=True)
-    audit_progress(progress, "Profile details", 0, len(tasks), "Reading individual configuration profiles")
+    # Preserve every scope collection. Only reduce additional keyed verification
+    # of identical, positively observed effective bodies. Never copy a keyed
+    # response from one scope into another or infer scope-specific fields.
+    scope_kinds = {(persona, str(scope["scope"])): scope.get("scope_kind")
+                   for persona, entry in results.items() for data in entry["modules"].values()
+                   for scope in data["scope_results"]}
+    direct, groups = [], defaultdict(list)
+    for task in tasks:
+        persona, sid, module, identity, kind, profile = task
+        scope_kind = scope_kinds.get((persona, sid))
+        annotation = profile.get("@") if isinstance(profile, dict) else None
+        if (adaptive and kind == "effective" and persona in NETWORK_PERSONAS
+                and scope_kind == "device" and isinstance(profile, dict)
+                and isinstance(annotation, dict)
+                and (annotation.get("aruba-annotation:inherited") is True
+                     or annotation.get("aruba-annotation:object_type") == "SHARED")):
+            groups[(persona, module, identity, canonical(profile_body(profile)),
+                    canonical(annotation))].append(task)
+        else:
+            direct.append(task)
+    samples = []
+    pending_groups = []
+    for group in groups.values():
+        if len(group) <= 2:
+            direct.extend(group)
+        else:
+            samples.extend((group[0], group[-1]))
+            pending_groups.append(group)
+    initial = direct + samples
+    print(f"Keyed profile details: {len(tasks)} candidates; {len(initial)} initial reads; "
+          f"mode={'adaptive' if adaptive else 'exhaustive'}", flush=True)
     observations = {}
     outcomes = Counter()
-    for (persona, sid, module, identity, kind), evidence in ordered_parallel(
-            tasks, collect, workers, completed=lambda done, total: audit_progress(
-                progress, "Profile details", done, total, "Reading individual configuration profiles")):
+    checked = {}
+    def retain(selector, evidence):
+        persona, sid, module, identity, kind = selector
         observations.setdefault(persona, {}).setdefault(sid, {}).setdefault(module, {}).setdefault(
             identity, {})[kind] = evidence
         outcomes[evidence["status"]] += 1
-    print("Keyed profile details: " + canonical(dict(outcomes)), flush=True)
+        checked[selector] = evidence
+    audit_progress(progress, "Profile details", 0, len(initial), "Reading direct profiles and verification samples")
+    for selector, evidence in ordered_parallel(initial, collect, workers,
+            completed=lambda done, total: audit_progress(progress, "Profile details", done, total,
+                                                         "Reading direct profiles and verification samples")):
+        retain(selector, evidence)
+    expanded = []
+    skipped = Counter()
+    for group in pending_groups:
+        sample_evidence = [checked[task[:5]] for task in (group[0], group[-1])]
+        if all(e.get("status") == "identity_observed" and e.get("differences") == []
+               for e in sample_evidence):
+            for task in group[1:-1]:
+                persona, sid, module, identity, kind, profile = task
+                # This is a coverage marker, NOT a fetched detail or an inferred body.
+                observations.setdefault(persona, {}).setdefault(sid, {}).setdefault(module, {}).setdefault(
+                    identity, {})[kind] = {"status": "collection_only_sampled", "safe_to_apply": False,
+                                           "source_verified": False}
+                skipped[module] += 1
+        else:
+            expanded.extend(group[1:-1])
+    if expanded:
+        audit_progress(progress, "Profile detail expansion", 0, len(expanded),
+                       "Verifying groups with different or unavailable detail responses")
+        for selector, evidence in ordered_parallel(expanded, collect, workers,
+                completed=lambda done, total: audit_progress(progress, "Profile detail expansion", done, total,
+                                                             "Verifying groups with different or unavailable detail responses")):
+            retain(selector, evidence)
+    print("Keyed profile details: " + canonical(dict(outcomes)) +
+          f"; collection-only={sum(skipped.values())}", flush=True)
     return {"supported_modules": sorted(contracts), "outcomes": dict(outcomes), "profiles": observations,
             "supplemental_raw_reads": supplemental_count,
+            "detail_strategy": "adaptive" if adaptive else "exhaustive",
+            "candidate_reads": len(tasks), "actual_reads": len(initial) + len(expanded),
+            "collection_only_by_module": dict(skipped), "sample_groups": len(pending_groups),
+            "expanded_groups_reads": len(expanded),
             "complete": False, "safe_to_apply": False}
 
 
@@ -3280,7 +3342,7 @@ def configuration_operational_vlan(bundle, persona, sid, vid):
             "may_be_truncated": len(lists[0]) >= 1000}
 
 
-def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None, deep_catalog=False, checkpoint_path=None, resume=False, identity_guard=None):
+def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None, deep_catalog=False, exhaustive_details=False, checkpoint_path=None, resume=False, identity_guard=None):
     """Inventory-driven read-only audit with bounded parallel scope reads."""
     from api_coverage import ReadCoverage
     client = ReadCoverage(client)
@@ -3341,7 +3403,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     checkpoint = None
     if checkpoint_path is not None:
         from collection_checkpoint import ScopeCheckpoint, qualification_manifest
-        revision = [client.revision, deep_catalog, selected_persona]
+        revision = [client.revision, deep_catalog, selected_persona, "exhaustive" if exhaustive_details else "adaptive"] if deep_catalog else [client.revision, deep_catalog, selected_persona]
         manifest = qualification_manifest(client.base, plans, records, revision)
         legacy = [qualification_manifest(client.base, plans, records, revision, legacy=True)] if resume else []
         checkpoint = ScopeCheckpoint(checkpoint_path, manifest, resume=resume, compatible_manifests=legacy)
@@ -3422,7 +3484,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     from nac_assets import capture_portal_assets
     nac_assets = capture_portal_assets(client, workers, progress) if deep_catalog else None
     health = capture_configuration_health(client, records, workers, progress)
-    keyed_details = capture_keyed_profile_details(client, results, library, workers, progress, checkpoint=checkpoint, nac_configuration=nac_configuration, unadapted=unadapted) if deep_catalog else None
+    keyed_details = capture_keyed_profile_details(client, results, library, workers, progress, checkpoint=checkpoint, nac_configuration=nac_configuration, unadapted=unadapted, adaptive=not exhaustive_details) if deep_catalog else None
     from scope_evidence import hierarchy_capture, keyed_assignment_capture
     hierarchy_evidence = hierarchy_capture(client, scopes_by_persona, workers, progress) if deep_catalog else None
     assignment_details = keyed_assignment_capture(client, assignments, workers, progress) if deep_catalog else None
@@ -3772,6 +3834,7 @@ def main():
     config.add_argument("--output", required=True, type=Path)
     config.add_argument("--region-file", type=Path)
     config.add_argument("--deep-catalog", action="store_true", help="Survey documented unadapted collections at every discovered scope; may take substantially longer")
+    config.add_argument("--exhaustive-details", action="store_true", help="Individually verify every profile in Deep collection; disables adaptive verification")
     config.add_argument("--checkpoint", type=Path, help="Private interrupted scope-read checkpoint file")
     config.add_argument("--resume", action="store_true", help="Explicitly reuse a matching checkpoint less than 24 hours old; mixed capture times")
     config.add_argument("--persona", choices=sorted(NETWORK_PERSONAS), help="Optional limit to one discovered persona")
@@ -3784,6 +3847,7 @@ def main():
     app.add_argument("--enable-refresh", action="store_true", help="Enable read-only Central refresh using environment credentials")
     app.add_argument("--no-browser", action="store_true")
     app.add_argument("--deep-catalog", action="store_true", help="Use deep catalog scope surveys for environment-credential refreshes")
+    app.add_argument("--exhaustive-details", action="store_true", help="Use exhaustive individual detail reads with --deep-catalog")
     inv = commands.add_parser("inventory", help="Discover every device and its known compatibility")
     inv.add_argument("--output", required=True, type=Path)
     inv.add_argument("--region-file", type=Path)
@@ -3814,7 +3878,7 @@ def main():
                 def refresh(progress=None):
                     audit_progress(progress, "Connection", 0, 0, "Authenticating and detecting region")
                     detect_region(client, preferred)
-                    return configuration_audit(client, progress=progress, deep_catalog=args.deep_catalog,
+                    return configuration_audit(client, progress=progress, deep_catalog=args.deep_catalog, exhaustive_details=args.exhaustive_details,
                                                identity_guard=lambda incoming: verify_workspace_identity(args.directory, incoming))
             serve(args.directory, refresh=refresh, open_browser=not args.no_browser)
             return 0
@@ -3851,7 +3915,7 @@ def main():
             elif args.command == "audit":
                 data = audit(client)
             elif args.command == "config-audit":
-                data = configuration_audit(client, args.persona, deep_catalog=args.deep_catalog,
+                data = configuration_audit(client, args.persona, deep_catalog=args.deep_catalog, exhaustive_details=args.exhaustive_details,
                                            checkpoint_path=args.checkpoint, resume=args.resume)
             elif args.command == "inventory":
                 records = inventory_capabilities(inventory(client))
