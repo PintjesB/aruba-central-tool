@@ -353,12 +353,17 @@ def diagnostics(bundle):
     strategy = bundle.get("collection_strategy")
     details = bundle.get("keyed_profile_details") or {}
     detail_strategy = details.get("detail_strategy")
+    transport = bundle.get("http_get_transport")
+    transport_fields = ("http_get_attempts", "http_get_retries", "http_get_429",
+                        "http_get_5xx", "custom_500_retry_sequences_suppressed")
     return {
         "schema": 1, "kind": "anonymous_collection_diagnostics",
         "collection_performance": {
             "strategy": strategy if strategy in ("standard", "deep", "targeted") else "unknown",
             "detail_strategy": detail_strategy if detail_strategy in ("adaptive", "exhaustive") else "unknown",
             "logical_gets": sum(row["attempted"] for row in operations),
+            "http_get_transport": ({key: count(transport.get(key)) for key in transport_fields}
+                                   if isinstance(transport, dict) else None),
             "elapsed_before_save_seconds": seconds(timing.get("elapsed_before_save_seconds")),
             "phases": phase_timing,
             "individual_reads": sum(keyed.values()),

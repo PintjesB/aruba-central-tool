@@ -171,3 +171,17 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(result["hierarchy"]["scope_outcomes"], [
             {"kind": "group", "version": "v1", "status": "request_rejected", "http_error": 400, "reads": 1}])
         self.assertNotIn(private, json.dumps(result))
+
+
+    def test_http_transport_diagnostics_are_bounded_and_anonymous(self):
+        bundle = {"schema": 1, "kind": "configuration_audit",
+                  "http_get_transport": {"http_get_attempts": 25, "http_get_retries": 5,
+                                         "http_get_429": 1, "http_get_5xx": 4,
+                                         "custom_500_retry_sequences_suppressed": 2,
+                                         "PRIVATE": "PRIVATE"}}
+        report = diagnostics(bundle)["collection_performance"]["http_get_transport"]
+        self.assertEqual(report, {"http_get_attempts": 25, "http_get_retries": 5,
+                                 "http_get_429": 1, "http_get_5xx": 4,
+                                 "custom_500_retry_sequences_suppressed": 2})
+        del bundle["http_get_transport"]
+        self.assertIsNone(diagnostics(bundle)["collection_performance"]["http_get_transport"])

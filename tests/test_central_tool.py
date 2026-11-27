@@ -1497,6 +1497,9 @@ class Tests(unittest.TestCase):
             with self.assertRaises(APIError):
                 client._request(custom, "custom")
             self.assertEqual(client._http.opener.open.call_count, 22)
+            self.assertEqual(client.get_transport_metrics(), {"http_get_attempts": 22,
+                "http_get_retries": 15, "http_get_5xx": 21,
+                "custom_500_retry_sequences_suppressed": 1})
 
     def test_concurrent_token_refresh_is_single_flight(self):
         import time
