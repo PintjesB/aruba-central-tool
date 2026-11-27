@@ -31,9 +31,22 @@ def hierarchy_capture(client, scopes_by_persona, workers=1, progress=None):
                     if scope.get("kind") in SCOPE_TYPES and str(scope["id"]).isdigit()})
     def read(task):
         sid, kind = task
-        # v1 uses id/type; retain rejected candidate scope-type mappings as evidence.
-        result = evidence_read(client, CONFIG + "/hierarchy", id=sid, type=SCOPE_TYPES[kind])
-        return {"scope": sid, "kind": kind, "scope_type": SCOPE_TYPES[kind], **result}
+        scope_type = SCOPE_TYPES[kind]
+        result = evidence_read(client, CONFIG + "/hierarchy", id=sid, type=scope_type)
+        record = {"scope": sid, "kind": kind, "scope_type": scope_type,
+                  "endpoint_version": "v1", **result}
+        # The pinned vendor catalog also documents the deprecated alpha
+        # endpoint with different parameter names. Only try it after a
+        # request-contract rejection; never bypass a permission failure.
+        if result.get("http_error") in (400, 404, 405, 422):
+            alternate = evidence_read(client, ALPHA + "/hierarchy",
+                                      **{"scope-id": sid, "scope-type": scope_type})
+            record["alternate_read"] = alternate
+            if alternate["status"] == "response_received":
+                record = {**record, **alternate, "endpoint_version": "v1alpha1",
+                          "primary_read": result}
+                record.pop("http_error", None)
+        return record
     records = ordered_parallel(tasks, read, workers, completed=lambda done, total:
         audit_progress(progress, "Scope hierarchy", done, total, "Reading discovered scope relationships"))
     return {"records": records, "outcomes": dict(Counter(r["status"] for r in records)),
@@ -49,17 +62,36 @@ def assignment_identity(row):
     return tuple(str(value) for value in values)
 
 
+def assignment_selector_rejection(row):
+    """Return a bounded reason, never a private selector value."""
+    if not isinstance(row, dict):
+        return "invalid_record"
+    for key in ASSIGNMENT_KEYS:
+        value = row.get(key)
+        if type(value) not in (str, int) or not str(value).strip():
+            return "missing_or_invalid_" + key
+    sid, persona, module, instance = assignment_identity(row)
+    if not re.fullmatch(r"[0-9]+", sid):
+        return "invalid_scope_id"
+    if persona not in NETWORK_PERSONAS | {"HYBRID_NAC"}:
+        return "unsupported_persona"
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,127}", module):
+        return "invalid_module"
+    if len(instance) > 512:
+        return "instance_too_long"
+    if instance in (".", "..") or any(c in instance for c in ("\\", "%")):
+        return "unsafe_instance"
+    if any(ord(c) < 32 or ord(c) == 127 for c in instance):
+        return "control_character"
+    if "/" in instance and not (module == "ethernet-interfaces" and
+            re.fullmatch(r"[0-9]{1,4}/[0-9]{1,4}/[0-9]{1,4}", instance)):
+        return "unqualified_slash_instance"
+    return None
+
+
 def valid_assignment_selector(identity):
-    if identity is None:
-        return False
-    sid, persona, module, instance = identity
-    numeric_port = module == "ethernet-interfaces" and re.fullmatch(r"[0-9]{1,4}/[0-9]{1,4}/[0-9]{1,4}", instance)
-    return (sid.isdigit() and persona in NETWORK_PERSONAS | {"HYBRID_NAC"}
-            and re.fullmatch(r"[a-z][a-z0-9-]{0,127}", module) is not None
-            and len(instance) <= 512 and instance not in (".", "..")
-            and not any(c in instance for c in ("\\", "%"))
-            and ("/" not in instance or bool(numeric_port))
-            and not any(ord(c) < 32 or ord(c) == 127 for c in instance))
+    return identity is not None and assignment_selector_rejection(
+        dict(zip(ASSIGNMENT_KEYS, identity))) is None
 
 
 def legacy_assignment_status(raw, identity):
@@ -91,12 +123,13 @@ def legacy_assignment_status(raw, identity):
 
 def keyed_assignment_capture(client, assignments, workers=1, progress=None):
     tasks = {}
-    invalid = 0
+    invalid = Counter()
     for row in assignments.get("rows", []):
-        identity = assignment_identity(row)
-        if not valid_assignment_selector(identity):
-            invalid += 1
+        reason = assignment_selector_rejection(row)
+        if reason:
+            invalid[reason] += 1
             continue
+        identity = assignment_identity(row)
         tasks.setdefault(identity, row)
     def read(identity):
         path = ALPHA + "/config-assignments/" + "/".join(quote(v, safe="") for v in identity)
@@ -141,5 +174,6 @@ def keyed_assignment_capture(client, assignments, workers=1, progress=None):
         audit_progress(progress, "Individual assignments", done, total, "Reading observed assignment identities"))
     outcomes = Counter(r["status"] for r in records)
     if invalid:
-        outcomes["invalid_selector"] += invalid
-    return {"records": records, "outcomes": dict(outcomes), "complete": False, "safe_to_apply": False}
+        outcomes["invalid_selector"] += sum(invalid.values())
+    return {"records": records, "outcomes": dict(outcomes), "selector_rejections": dict(invalid),
+            "complete": False, "safe_to_apply": False}
