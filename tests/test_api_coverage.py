@@ -30,6 +30,22 @@ def catalog():
 
 
 class CoverageTests(unittest.TestCase):
+    def test_prefix_index_preserves_specificity_and_ambiguity(self):
+        spec = catalog()
+        extra = ["/:root/:middle/detail", "/api/:id/:tail",
+                 "/api/profiles/:id/summary", "/api/:id/:key/summary",
+                 "/api/action:read"]
+        spec["get_requests"].extend({"method": "GET", "path": p, "group": "Test"} for p in extra)
+        coverage = ReadCoverage(Client(), spec)
+        self.assertEqual(coverage.resolve("/api/profiles/status"), "/api/profiles/status")
+        self.assertEqual(coverage.resolve("/api/profiles/xyz"), "/api/profiles/:id")
+        self.assertEqual(coverage.resolve("/api/profiles/xyz/summary"), "/api/profiles/:id/summary")
+        self.assertIsNone(coverage.resolve("/api/profile/detail"))
+        self.assertEqual(coverage.resolve("/other/value/detail"), "/:root/:middle/detail")
+        self.assertEqual(coverage.resolve("/api/action:read"), "/api/action:read")
+        self.assertIsNone(coverage.resolve("/other/value/"))
+        self.assertIsNone(coverage.resolve("/api/profiles/"))
+
     def test_coverage_and_privacy(self):
         tracked = ReadCoverage(Client(), catalog())
         self.assertEqual(tracked.base, "test")
