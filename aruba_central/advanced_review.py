@@ -360,6 +360,7 @@ def advanced_analysis(bundle):
         for ref in result["references"]:
             if ref["persona"] == persona and ref["source_module"] == "ethernet-interfaces":
                 port_reference_index[(ref["scope"], ref["source"])].append(ref)
+        port_saved_views = {v["scope"]: v for v in entry["modules"].get("ethernet-interfaces", {}).get("scope_results", [])}
         for ports in port_groups.values():
             if len(ports) < 2:
                 continue
@@ -384,7 +385,7 @@ def advanced_analysis(bundle):
             dependencies = [r for key in sorted(port_ids) for r in port_reference_index[key]]
             from .port_conversion_review import port_conversion_review
             result["port_groups"].append({"persona": persona, "ports": ports,
-                "conversion_review": port_conversion_review(entry, ports, settings, library_matches),
+                "conversion_review": port_conversion_review(entry, ports, settings, library_matches, views=port_saved_views),
                 "portable_settings": settings, "unsupported_fields": ports[0]["unsupported"],
                 "matching_library_profiles": library_matches, "library_status": profile_view.get("status", "not_collected"),
                 "dependencies": dependencies,
