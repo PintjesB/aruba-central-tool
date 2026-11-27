@@ -296,6 +296,27 @@ class WorkspaceTests(unittest.TestCase):
         scopes[1]["review"]["qualified"] = False
         self.assertEqual(len(library_profile_comparison(data, "layer2-vlan")["10"]["local_variants"]), 1)
 
+    def test_refresh_inherits_label_from_verified_snapshot_without_second_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            data = self.fixture()
+            data["tenant_name"] = "Existing customer"
+            path = Path(directory) / "config-audit-one.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with patch("aruba_central.config_app.historical_phase_times", return_value={}), patch(
+                    "aruba_central.configuration_history.snapshot_identity_checks") as guard, patch(
+                    "aruba_central.config_app.read_audit", wraps=read_audit) as read:
+                incoming = self.fixture()
+                self.assertTrue(workspace.start_refresh(lambda progress=None: incoming))
+                deadline = time.monotonic() + 3
+                while workspace.state == "running" and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertEqual(workspace.status()["state"], "complete")
+                self.assertEqual(read.call_count, 1)
+                guard.assert_called_once()
+                self.assertEqual(incoming["tenant_name"], "Existing customer")
+                self.assertTrue(workspace.status()["snapshot"].startswith("config-audit-Existing-customer-"))
+
     def test_customer_boundary_rejects_unrelated_inventory(self):
         from aruba_central.config_app import verify_workspace_identity, WorkspaceIdentityError
         def capture(serial, region="region", global_id="1"):
