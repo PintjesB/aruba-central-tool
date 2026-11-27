@@ -32,3 +32,25 @@ class LocalBenchmarkTests(unittest.TestCase):
                 benchmark(directory, name, repeat=0)
             with self.assertRaises(ValueError):
                 benchmark(directory, "missing.json", repeat=1)
+
+    def test_ui_benchmark_exports_only_aggregate_measurements(self):
+        from test_consolidation import fixture
+        bundle = fixture()
+        bundle["tenant_name"] = "private-tenant-marker"
+        bundle["results"]["ACCESS_SWITCH"]["scopes"][2]["name"] = "private-device-marker"
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-private-name.json"
+            path = Path(directory) / name
+            original = json.dumps(bundle)
+            path.write_text(original)
+            result = benchmark(directory, name, repeat=2, ui=True)
+            self.assertEqual(path.read_text(), original)
+            self.assertEqual(result["central_api_requests"], 0)
+            for stage in ("optimization_worklist", "configuration_health", "configuration_search",
+                          "configuration_search_grouped", "render_assessment", "render_health",
+                          "render_customer_report", "render_device_review"):
+                self.assertEqual(len(result["stages"][stage]["samples"]), 2)
+            self.assertGreater(result["counts"]["render_assessment_bytes"], 0)
+            self.assertGreater(result["counts"]["search_observations"], 0)
+            for private in ("private-tenant-marker", "private-device-marker", name):
+                self.assertNotIn(private, json.dumps(result))
