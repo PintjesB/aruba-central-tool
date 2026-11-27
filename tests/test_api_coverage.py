@@ -85,6 +85,18 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(tracked.report()["exact_collection_gets_reused"], 1)
         self.assertEqual(tracked.report()["operations"][0]["attempted"], 7)
 
+    def test_endpoint_duration_aggregates_success_and_failure(self):
+        from unittest.mock import patch
+        tracked = ReadCoverage(Client(), catalog())
+        with patch("api_coverage.time.monotonic", side_effect=[1, 1.25, 2, 2.5]):
+            tracked.get("/api/profiles")
+            with self.assertRaises(APIError):
+                tracked.get("/api/profiles", fail=True)
+        row = next(r for r in tracked.report()["operations"] if r["path"] == "/api/profiles")
+        self.assertEqual(row["elapsed_ms_sum"], 750)
+        self.assertEqual(row["elapsed_ms_max"], 500)
+        self.assertEqual(row["attempted"], 2)
+
     def test_parallel_counts(self):
         tracked = ReadCoverage(Client(), catalog())
         with ThreadPoolExecutor(max_workers=8) as pool:
