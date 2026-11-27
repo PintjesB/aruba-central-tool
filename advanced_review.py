@@ -50,6 +50,25 @@ def effective_views(entry):
             for module, data in entry["modules"].items()}
 
 
+def policy_named_target(path, key):
+    """Recognize named service/group fields only in documented rule conditions.
+
+    HPE's policy collection example distinguishes services, transport fields
+    and source/destination role options. Do not guess the family of generic
+    address-group or port group fields.
+    """
+    if len(path) < 4 or path[:2] != ("security-policy", "policy-rule") or type(path[2]) is not int or path[3] != "condition":
+        return None
+    relative = path[4:]
+    if relative == ("services",) and key == "net-service":
+        return "net-services"
+    if relative == ("transport-fields",) and key in ("destination-port-net-group", "source-port-net-group"):
+        return "net-groups"
+    if relative in (("source", "role-options"), ("destination", "role-options")) and key == "net-group":
+        return "net-groups"
+    return None
+
+
 def explicit_references(value, path=(), module=None):
     named = {**NAMED_REFERENCES, **MODULE_REFERENCES.get(module, {})}
     if isinstance(value, dict):
@@ -67,6 +86,8 @@ def explicit_references(value, path=(), module=None):
                         yield list_target, member if isinstance(member, str) and member else None, here + (i,)
                 else:
                     yield list_target, None, here
+            elif module == "policies" and (target := policy_named_target(path, key)):
+                yield target, item if isinstance(item, str) and item else None, here
             elif key in named:
                 yield named[key], item if isinstance(item, str) and item else None, here
             elif key == "sw-profile-alias":
