@@ -713,6 +713,31 @@ class Tests(unittest.TestCase):
         self.assertNotIn("ACCESS_SWITCH", CONFIG_MODULES["radios"][1])
         self.assertIn("ACCESS_SWITCH", CONFIG_MODULES["dot1xauth"][1])
 
+    def test_observed_profile_adapters_have_documented_contracts_and_raw_surveys(self):
+        from central_tool import CONFIG_MODULES, keyed_profile_contracts, SUPPLEMENTAL_RAW_MODULES
+        contracts = keyed_profile_contracts()
+        expected = {
+            "airgroup-policies": "name", "airgroup-service-definitions": "name",
+            "arc": "name", "auth-survivability": "name",
+            "certificate-rcp": "name", "certificate-store": "name",
+            "certificate-usage": "name", "certificates": "name",
+            "custom-messages": "message-id", "default-custom-messages": "message-id",
+            "device-certificates": "name", "device-persona-mapping": "device-type",
+            "firewall": "name", "ids": "name", "ipm": "name", "lldp": "name",
+            "local-management": "name", "loopback-interfaces": "id",
+            "mgmt-interfaces": "name", "nae-agents": "agent-name",
+            "nae-scripts": "name", "passpoint-identity": "name",
+            "qos-schedules": "sched-profile-name", "rmon-alarms": "name",
+            "stateful-dot1x-profiles": "name", "static-route": "name",
+            "telemetry": "name", "time-ranges": "name", "vrfs": "name",
+        }
+        for module, key in expected.items():
+            self.assertEqual(CONFIG_MODULES[module][0], key)
+            self.assertEqual(contracts[module], key)
+            self.assertIn(module, SUPPLEMENTAL_RAW_MODULES)
+        self.assertNotIn("lacp", CONFIG_MODULES)
+        self.assertNotIn("policy-groups", CONFIG_MODULES)
+
     def test_configuration_audit_uses_persona_catalog(self):
         from central_tool import configuration_audit
         from unittest.mock import patch
@@ -738,6 +763,10 @@ class Tests(unittest.TestCase):
         self.assertIn("gw-system", data["library"]["modules"])
         self.assertIn("policy-groups", data["unadapted_profiles"])
         self.assertIn("arc", data["unadapted_profiles"])
+        self.assertEqual(data["unadapted_profiles"]["arc"]["status"], "supplemental_raw")
+        self.assertIn("lldp", data["results"]["ACCESS_SWITCH"]["modules"])
+        self.assertIn("airgroup-policies", data["results"]["CAMPUS_AP"]["modules"])
+        self.assertIn("qos-schedules", data["library"]["modules"])
         self.assertFalse(data["catalog_exhaustive"])
         self.assertEqual(len(data["results"]["ACCESS_SWITCH"]["modules"]["ethernet-interfaces"]["scope_results"]), 1)
         self.assertEqual(data["unqualified_personas"], ["HYBRID_NAC"])
