@@ -790,6 +790,30 @@ class Tests(unittest.TestCase):
         self.assertTrue(result["dns"]["source_views"][0]["committed"]["reused_exact_collection"])
         self.assertEqual(result["dns"]["source_views"][0]["committed"]["raw"], raw)
 
+    def test_adaptive_verification_preserves_direct_interface_and_local_counterparts(self):
+        from central_tool import capture_keyed_profile_details
+        annotation = {"aruba-annotation:inherited": True, "aruba-annotation:object_type": "SHARED"}
+        def entry(module, identity):
+            profile = {"name": identity, "@": annotation}
+            return {"scope_results": [
+                {"scope": str(i), "scope_kind": "device",
+                 "local_view": {"status": "list_parsed", "profiles": {identity: profile} if i == 2 else {}},
+                 "effective_view": {"status": "list_parsed", "profiles": {identity: profile}}}
+                for i in range(1, 5)]}
+        results = {"ACCESS_SWITCH": {"modules": {"ethernet-interfaces": entry("ethernet-interfaces", "1/1/1"),
+                                                 "dns": entry("dns", "dns")}}}
+        class Client:
+            def __init__(self):
+                self.calls = []
+            def get(self, path, **params):
+                self.calls.append((path, params))
+                return {"name": "1/1/1" if "/ethernet-interfaces/" in path else "dns"}
+        client = Client()
+        result = capture_keyed_profile_details(client, results, {}, workers=1, adaptive=True)
+        self.assertEqual(sum("/ethernet-interfaces/" in p for p, _ in client.calls), 5)
+        self.assertEqual(result["profiles"]["ACCESS_SWITCH"]["2"]["dns"]["dns"]["effective"]["status"], "identity_observed")
+        self.assertEqual(result["collection_only_by_module"], {"dns": 1})
+
     def test_adaptive_keyed_details_keep_scope_data_and_expand_on_disagreement(self):
         from central_tool import capture_keyed_profile_details
         profile = {"name": "dns", "enable": True, "@": {
