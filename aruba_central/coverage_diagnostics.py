@@ -692,7 +692,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", required=True, type=Path)
     parser.add_argument("--snapshot", help="Specific snapshot filename; default is latest")
-    parser.add_argument("--compare-previous", action="store_true", help="Compare exact selector coverage with the preceding saved audit, offline")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--compare-previous", action="store_true", help="Compare exact selector coverage with the preceding saved audit, offline")
+    modes.add_argument("--keyed-qualification", action="store_true", help="Anonymous shape and difference classification for role and server-group reads, offline")
     parser.add_argument("--output", type=Path, help="Write JSON to a new private file instead of standard output")
     args = parser.parse_args()
     if args.output is not None and (args.output.exists() or args.output.is_symlink()):
@@ -703,7 +705,11 @@ def main():
         parser.error("No configuration audit snapshots found")
     selected = args.snapshot or files[0].name
     bundle = read_audit(args.directory, selected)
-    result = diagnostics(bundle)
+    if args.keyed_qualification:
+        from .keyed_qualification import keyed_qualification
+        result = keyed_qualification(bundle)
+    else:
+        result = diagnostics(bundle)
     if args.compare_previous:
         index = next((i for i, path in enumerate(files) if path.name == selected), None)
         if index is None or index + 1 >= len(files):
