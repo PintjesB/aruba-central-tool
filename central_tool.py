@@ -1742,6 +1742,53 @@ def audit_progress(callback, phase, done, total, detail):
 # Survey these even if the assignment and scope-map inventories omit them.
 DOCUMENTED_RAW_COLLECTIONS = {"arc", "policy-groups", "usb"}
 
+# A structured adapter does not establish that a persona-filtered read returns
+# everything. Preserve the previously successful mixed-scope survey in Deep mode.
+SUPPLEMENTAL_RAW_MODULES = {
+    "aaa-profile",
+    "airgroup-policies",
+    "airgroup-service-definitions",
+    "arc",
+    "auth-server-global-config",
+    "auth-survivability",
+    "captive-portal",
+    "certificate-rcp",
+    "certificate-store",
+    "certificate-usage",
+    "certificates",
+    "client-iptracker",
+    "custom-messages",
+    "default-custom-messages",
+    "device-certificates",
+    "device-persona-mapping",
+    "devicefingerprinting",
+    "devicefingerprinting-profile",
+    "dot1xauth",
+    "firewall",
+    "ids",
+    "ipm",
+    "lldp",
+    "local-management",
+    "loopback-interfaces",
+    "mgmt-interfaces",
+    "nae-agents",
+    "nae-scripts",
+    "named-vlan",
+    "net-services",
+    "passpoint-identity",
+    "qos-schedules",
+    "radios",
+    "rmon-alarms",
+    "role-gpids",
+    "stateful-dot1x-profiles",
+    "static-route",
+    "stp",
+    "telemetry",
+    "time-ranges",
+    "traffic-insight",
+    "vrfs",
+}
+
 
 def documented_profile_catalog():
     """Use the pinned HPE collection, not a tenant's assignment inventory.
@@ -1986,7 +2033,8 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                                  "committed": capture(module, {**base, "effective": "false"}),
                                  "effective": capture(module, {**base, "effective": "true"})})
                 visited.add((function, sid))
-        result = {"status": "unqualified_adapter", "source_views": evidence + catalog_views,
+        result = {"status": "supplemental_raw" if module in CONFIG_MODULES else "unqualified_adapter",
+                  "source_views": evidence + catalog_views,
                   "scope_read_outcomes": dict(Counter(v[k]["status"] for v in evidence + catalog_views for k in ("committed", "effective"))),
                   "library": capture(module, {"view-type": "LIBRARY", "detailed": "true"}),
                   "catalog_scope_coverage": {"global_scopes_attempted": sum(v["scope"] in global_ids for v in catalog_views),
@@ -3035,7 +3083,10 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     catalog = documented_profile_catalog()
     profile_types["documented_catalog"] = catalog
     profile_types["tenant_default_modules"] = ["auth-profiles", "authz-policies", "identity-stores"]
-    profile_types["survey_modules"] = sorted((DOCUMENTED_RAW_COLLECTIONS | set(catalog["modules"])) - set(CONFIG_MODULES) - set(profile_types["tenant_default_modules"]))
+    surveys = (set(catalog["modules"]) - set(CONFIG_MODULES)) | DOCUMENTED_RAW_COLLECTIONS
+    if deep_catalog:
+        surveys |= SUPPLEMENTAL_RAW_MODULES
+    profile_types["survey_modules"] = sorted(surveys - set(profile_types["tenant_default_modules"]))
     print(f"Documented catalog: {catalog['get_requests']} GET definitions; "
           f"{len(catalog['modules'])} profile collections; "
           f"{len(profile_types['survey_modules'])} additional Library surveys", flush=True)
