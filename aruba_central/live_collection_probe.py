@@ -735,6 +735,7 @@ def main():
     parser.add_argument("--sample", type=int, choices=range(1, 5), default=2)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--specialized", action="store_true", help="Bounded probe of management-server, custom-get-api, failed hierarchy scopes, assignment identities and portal assets")
+    modes.add_argument("--nac-service", action="store_true", help="Bounded anonymous DPP and job list/detail qualification")
     modes.add_argument("--performance", action="store_true", help="Bounded selector and page-size qualification")
     modes.add_argument("--change-audit", action="store_true", help="Bounded tenant audit-log capability qualification")
     modes.add_argument("--change-windows", action="store_true", help="Reconcile audit logs across overlapping daily windows")
@@ -756,7 +757,11 @@ def main():
             client_id = client_id or getpass.getpass("Central client ID: ")
             secret = secret or getpass.getpass("Central client secret: ")
         client = Central(previous["region"], token, client_id, secret)
-        if args.change_impact:
+        if args.nac_service:
+            from .nac_service_probe import nac_service_probe
+            qualified_scopes(client, previous)
+            report = nac_service_probe(client)
+        elif args.change_impact:
             report = change_window_probe(client, previous, impact_qualification=True)
         elif args.change_windows:
             report = change_window_probe(client, previous)
