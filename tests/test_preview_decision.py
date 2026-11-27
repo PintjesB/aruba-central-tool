@@ -12,3 +12,43 @@ class PreviewDecisionTests(unittest.TestCase):
         self.assertIn("review.missing_destinations.length", ADVISOR_JS)
         self.assertIn("review.collisions.length", ADVISOR_JS)
         self.assertIn("review.dependency_order.blocked.length", ADVISOR_JS)
+
+
+    def test_browser_preview_shows_destination_blocker_and_source_transition(self):
+        import json
+        import shutil
+        import tempfile
+        from pathlib import Path
+        from aruba_central.config_app import Workspace
+        from test_consolidation import fixture
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            self.skipTest("Browser test dependency unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(fixture()))
+            html = Workspace(directory).advisor({"snapshot": name, "finding": "promote_local"})
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(executable_path=shutil.which("google-chrome") or shutil.which("chromium"), args=["--no-sandbox"])
+                try:
+                    tab = browser.new_page()
+                    errors = []
+                    tab.on("pageerror", lambda exc: errors.append(str(exc)))
+                    tab.set_content(html)
+                    row = tab.locator('#advisor-table tr[data-action="promote_local"]:visible').first
+                    row.locator(".choose").check()
+                    tab.locator("#open-preview").click()
+                    self.assertTrue(tab.locator("#plan-dialog").is_visible())
+                    self.assertIn("Resolve export blockers", tab.locator(".preview-decision").inner_text())
+                    self.assertTrue(tab.locator("#export-plan").is_disabled())
+                    self.assertIn("Captured configuration", tab.locator(".preview-transition").inner_text())
+                    tab.locator("#close-preview").click()
+                    row.locator(".destination").select_option("library")
+                    tab.locator("#open-preview").click()
+                    self.assertIn("Review export available", tab.locator(".preview-decision").inner_text())
+                    self.assertIn("Library / exact source scopes", tab.locator(".preview-transition").inner_text())
+                    self.assertTrue(tab.locator("#export-plan").is_enabled())
+                    self.assertEqual(errors, [])
+                finally:
+                    browser.close()
