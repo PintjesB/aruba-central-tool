@@ -125,6 +125,7 @@ class Central:
         self._http = threading.local()
         self._token_lock = threading.Lock()
         self._rate_lock = threading.Lock()
+        self._pacing_gate = threading.Lock()
         self._retry_at = 0.0
         self._next_request_at = 0.0
         self._request_interval = 1 / 9
@@ -182,18 +183,23 @@ class Central:
         # HPE documents 10 requests/s per account across all credentials.
         # Never exceed the conservative 9/s cap. Recover slowly after a
         # quiet period instead of staying throttled for the entire audit.
-        while True:
-            with self._rate_lock:
-                now = time.monotonic()
-                delay = max(self._retry_at, self._next_request_at) - now
-                if delay <= 0:
-                    if self._request_interval > 1 / 9 and now >= self._rate_recover_at:
-                        rate = min(9, 1 / self._request_interval + 0.5)
-                        self._request_interval = 1 / rate
-                        self._rate_recover_at = now + 30
-                    self._next_request_at = now + self._request_interval
-                    return
-            time.sleep(delay)
+        # Only one thread sleeps for the next slot. Other workers block on
+        # the gate rather than waking simultaneously and racing for admission.
+        # Keep the rate-state lock separate so a 429 can extend cooldown
+        # even while the admission worker is sleeping.
+        with self._pacing_gate:
+            while True:
+                with self._rate_lock:
+                    now = time.monotonic()
+                    delay = max(self._retry_at, self._next_request_at) - now
+                    if delay <= 0:
+                        if self._request_interval > 1 / 9 and now >= self._rate_recover_at:
+                            rate = min(9, 1 / self._request_interval + 0.5)
+                            self._request_interval = 1 / rate
+                            self._rate_recover_at = now + 30
+                        self._next_request_at = now + self._request_interval
+                        return
+                time.sleep(delay)
 
     @staticmethod
     def _retry_delay(hint, attempt):
