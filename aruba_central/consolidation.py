@@ -72,15 +72,26 @@ def placement_index(scopes):
     membership = scope_memberships(scopes)
     scope_by_id = {s["id"]: s for s in scopes}
     names = {s["id"]: s.get("name") or s["id"] for s in scopes}
+    # Build the inverse membership map in one pass over devices. Unknown
+    # membership sets are shared by scope kind rather than duplicated for
+    # each possible destination. Callers only read these sets.
+    known = defaultdict(set)
+    unknown = defaultdict(set)
+    for device, memberships in membership.items():
+        for kind, sid in memberships.items():
+            if sid is None:
+                unknown[kind].add(device)
+            else:
+                known[kind, sid].add(device)
+    all_devices = set(membership)
+    empty = set()
     def recipients(sid):
-        scope = scope_by_id[sid]
-        kind = scope["kind"]
+        kind = scope_by_id[sid]["kind"]
         if kind == "device":
-            return ({sid}, set()) if sid in membership else (set(), set(membership))
+            return ({sid}, empty) if sid in membership else (empty, all_devices)
         if kind not in ("global", "site", "group", "collection"):
-            return set(), set(membership)
-        return ({dev for dev, m in membership.items() if m[kind] == sid},
-                {dev for dev, m in membership.items() if m[kind] is None})
+            return empty, all_devices
+        return known.get((kind, sid), empty), unknown.get(kind, empty)
     return membership, scope_by_id, names, {sid: recipients(sid) for sid in scope_by_id}
 
 
