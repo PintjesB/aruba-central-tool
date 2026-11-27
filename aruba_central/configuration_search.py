@@ -69,8 +69,12 @@ def matching_fields(bundle, query, *, module="", persona=""):
         if (module and module != record["module"]) or (persona and persona != record["persona"]):
             continue
         context = " ".join(str(record[k]) for k in ("persona", "module", "name", "scope", "identity", "view")).casefold()
-        yield record, ((path, value) for path, value in leaves(record["body"])
-                       if all(term in context + " " + ".".join(path).casefold() + " " + canonical(value).casefold() for term in terms))
+        def matches(body, context):
+            for path, value in leaves(body):
+                haystack = context + " " + ".".join(path).casefold() + " " + canonical(value).casefold()
+                if all(term in haystack for term in terms):
+                    yield path, value
+        yield record, matches(record["body"], context)
 
 
 def field_group(record, path, value):
