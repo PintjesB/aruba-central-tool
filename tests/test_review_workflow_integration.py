@@ -39,7 +39,7 @@ class ReviewWorkflowIntegrationTests(unittest.TestCase):
                         tab = browser.new_page(viewport={"width": 1440, "height": 900})
                         errors = []
                         tab.on("pageerror", lambda error: errors.append(str(error)))
-                        response = tab.goto(root + "assessment?" + urlencode({"snapshot": name}))
+                        response = tab.goto(root + "assessment?" + urlencode({"snapshot": name, "state": "open"}))
                         self.assertEqual(response.status, 200)
                         choices = tab.locator("#bulk-review-table [data-bulk-key]:visible")
                         self.assertGreaterEqual(choices.count(), 2)
@@ -61,6 +61,7 @@ class ReviewWorkflowIntegrationTests(unittest.TestCase):
                         self.assertTrue(submit.is_enabled())
                         with tab.expect_navigation():
                             submit.click()
+                        self.assertIn("state=open", tab.url)
                         self.assertEqual([read_disposition(directory, key)["state"] for key in keys], ["deferred", "deferred"])
                         self.assertTrue(all(read_disposition(directory, key)["note"] == "Review in next maintenance window" for key in keys))
                         tab.goto(root + "assessment?" + urlencode({"snapshot": name, "state": "deferred"}))
@@ -73,6 +74,7 @@ class ReviewWorkflowIntegrationTests(unittest.TestCase):
                         self.assertEqual(tab.request.post(root + "bulk-review-disposition", data=urlencode({**form_data, "csrf": "wrong"}), headers=headers).status, 403)
                         self.assertEqual(tab.request.post(root + "bulk-review-disposition", data=urlencode(form_data), headers={**headers, "Origin": "https://example.invalid"}).status, 403)
                         self.assertEqual(tab.request.post(root + "bulk-review-disposition", data=urlencode({**form_data, "keys": json.dumps([keys[0], "0" * 64])}), headers=headers).status, 400)
+                        self.assertEqual(tab.request.post(root + "bulk-review-disposition", data=urlencode({**form_data, "return_state": "https://example.invalid"}), headers=headers).status, 400)
                         self.assertTrue(all(read_disposition(directory, key)["state"] == "deferred" for key in keys))
                     finally:
                         browser.close()
