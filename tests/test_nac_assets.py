@@ -25,6 +25,24 @@ class PortalAssetTests(unittest.TestCase):
         self.assertTrue(result["details"]["image a"]["differences"])
         self.assertFalse(result["safe_to_apply"])
 
+    def test_singleton_image_envelope_requires_matching_identity_and_count(self):
+        class Client:
+            def __init__(self, body):
+                self.body = body
+            def get(self, path, **params):
+                if path.endswith("cnac-image"):
+                    return {"count": 1, "items": [{"imageID": "a"}]}
+                return self.body
+        good = {"count": 1, "items": [{"imageID": "a", "fileSize": 0}]}
+        result = capture_portal_assets(Client(good))
+        self.assertEqual(result["details"]["a"]["status"], "identity_observed")
+        self.assertEqual(result["details"]["a"]["differences"][0]["reference_value"], 0)
+        for bad in ({"count": 2, "items": [{"imageID": "a"}]},
+                    {"count": 1, "items": [{"imageID": "b"}]},
+                    {"items": [{"imageID": "a"}, {"imageID": "b"}]}):
+            self.assertEqual(capture_portal_assets(Client(bad))["details"]["a"]["status"],
+                             "identity_unresolved")
+
     def test_invalid_and_duplicate_ids_are_not_queried(self):
         class Client:
             def __init__(self):
