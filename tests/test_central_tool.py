@@ -828,6 +828,32 @@ class Tests(unittest.TestCase):
         self.assertTrue(result["dns"]["source_views"][0]["effective"]["reused_exact_collection"])
         self.assertEqual(result["dns"]["source_views"][0]["effective"]["raw"], raw)
 
+    def test_supplemental_reuses_counted_raw_even_when_identity_unqualified(self):
+        from aruba_central.central_tool import inspect_unadapted_profiles
+        raw = {"dns": [{"name": "same", "value": 1}, {"name": "same", "value": 2}],
+               "metadata": {"total": 2, "count": 2}}
+        for status, payload, pagination, expected_calls in (
+                ("identity_unresolved", raw, None, 1),
+                ("schema_unresolved", raw, "request_failed", 3),
+                ("identity_unresolved", {"dns": raw["dns"], "metadata": {"total": 3}}, None, 3),
+                ("read_failed", raw, None, 3)):
+            view = {"status": status, "raw": payload, "pagination_status": pagination}
+            fake = Fake([])
+            result = inspect_unadapted_profiles(
+                fake, {"unknown_adapter_modules": [], "survey_modules": ["dns"],
+                       "modules": {"dns": ["ACCESS_SWITCH"]}, "documented_catalog": {"modules": {}}},
+                {}, {}, scopes_by_persona={"ACCESS_SWITCH": [{"id": "1", "kind": "device"}]},
+                deep_catalog=True, structured_results={"ACCESS_SWITCH": {"modules": {
+                    "dns": {"scope_results": [{"scope": "1", "effective_view": view}]}}}},
+                structured_library={"modules": {"dns": view}})
+            self.assertEqual(len(fake.calls), expected_calls)
+            if expected_calls == 1:
+                evidence = result["dns"]["source_views"][0]["effective"]
+                self.assertTrue(evidence["collection_count_verified"])
+                self.assertTrue(evidence["reused_raw_identity_unqualified"])
+                self.assertEqual(evidence["raw"], raw)
+                self.assertFalse(result["dns"]["safe_to_apply"])
+
     def test_supplemental_collection_reuses_exact_committed_fallback(self):
         from aruba_central.central_tool import inspect_unadapted_profiles
         raw = {"dns": [{"name": "example"}]}
