@@ -288,6 +288,33 @@ class WorkspaceTests(unittest.TestCase):
             self.assertIsNone(workspace.status()["snapshot"])
             self.assertEqual(audit_files(Path(directory)), [])
 
+    def test_compact_performance_cache_is_bound_to_snapshot(self):
+        from config_app import read_performance, historical_phase_times
+        from central_tool import write_private
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config-audit-test.json"
+            bundle = self.fixture()
+            bundle["collection_strategy"] = "deep"
+            bundle["keyed_profile_details"] = {"detail_strategy": "adaptive", "actual_reads": 20}
+            bundle["collection_timing"] = {"elapsed_before_save_seconds": 60, "phases": [
+                {"phase": "Configuration scopes", "seconds": 20},
+                {"phase": "Additional profile types", "seconds": 30},
+                {"phase": "Profile details", "seconds": 10}]}
+            bundle["http_get_transport"] = {"http_get_attempts": 50}
+            write_private(path, bundle, compact=True)
+            record = read_performance(path)
+            self.assertEqual(record["attempts"], 50)
+            self.assertTrue(path.with_suffix(".performance.json").exists())
+            self.assertEqual(len(audit_files(Path(directory))), 1)
+            with patch("config_app.read_audit", side_effect=AssertionError("unexpected full snapshot parse")):
+                self.assertEqual(read_performance(path), record)
+                self.assertEqual(historical_phase_times(Path(directory), "deep")["Profile details"], 10)
+                self.assertIn("Collection performance history", Workspace(directory).performance_history())
+            path.unlink()
+            bundle["http_get_transport"]["http_get_attempts"] = 5000
+            write_private(path, bundle, compact=True)
+            self.assertEqual(read_performance(path)["attempts"], 5000)
+
     def test_phase_timing_uses_current_phase_not_total_elapsed(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace(directory)
