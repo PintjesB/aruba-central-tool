@@ -772,6 +772,24 @@ class Tests(unittest.TestCase):
         self.assertTrue(result["dns"]["source_views"][0]["effective"]["reused_exact_collection"])
         self.assertEqual(result["dns"]["source_views"][0]["effective"]["raw"], raw)
 
+    def test_supplemental_collection_reuses_exact_committed_fallback(self):
+        from central_tool import inspect_unadapted_profiles
+        raw = {"dns": [{"name": "example"}]}
+        view = {"status": "list_parsed", "raw": raw, "count_confirmed": True}
+        local = {"status": "list_parsed", "alternate_raw": raw,
+                 "alternate_evidence": {"status": "list_parsed", "count_confirmed": True}}
+        fake = Fake([])
+        result = inspect_unadapted_profiles(
+            fake, {"unknown_adapter_modules": [], "survey_modules": ["dns"],
+                   "modules": {"dns": ["ACCESS_SWITCH"]}, "documented_catalog": {"modules": {}}},
+            {}, {}, scopes_by_persona={"ACCESS_SWITCH": [{"id": "1", "kind": "device"}]},
+            deep_catalog=True, structured_results={"ACCESS_SWITCH": {"modules": {
+                "dns": {"scope_results": [{"scope": "1", "effective_view": view, "local_view": local}]}}}},
+            structured_library={"modules": {"dns": view}})
+        self.assertEqual(fake.calls, [])
+        self.assertTrue(result["dns"]["source_views"][0]["committed"]["reused_exact_collection"])
+        self.assertEqual(result["dns"]["source_views"][0]["committed"]["raw"], raw)
+
     def test_adaptive_keyed_details_keep_scope_data_and_expand_on_disagreement(self):
         from central_tool import capture_keyed_profile_details
         profile = {"name": "dns", "enable": True, "@": {
@@ -1431,6 +1449,28 @@ class Tests(unittest.TestCase):
         self.assertEqual(read.call_count, 2)
         self.assertEqual(set(details["ACCESS_SWITCH"]["12"]["1"]), {"local", "effective"})
         self.assertNotIn("10", details["ACCESS_SWITCH"]["12"])
+
+    def test_vlan_detail_reuses_exact_keyed_response_with_source_validation(self):
+        from central_tool import capture_vlan_instance_details
+        from unittest.mock import patch
+        data = {"ACCESS_SWITCH": {"modules": {"layer2-vlan": {"scope_results": [
+            {"scope": "12", "scope_kind": "device", "review": {"qualified": True, "profiles": [
+                {"identity": "1", "local": {"vlan": 1}, "effective": {"vlan": 1}}]}}]}}}}
+        raw = {"vlan": 1, "name": "Observed"}
+        keyed = {"profiles": {"ACCESS_SWITCH": {"12": {"layer2-vlan": {"1": {
+            "local": {"status": "identity_observed", "raw": raw},
+            "effective": {"status": "identity_observed", "raw": raw}}}}}}}
+        with patch("central_tool.read_vlan_instance") as read:
+            result = capture_vlan_instance_details(object(), data, workers=1, keyed_details=keyed)
+            read.assert_not_called()
+        self.assertEqual(result["ACCESS_SWITCH"]["12"]["1"]["local"]["status"], "source_unverified")
+        self.assertEqual(result["ACCESS_SWITCH"]["12"]["1"]["effective"]["status"], "observed")
+        self.assertTrue(result["ACCESS_SWITCH"]["12"]["1"]["effective"]["reused_exact_individual"])
+        keyed["profiles"]["ACCESS_SWITCH"]["12"]["layer2-vlan"]["1"]["effective"] = {
+            "status": "collection_only_sampled"}
+        with patch("central_tool.read_vlan_instance", return_value={"status": "observed"}) as read:
+            capture_vlan_instance_details(object(), data, workers=1, keyed_details=keyed)
+            self.assertEqual(read.call_count, 1)
 
     def test_monitoring_voice_filters_require_a_complete_disjoint_partition(self):
         from central_tool import collect_monitoring_voice_filter
