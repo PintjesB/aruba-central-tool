@@ -1158,6 +1158,9 @@ def handler_for(workspace):
                     body = workspace.nac(query)
                 elif parsed.path == root + "assessment":
                     body = workspace.assessment(query)
+                elif parsed.path == root + "filters":
+                    from .filter_presets import filters_view
+                    body = filters_view(workspace, query)
                 elif parsed.path == root + "assignments":
                     body = workspace.assignments(query)
                 elif parsed.path == root + "sources":
@@ -1199,7 +1202,7 @@ def handler_for(workspace):
             # form pages or privacy settings may send an opaque/null Origin;
             # permit that only with same-origin fetch metadata and a CSRF token.
             origin_ok = origin == expected or (origin in (None, "null") and fetch_site == "same-origin")
-            if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials", root + "save-standard", root + "approve-exception", root + "revoke-exception", root + "review-disposition")
+            if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials", root + "save-standard", root + "approve-exception", root + "revoke-exception", root + "review-disposition", root + "save-filter", root + "delete-filter")
                     or not origin_ok or fetch_site not in (None, "same-origin")):
                 self.reply("Forbidden: local session or origin check failed. Reopen the application.", 403)
                 return
@@ -1217,6 +1220,24 @@ def handler_for(workspace):
                 token = values.pop("csrf", [""])[0]
                 if not secrets.compare_digest(token.encode("utf-8"), workspace.csrf.encode("utf-8")):
                     self.reply("Forbidden: stale or invalid form token. Reopen the application.", 403)
+                    return
+                if self.path in (root + "save-filter", root + "delete-filter"):
+                    from .filter_presets import save_preset, delete_preset
+                    form = {key: value[0] for key, value in values.items()}
+                    if self.path == root + "save-filter":
+                        if set(form) != {"snapshot", "route", "params", "name", "binding"}:
+                            raise ValueError("Invalid filter form")
+                        save_preset(workspace, form["snapshot"], form["route"], json.loads(form["params"]), form["name"], form["binding"])
+                    else:
+                        if set(form) != {"snapshot", "id"}:
+                            raise ValueError("Invalid filter form")
+                        workspace.reviewed_snapshot(form["snapshot"])
+                        delete_preset(workspace.directory, form["id"])
+                    self.send_response(303)
+                    self.send_header("Location", root + "filters?" + urlencode({"snapshot": form["snapshot"]}))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
                     return
                 if self.path == root + "review-disposition":
                     from .review_dispositions import update_disposition

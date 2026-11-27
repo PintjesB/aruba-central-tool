@@ -218,7 +218,7 @@ def navigation(root, snapshot=None):
         ("Analyze", (("", "Overview"), ("overrides", "Device overrides"), ("advisor", "Consolidation"),
                        ("assessment", "Configuration assessment"), ("advanced", "Engineering"), ("assignments", "Library assignments"), ("nac", "NAC identities"), ("sources", "Configuration sources"), ("impact", "Dependency impact"), ("drift", "Configuration drift"), ("remediation", "Remediation verification"), ("standards", "Standards compliance"), ("trends", "Compliance trends"))),
         ("Explore", (("report", "Configuration"), ("scopes", "Inventory"), ("library", "Library"), ("compare", "Compare"))),
-        ("System", (("coverage", "Coverage"),))):
+        ("System", (("filters", "Saved filters"), ("coverage", "Coverage")))):
         links.append(f'<div class="nav-group"><span>{e(group)}</span>')
         for route, label in items:
             links.append(f'<a data-nav="{e(label)}" aria-label="{e(label)}" title="{e(label)}" href="{e(root + route + suffix)}">'
