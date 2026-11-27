@@ -744,14 +744,23 @@ function initGrid(grid){
  const indexed=rows.map((row,index)=>({row,index,search:row.textContent.toLowerCase(),values:Array.from(row.cells,c=>c.textContent.trim())}));
  const collator=new Intl.Collator(undefined,{numeric:true,sensitivity:'base'});
  let page=0,size=30,ordered=indexed,filtered=indexed,sortColumn=-1,direction=1;
- function update(reset=false){
+ let lastTerms=null,lastVisible=new Set(rows.filter(row=>!row.hidden));
+ function update(reset=false,reorder=false){
   if(reset)page=0;
   const terms=search.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  filtered=ordered.filter(record=>terms.every(term=>record.search.includes(term)));
+  const termKey=terms.join(' ');
+  if(reorder||termKey!==lastTerms){
+   filtered=terms.length?ordered.filter(record=>terms.every(term=>record.search.includes(term))):ordered;
+   lastTerms=termKey;
+  }
   grid.querySelector('[data-export-csv]').disabled=filtered.length===0;
   const pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.min(page,pages-1);
   const visible=new Set(filtered.slice(page*size,(page+1)*size).map(record=>record.row));
-  for(const row of rows)row.hidden=!visible.has(row);
+  // Change only rows entering or leaving the displayed page. Preserve DOM
+  // nodes (including checkbox selections and inspector templates).
+  for(const row of lastVisible)if(!visible.has(row))row.hidden=true;
+  for(const row of visible)if(!lastVisible.has(row))row.hidden=false;
+  lastVisible=visible;
   count.textContent=filtered.length.toLocaleString()+' of '+rows.length.toLocaleString()+' records';pageLabel.textContent='Page '+(page+1)+' / '+pages;
   if(paging)paging.hidden=pages<=1;
   prev.disabled=page===0;next.disabled=page+1>=pages;empty.hidden=filtered.length!==0;
@@ -768,7 +777,7 @@ function initGrid(grid){
   });
   const fragment=document.createDocumentFragment();
   for(const record of ordered)fragment.append(record.row);
-  tbody.append(fragment);update(true);
+  tbody.append(fragment);update(true,true);
  });
  const exportButton=grid.querySelector('[data-export-csv]');
  exportButton.addEventListener('click',()=>{
