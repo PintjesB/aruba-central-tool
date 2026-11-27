@@ -428,7 +428,10 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--specialized", action="store_true", help="Bounded probe of management-server, custom-get-api, failed hierarchy scopes, assignment identities and portal assets")
     modes.add_argument("--performance", action="store_true", help="Bounded selector and page-size qualification")
+    parser.add_argument("--output", type=Path, help="Write JSON to a new private file instead of standard output")
     args = parser.parse_args()
+    if args.output is not None and (args.output.exists() or args.output.is_symlink()):
+        parser.error("Output already exists; choose a new filename")
     from config_app import audit_files, read_audit
     try:
         files = audit_files(args.directory)
@@ -448,7 +451,12 @@ def main():
             report = specialized_probe(client, previous)
         else:
             report = probe(client, previous, args.module or ["ethernet-interfaces", "snmp", "net-groups"], args.sample)
-        print(json.dumps(report, indent=2, sort_keys=True))
+        if args.output is None:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            from central_tool import write_private
+            write_private(args.output, report)
+            print("Probe results saved to the requested file.")
     except APIError as exc:
         parser.exit(1, f"Probe stopped: Central HTTP {exc.status}.\n")
     except (OSError, RuntimeError, ValueError, KeyError, TypeError):
