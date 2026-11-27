@@ -40,8 +40,20 @@ def device_review(bundle, persona, device):
                                  "committed": views[0].get("status", "not_collected"),
                                  "effective": views[1].get("status", "not_collected"),
                                  "count_confirmed": sum(v.get("collection_count_verified") is True for v in views)})
+    from .keyed_evidence_view import keyed_observations
+    keyed = []
+    # Enumerate only the selected device and explicitly known request selectors.
+    evidence = (bundle.get("keyed_profile_details") or {}).get("profiles", {})
+    subset = {p: {str(device): evidence[p][str(device)]}
+              for p in (persona, "ALL_DEVICE_FUNCTIONS", "UNFILTERED_SCOPE")
+              if str(device) in evidence.get(p, {})}
+    counts = {}
+    for row in keyed_observations({"keyed_profile_details": {"profiles": subset}}):
+        counts.setdefault(row["persona"], Counter())[row["category"]] += 1
+    for selector, count in sorted(counts.items()):
+        keyed.append({"selector": selector, "counts": dict(count)})
     return {"device": scopes[device], "membership": {kind: scopes.get(sid) for kind, sid in membership.items()},
-            "modules": modules, "supplemental": supplemental, "incomplete": len(incomplete), "safe_to_apply": False}
+            "modules": modules, "supplemental": supplemental, "keyed": keyed, "incomplete": len(incomplete), "safe_to_apply": False}
 
 
 def device_view(workspace, query):
@@ -66,7 +78,7 @@ def device_view(workspace, query):
     body += '<section><h2>Device review actions</h2><div class="filter-bar">' + " ".join(
         f'<a class="button" href="{url(root, route, **params, **extra)}">{e(title)}</a>'
         for title, route, extra in (
-            ("All captured configuration", "report", {"scope": device, "view": "all"}),
+            ("Structured configuration", "report", {"scope": device, "view": "all"}),
             ("Review local overrides", "overrides", {"device": device}),
             ("Incomplete evidence", "report", {"scope": device, "view": "diagnostics"}),
             ("Compare with another device", "compare", {"left": device}))) + '</div></section>'
@@ -96,6 +108,17 @@ def device_view(workspace, query):
                str(row["count_confirmed"]) + "/2",
                f'<a href="{url(root, "report", snapshot=name, mode="search", persona=row["selector"], module=row["module"], scope=device, q=device)}">Search captured settings</a>')
             for row in supplemental], search=True) + '</section>'
+    if report["keyed"]:
+        body += '<section><h2>Individual profile evidence</h2><p>Individual reads and collection-only markers are separate. Review discrepancies in the exact device scope and request selector.</p>'
+        rows = []
+        for row in report["keyed"]:
+            c = row["counts"]
+            selector = row["selector"]
+            links = f'<a href="{url(root, "assessment", snapshot=name, mode="keyed", persona=selector, scope=device)}">Review discrepancies</a>'
+            links += f' · <a href="{url(root, "assessment", snapshot=name, mode="keyed", persona=selector, scope=device, category="all")}">All observations</a>'
+            rows.append(tr(e(persona_label(selector)), str(c.get("unqualified", 0)), str(c.get("different", 0) + c.get("order_only", 0)),
+                           str(c.get("not_compared", 0)), str(c.get("identical", 0)), str(c.get("sampled", 0)), links))
+        body += table(("Request selector", "Unqualified", "Different", "Not compared", "Exact matches", "Collection-only", ""), rows) + '</section>'
     body += '<p class="note">Structured module counts only. Unknown membership and unqualified reads are not evidence of absence. Device-only modules are not assessed for reusable profile cleanup. No live changes.</p>'
     body += '<details><summary>Captured device inventory metadata</summary>' + property_table(report["device"].get("metadata") or {}) + '</details>'
     return page("Scopes", body, workspace.nav(name))
