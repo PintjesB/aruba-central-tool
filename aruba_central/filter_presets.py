@@ -54,7 +54,7 @@ def read_presets(directory):
     return sorted(records, key=lambda r: (r["name"].casefold(), r["id"]))
 
 
-def save_preset(workspace, snapshot, route, params, name):
+def save_preset(workspace, snapshot, route, params, name, expected_binding):
     from .review_dispositions import snapshot_binding
     params = selection(route, params)
     name = name.strip()
@@ -62,6 +62,8 @@ def save_preset(workspace, snapshot, route, params, name):
         raise ValueError("Invalid preset name")
     bundle = workspace.reviewed_snapshot(snapshot)
     binding = snapshot_binding(workspace, snapshot, bundle)
+    if expected_binding != binding:
+        raise ValueError("Snapshot changed; reopen the filter form")
     scoped = bool(TARGET_FIELDS & params.keys())
     identity = uuid.uuid4().hex
     record = {"schema": 1, "id": identity, "name": name, "route": route, "params": params,
@@ -111,6 +113,7 @@ def filters_view(workspace, query):
         body += (f'<form method="post" action="{e(root + "save-filter")}">'
                  f'<input type="hidden" name="csrf" value="{e(workspace.csrf)}"><input type="hidden" name="snapshot" value="{e(name)}">'
                  f'<input type="hidden" name="route" value="{e(source)}"><input type="hidden" name="params" value="{e(json.dumps(params, ensure_ascii=False))}">'
+                 f'<input type="hidden" name="binding" value="{e(binding)}">'
                  '<label>Preset name<input name="name" required maxlength="100"></label><button type="submit">Save filter</button></form></section>')
     body += '<p class="note">Presets retain submitted page filters, not temporary table searches or unsaved client-side selections. Scope and profile-specific presets are bound to their exact snapshot; generic filters can be reused on another capture. No Central changes are performed.</p>'
     rows = []
