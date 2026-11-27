@@ -1,7 +1,7 @@
 """Private NAC registration and tag inspection."""
 from collections import Counter
 from .workspace_ui import e, page, intro, metrics, table, tr, badge, pretty, inspect, property_table
-from .workspace_views import load, list_items
+from .workspace_views import load, list_items, url
 from .history_view import private_export
 from .nac_review import nac_review
 
@@ -12,6 +12,14 @@ def nac_view(workspace, query):
         return empty
     root, name, bundle, picker = loaded
     report = nac_review(bundle)
+    from .nac_authorization import policy_review
+    from .nac_binding_review import nac_bindings
+    policies = policy_review(bundle)
+    bindings = nac_bindings(bundle, report, policies)
+    selected = query.get("tag")
+    if selected is not None:
+        from .nac_tag_review import tag_review_view
+        return tag_review_view(root, name, picker, workspace.nav(name), report, bindings, selected)
     rows = report["rows"]
     body = intro("NAC identities", "Review registered MAC addresses, enable state, static tag relationships and identity evidence.", picker)
     body += metrics([("Observed registrations", len(rows), pretty(report["capture_status"])),
@@ -36,13 +44,11 @@ def nac_view(workspace, query):
     body += table(("Name", "MAC address", "State", "Static tags", "Unresolved tags", "Identity", ""), listing, search=True) + '</section>'
     body += '<section><h2>Static tag definitions</h2><p>Usage counts are exact captured registration values, not a complete policy-use inventory. Name-only matches do not prove immutable tag identity.</p>'
     body += table(("Tag ID", "Name", "ID occurrences", "Name occurrences", ""), [
-        tr(e(identity), e(profile.get("name") or ""), str(report["tag_usage"].get(identity, 0)),
+        tr(e(identity), f'<a href="{url(root, "nac", snapshot=name, tag=identity)}">{e(profile.get("name") or identity)}</a>', str(report["tag_usage"].get(identity, 0)),
            str(report["tag_usage"].get(profile.get("name") or "", 0)),
            inspect("Static tag evidence", property_table(profile), "Inspect")) for identity, profile in report["tag_definitions"].items()], search=True) + '</section>'
     body += '<section><h2>Duplicate registration identities</h2>' + table(("Normalized MAC", "Registration IDs"), [
         tr(e(row["mac"]), list_items(row["ids"])) for row in report["duplicate_mac_groups"]]) + '</section>'
-    from .nac_authorization import policy_review
-    policies = policy_review(bundle)
     def refs(value):
         return table(("Identity store reference", "Evidence"), [
             tr(e(row["identity"]), badge(pretty(row["status"]))) for row in value["references"]]) if value["status"] == "observed" else '<p>Identity store list not qualified.</p>'
@@ -67,11 +73,9 @@ def nac_view(workspace, query):
         policy_rows.append(tr(e(p["position"]), e(p["name"]), e(p["type"]), e(str(p["enabled"])),
                               str(len(p["rules"])), inspect("Authorization policy evidence", detail, "Review rules")))
     body += table(("Position", "Policy", "Type", "Enabled", "Observed rules", ""), policy_rows, search=True) + '</section>'
-    from .nac_binding_review import nac_bindings
-    bindings = nac_bindings(bundle, report, policies)
     body += '<section><h2>Tag and policy cross-reference</h2><p>Exact condition values are review candidates only. Attribute semantics and authorization applicability are not established by a matching value.</p>'
     body += table(("Tag", "Registered identity count", "Condition observations", ""), [
-        tr(e(tag["name"] or tag["id"]), str(tag["registered_id_count"]), str(len(tag["condition_observations"])),
+        tr(f'<a href="{url(root, "nac", snapshot=name, tag=tag["id"])}">{e(tag["name"] or tag["id"])}</a>', str(tag["registered_id_count"]), str(len(tag["condition_observations"])),
            inspect("Tag condition evidence", table(("Policy", "Rule", "Attribute", "Operator", "Value"), [
                tr(e(v["policy"]), e(v["rule"] if v["rule"] is not None else "Policy precondition"),
                   e(v["attribute"]), e(v["operator"]), e(v["value"])) for v in tag["condition_observations"]]), "Review"))
