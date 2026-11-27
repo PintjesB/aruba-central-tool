@@ -116,3 +116,34 @@ class ConfigurationSearchTests(unittest.TestCase):
         bundle["results"]["ACCESS_SWITCH"]["modules"]["unselected"] = {"scope_results": Unvisited()}
         matches = search_configuration(bundle, "10", persona="ACCESS_SWITCH", module="layer2-vlan")
         self.assertGreater(matches["total"], 0)
+
+
+    def test_search_filter_and_exact_links_for_additional_captured_sources(self):
+        bundle = fixture()
+        bundle["nac_configuration"] = {"authz-policies": {"status": "list_parsed",
+            "profiles": {"p": {"name": "unique-needle"}}}}
+        bundle["unadapted_profiles"] = {"raw-example": {"source_views": [{
+            "persona": "UNFILTERED_SCOPE", "scope": "3",
+            "effective": {"status": "partial_response", "pagination_status": "request_failed",
+                          "raw": {}, "raw_pages": [{"items": [{"name": "unique-needle"}]}]}}]}}
+        bundle["keyed_profile_details"] = {"profiles": {"ALL_DEVICE_FUNCTIONS": {"3": {
+            "keyed-example": {"r": {"effective": {"status": "schema_unresolved",
+                "raw": {"name": "unique-needle"}}}}}}}}
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(bundle))
+            workspace = Workspace(directory)
+            reviewed = workspace.reviewed_snapshot(name)
+            for persona, module, source in (("NAC", "authz-policies", "structured"),
+                                             ("UNFILTERED_SCOPE", "raw-example", "supplemental_page"),
+                                             ("ALL_DEVICE_FUNCTIONS", "keyed-example", "individual_raw")):
+                rows = search_configuration(reviewed, "unique-needle", persona=persona, module=module)["matches"]
+                self.assertEqual(len(rows), 1)
+                row = rows[0]
+                self.assertEqual(row["source"], source)
+                html = workspace.report({"snapshot": name, "mode": "search", "q": "unique-needle",
+                                         "persona": persona, "module": module})
+                self.assertIn("1 matching fields", html)
+                evidence = workspace.report({"snapshot": name, "mode": "evidence", "persona": persona,
+                                             "module": module, "scope": row["scope"], "evidence": row["evidence_id"]})
+                self.assertIn("unique-needle", evidence)
