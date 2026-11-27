@@ -90,6 +90,16 @@ def explicit_references(value, path=(), module=None):
             # https://developer.arubanetworks.com/new-central-config/reference/createnetgroupsnetgroupbyid
             elif module == "net-groups" and not path and key == "exclude":
                 yield "net-groups", item if isinstance(item, str) and item.strip() else None, here
+            # HPE server-group schema: ordered members refer to auth-server
+            # names, not server addresses or arbitrary nested name fields.
+            # https://developer.arubanetworks.com/new-central-config/reference/replaceservergroupsservergroupbyid
+            elif module == "server-groups" and path == () and key == "servers":
+                if isinstance(item, list):
+                    for i, member in enumerate(item):
+                        name = member.get("server-name") if isinstance(member, dict) else None
+                        yield "auth-servers", name if isinstance(name, str) and name.strip() else None, here + (i, "server-name")
+                else:
+                    yield "auth-servers", None, here
             elif module == "policies" and (target := policy_named_target(path, key)):
                 yield target, item if isinstance(item, str) and item else None, here
             elif key in named:
@@ -138,7 +148,8 @@ def library_usage(bundle, module, identities, references):
                             "assignments": rows, "reference_count": len(consumers),
                             "definition_reference_count": len(definitions), "effective_reference_count": len(effective),
                             "reference_devices": len({(r["persona"], r["scope"]) for r in refs if r.get("source_scope_kind", "device") == "device" and r.get("source_view", "effective") == "effective"}),
-                            "references": refs, "shared_devices": [], "matching_other_devices": [],
+                            "references": refs, "conflicting_reference_count": len({consumer(r) for r in refs if r.get("collection_conflict")}),
+                            "shared_devices": [], "matching_other_devices": [],
                             "different_devices": [], "unknown_devices": [], "absent_devices": [], "compared_devices": 0,
                             "coverage_complete": False}
     for persona, entry in sorted(bundle["results"].items()):
@@ -172,7 +183,8 @@ def library_usage(bundle, module, identities, references):
 
 def preferred_duplicate(usage):
     """Suggest the least observed reference/assignment migration, not safe deletion."""
-    if not usage or any(u["assignment_status"] != "response_received" for u in usage.values()):
+    if not usage or any(u["assignment_status"] != "response_received" or u.get("conflicting_reference_count", 0)
+                        for u in usage.values()):
         return None
     # Do not add incomparable metrics together. Prefer more explicit consumers,
     # then more observed shared deployments, then more assignments.
@@ -416,6 +428,55 @@ def advanced_analysis(bundle):
     for module, view in sorted(library_modules.items()):
         if view.get("status") == "list_parsed":
             definition_refs("Library", "Library", "Library", "library", module, view["profiles"], library_modules)
+
+    # Direct individual responses can reveal dependencies absent from the
+    # collection. Preserve the observed source separately, deduplicate exact
+    # references, and expose contradictory values without resolving them.
+    # A sampled observation is never a fetched profile; local individual
+    # responses do not independently establish a saved source.
+    existing = defaultdict(set)
+    for ref in result["references"]:
+        key = (ref["persona"], str(ref["scope"]), ref["source_module"], ref["source"],
+               ref["source_view"], tuple(ref["path"]), ref["target_module"])
+        existing[key].add(ref["target"])
+    details = (bundle.get("keyed_profile_details") or {}).get("profiles", {})
+    for persona, scopes in sorted(details.items()):
+        entry = bundle["results"].get(persona, {})
+        scope_meta = {str(scope["id"]): scope for scope in entry.get("scopes", [])}
+        views = effective_views(entry) if entry else {}
+        for sid, modules in sorted(scopes.items()):
+            meta = scope_meta.get(str(sid))
+            if persona == "Library" and sid == "":
+                kind, source_view, scope_id, label, targets = "library", "library", "Library", "Library", library_modules
+                read_kind = "library"
+            elif meta and meta["kind"] == "device":
+                kind, source_view, scope_id, label = "device", "effective", str(sid), meta.get("name") or str(sid)
+                targets = {m: v.get(sid, {}) for m, v in views.items()}
+                read_kind = "effective"
+            else:
+                continue
+            for module, profiles in sorted(modules.items()):
+                for identity, reads in sorted(profiles.items()):
+                    evidence = reads.get(read_kind, {})
+                    body = evidence.get("profile")
+                    if evidence.get("status") != "identity_observed" or not isinstance(body, dict):
+                        continue
+                    for target, target_id, path in explicit_references(body, module=module):
+                        key = (persona, scope_id, module, identity, source_view, tuple(path), target)
+                        if target_id in existing[key]:
+                            continue
+                        conflict = bool(existing[key])
+                        view = targets.get(target, {})
+                        state = ("conflicting_observation" if conflict else
+                                 "unresolved" if target_id is None or view.get("status") != "list_parsed" else
+                                 ("definition_observed" if kind == "library" else "observed")
+                                 if target_id in view["profiles"] else "not_observed")
+                        result["references"].append({"persona": persona, "scope": scope_id, "device": label,
+                            "source_scope_kind": kind, "source_view": source_view, "source_module": module,
+                            "source": identity, "target_module": target, "target": target_id,
+                            "path": list(path), "status": state, "source_evidence": "individual",
+                            "collection_conflict": conflict})
+                        existing[key].add(target_id)
 
     for module, view in sorted(library.get("modules", {}).items()):
         # Identity is semantic for numeric VLAN IDs and SSIDs. Report equivalent
