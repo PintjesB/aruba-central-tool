@@ -31,3 +31,23 @@ class KeyedEvidenceViewTests(unittest.TestCase):
             html = workspace.assessment({"snapshot": name, "mode": "keyed", "category": "sampled"})
             self.assertIn("sampled-role", html)
             self.assertNotIn("example-group", html)
+
+
+    def test_exact_scope_and_function_filters_apply_to_rows_and_metrics(self):
+        bundle = fixture()
+        def evidence(identity):
+            return {"roles": {identity: {"effective": {"status": "schema_unresolved", "raw": {"name": identity}}}}}
+        bundle["keyed_profile_details"] = {"profiles": {
+            "ACCESS_SWITCH": {"3": evidence("selected-example"), "4": evidence("other-device-example")},
+            "ALL_DEVICE_FUNCTIONS": {"3": evidence("other-selector-example")}}}
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(bundle))
+            workspace = Workspace(directory)
+            html = workspace.assessment({"snapshot": name, "mode": "keyed",
+                                         "persona": "ACCESS_SWITCH", "scope": "3"})
+            self.assertIn("selected-example", html)
+            self.assertNotIn("other-device-example", html)
+            self.assertNotIn("other-selector-example", html)
+            self.assertIn("1 matching observations", html)
+            self.assertIn('name="scope" value="3"', html)
