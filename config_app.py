@@ -137,8 +137,25 @@ def library_profile_comparison(bundle, module):
     return by_identity
 
 
+def individual_effective_comparison(bundle, persona, left, right, module, identity):
+    """Compare direct individual evidence separately, never copy sampled values."""
+    from central_tool import field_differences
+    profiles = (bundle.get("keyed_profile_details") or {}).get("profiles", {}).get(persona, {})
+    def read(scope):
+        evidence = profiles.get(str(scope), {}).get(module, {}).get(identity, {}).get("effective", {})
+        body = evidence.get("profile")
+        return evidence.get("status", "not_collected"), body if (
+            evidence.get("status") == "identity_observed" and isinstance(body, dict)) else None
+    left_status, left_body = read(left)
+    right_status, right_body = read(right)
+    return {"left_status": left_status, "right_status": right_status,
+            "left": left_body, "right": right_body,
+            "fields": field_differences(left_body, right_body)
+                      if left_body is not None and right_body is not None else None}
+
+
 def compare_devices(bundle, persona, left, right, module=None):
-    """Compare captured effective bodies only, within one persona and capture."""
+    """Compare collection bodies and independent individual evidence within one capture."""
     from central_tool import field_differences, profile_body
     entry = bundle["results"].get(persona)
     if entry is None or left == right:
@@ -167,10 +184,24 @@ def compare_devices(bundle, persona, left, right, module=None):
                               "right": profile_body(pb[identity]) if identity in pb else None})
                 continue
             fields = field_differences(profile_body(pa[identity]), profile_body(pb[identity]))
-            if fields:
-                diffs.append({"identity": identity, "status": "different", "fields": fields})
-        results.append({"module": name, "status": "different" if diffs else "exact_match",
-                        "differences": diffs})
+            detail = individual_effective_comparison(bundle, persona, left, right, name, identity)
+            if fields or detail["fields"]:
+                result = {"identity": identity, "status": "different" if fields else "individual_detail_difference",
+                          "fields": fields}
+                if detail["left_status"] != "not_collected" or detail["right_status"] != "not_collected":
+                    result["individual"] = detail
+                diffs.append(result)
+            elif (detail["fields"] is None
+                  and (detail["left_status"] == "identity_observed" or detail["right_status"] == "identity_observed")):
+                # Show one-sided detail only when it adds evidence not already
+                # present in that scope's collection. Do not call it a difference.
+                if ((detail["left"] is not None and field_differences(profile_body(pa[identity]), detail["left"]))
+                        or (detail["right"] is not None and field_differences(profile_body(pb[identity]), detail["right"]))):
+                    diffs.append({"identity": identity, "status": "individual_comparison_unavailable",
+                                  "fields": fields, "individual": detail})
+        comparison_status = ("different" if any(d["status"] != "individual_comparison_unavailable" for d in diffs)
+                             else "unqualified" if diffs else "exact_match")
+        results.append({"module": name, "status": comparison_status, "differences": diffs})
     return results
 
 
