@@ -2259,6 +2259,31 @@ def documented_profile_catalog():
 
 
 
+def qualified_raw_collection(raw, params):
+    """Qualify a complete raw list independently of structured identity parsing.
+
+    Only exact count-consistent list envelopes with distinct object rows are
+    eligible. This is raw collection evidence, not a qualified profile identity.
+    """
+    if not isinstance(raw, dict):
+        return False
+    meta = raw.get("metadata")
+    lists = [(key, value) for key, value in raw.items() if key != "metadata" and isinstance(value, list)]
+    if not isinstance(meta, dict) or len(lists) != 1 or set(raw) != {"metadata", lists[0][0]}:
+        return False
+    rows = lists[0][1]
+    counts = meta.get("count_objects_in_module", {})
+    if not isinstance(counts, dict) or not all(isinstance(row, dict) for row in rows):
+        return False
+    expected = counts.get(params.get("object-type", "ANY"))
+    total = meta.get("total", expected)
+    return (type(total) is int and total == len(rows)
+            and (expected is None or type(expected) is int and expected == total)
+            and type(meta.get("count", total)) is int and meta.get("count", total) == total
+            and type(meta.get("offset", 0)) is int and meta.get("offset", 0) in (0, total)
+            and len({canonical(row) for row in rows}) == total)
+
+
 def read_raw_profile_collection(client, module, params, *, paginate_uncounted=False):
     """Preserve all pages of an explicitly truncated collection without assuming identity."""
     try:
@@ -2435,6 +2460,19 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                     "raw": raw, "collection_count_verified": count_verified,
                     **{key: previous[key] for key in ("raw_pages", "initial_raw", "pagination_status", "http_error") if key in previous},
                     "reused_exact_collection": True}
+        # The structured adapter can reject otherwise complete raw lists,
+        # e.g. when a documented single identity is missing or nonunique.
+        # A second identical request does not improve this raw survey.
+        # Never suppress incomplete pagination or transport/HTTP failures.
+        if (previous is not None
+                and previous.get("status") in ("identity_unresolved", "schema_unresolved")
+                and previous.get("pagination_status") in (None, "complete")
+                and previous.get("http_error") is None
+                and qualified_raw_collection(previous.get("raw"), params)):
+            return {"status": "response_received", "raw": previous["raw"],
+                    "collection_count_verified": True, "reused_exact_collection": True,
+                    "reused_raw_identity_unqualified": True,
+                    **{key: previous[key] for key in ("raw_pages", "initial_raw", "pagination_status") if key in previous}}
         try:
             read = lambda: read_raw_profile_collection(client, module, params, paginate_uncounted=deep_catalog)
             return checkpoint.observe("raw_catalog", [module, params], read, lambda v: v.get("collection_count_verified") is True) if checkpoint else read()
