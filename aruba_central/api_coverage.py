@@ -33,11 +33,15 @@ class ReadCoverage:
             self.operations.setdefault(row["path"], {"groups": {"Release notes"}, "definitions": 0})
         self.exact = {path for path in self.operations if ":" not in path}
         self.templates = defaultdict(list)
+        self.prefix_lengths = defaultdict(set)
         for path in self.operations.keys() - self.exact:
             parts = path.split("/")
+            prefix_length = next(i for i, part in enumerate(parts) if part.startswith(":"))
+            prefix = tuple(parts[:prefix_length])
             pattern = "/".join("[^/]+" if part.startswith(":") else re.escape(part) for part in parts)
             score = sum(not part.startswith(":") for part in parts)
-            self.templates[len(parts)].append((re.compile(pattern), score, path))
+            self.templates[(len(parts), prefix)].append((re.compile(pattern), score, path))
+            self.prefix_lengths[len(parts)].add(prefix_length)
         self.counts = defaultdict(Counter)
         self.timing = defaultdict(lambda: [0, 0])
         self.unmatched = Counter()
@@ -57,7 +61,13 @@ class ReadCoverage:
     def resolve(self, path):
         if path in self.exact:
             return path
-        matches = [(score, template) for pattern, score, template in self.templates.get(len(path.split("/")), ())
+        parts = path.split("/")
+        size = len(parts)
+        # Check every matching literal prefix, including shorter/leading
+        # wildcard templates. Keep the original specificity and tie rules.
+        matches = [(score, template)
+                   for length in self.prefix_lengths.get(size, ())
+                   for pattern, score, template in self.templates.get((size, tuple(parts[:length])), ())
                    if pattern.fullmatch(path)]
         if not matches:
             return None
@@ -83,27 +93,31 @@ class ReadCoverage:
                 if key in self.cache:
                     self.cache.move_to_end(key)
                     self.reused += 1
-                    value = json.loads(self.cache[key])
-                    if self._counted_empty_collection(value):
-                        self.empty_reused += 1
-                    return value
+                    payload, empty = self.cache[key]
+                    self.empty_reused += empty
+                    break
                 future = self.inflight.get(key)
                 if future is None:
                     future = self.inflight[key] = Future()
+                    payload = None
                     break
             # A failed or empty response is not cached; the waiting caller
             # performs its own read, preserving existing recovery behavior.
             future.result()
+        # Decode outside the lock. Cached bytes are immutable, even if a
+        # concurrent insert evicts this entry before decoding completes.
+        if payload is not None:
+            return json.loads(payload)
         try:
             result = self._get(path, **params)
             if self._complete_collection(result, params):
                 payload = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                 if len(payload) <= 64 * 1024 * 1024:
                     with self.lock:
-                        self.cache[key] = payload
+                        self.cache[key] = (payload, self._counted_empty_collection(result))
                         self.cache_bytes += len(payload)
                         while self.cache_bytes > 64 * 1024 * 1024 or len(self.cache) > 8192:
-                            _, old = self.cache.popitem(last=False)
+                            _, (old, _) = self.cache.popitem(last=False)
                             self.cache_bytes -= len(old)
             return result
         finally:
