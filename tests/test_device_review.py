@@ -53,6 +53,8 @@ class DeviceReviewTests(unittest.TestCase):
             html = workspace.scopes({"snapshot": name, "mode": "device", "persona": "ACCESS_SWITCH", "device": "3"})
             self.assertIn("Supplemental configuration evidence", html)
             self.assertIn("Search captured settings", html)
+            self.assertIn("Inspect complete response", html)
+            self.assertIn("unadapted?", html)
             html = workspace.report({"snapshot": name, "mode": "search", "persona": "UNFILTERED_SCOPE", "module": "example-module", "scope": "3", "q": "value"})
             self.assertIn("device-specific", html)
             self.assertNotIn("other-device", html)
