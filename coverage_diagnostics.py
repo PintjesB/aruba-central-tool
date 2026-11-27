@@ -152,7 +152,7 @@ def specialized_response_shapes(entry, name):
         "hierarchy": ("items", "Hierarchy", "hierarchy", "id", "type", "metadata", "scopeId"),
         "assignments": ("config-assignment", "config-assignments", "items", "metadata", "@",
                         "scope-id", "device-function", "profile-type", "profile-instance",
-                        "scope-name", "scope-type", "httpStatusCode", "errorCode", "message", "debugId"),
+                        "scope-name", "scope-type", "persona", "resource", "httpStatusCode", "errorCode", "message", "debugId"),
         "portal-assets": ("items", "count", "imageID", "imageId", "image-id", "id",
                           "fileName", "referencedBy", "metadata", "httpStatusCode", "errorCode", "message")
     }[name]
