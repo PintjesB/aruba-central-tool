@@ -90,7 +90,20 @@ def keyed_assignment_capture(client, assignments, workers=1, progress=None):
                     value = raw.get("config-assignment")
                     rows = value if isinstance(value, list) else [value] if isinstance(value, dict) else None
             if rows is None:
-                result["status"] = "schema_unresolved"
+                # Live keyed reads can return a scope object instead of the
+                # documented assignment. A matching scope is positive scope
+                # evidence only; never infer a missing assignment identity
+                # from the URL or count it as a verified assignment.
+                if isinstance(raw, dict) and type(raw.get("scope-id")) in (int, str):
+                    if str(raw["scope-id"]) != sid or any(
+                            key in raw and str(raw[key]) != expected
+                            for key, expected in zip(ASSIGNMENT_KEYS[1:], identity[1:])):
+                        result["status"] = "identity_unresolved"
+                    else:
+                        result["status"] = "scope_only_observed"
+                        result["missing_identity_fields"] = [key for key in ASSIGNMENT_KEYS if key not in raw]
+                else:
+                    result["status"] = "schema_unresolved"
             elif len(rows) != 1 or assignment_identity(rows[0]) != identity:
                 result["status"] = "identity_unresolved"
             else:
