@@ -17,5 +17,8 @@ class OverrideBatchTests(unittest.TestCase):
         ready = override_batch(findings, result="all", readiness="review_removal", limit=1000)
         self.assertEqual(ready["rows"], [f for f in expected if f["removal"] == "review_removal"])
         self.assertEqual(override_batch(findings, offset=1000)["rows"], [])
+        matching = override_batch(findings, result="all", query="device-0449 ROLES")
+        self.assertEqual(matching["total"], 1)
+        self.assertEqual(matching["rows"][0]["device_name"], "device-0449")
         with self.assertRaises(ValueError):
             override_batch(findings, offset=-1)
