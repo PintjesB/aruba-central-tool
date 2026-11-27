@@ -2605,12 +2605,19 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
     scope_kinds = {(persona, str(scope["scope"])): scope.get("scope_kind")
                    for persona, entry in results.items() for data in entry["modules"].values()
                    for scope in data["scope_results"]}
+    # Individual Ethernet reads are the only source of additional fields in
+    # the first live exhaustive validation. Keep device-specific interface
+    # reads and the effective counterpart of every saved local profile direct.
+    direct_modules = {"ethernet-interfaces", "vlan-interfaces", "portchannels", "layer2-vlan"}
+    saved_selectors = {(p, sid, m, identity) for p, sid, m, identity, kind, _ in tasks
+                       if kind == "local"}
     direct, groups = [], defaultdict(list)
     for task in tasks:
         persona, sid, module, identity, kind, profile = task
         scope_kind = scope_kinds.get((persona, sid))
         annotation = profile.get("@") if isinstance(profile, dict) else None
         if (adaptive and kind == "effective" and persona in NETWORK_PERSONAS
+                and module not in direct_modules and (persona, sid, module, identity) not in saved_selectors
                 and scope_kind == "device" and isinstance(profile, dict)
                 and isinstance(annotation, dict)
                 and (annotation.get("aruba-annotation:inherited") is True
