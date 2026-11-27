@@ -99,7 +99,8 @@ def table(headers, rows, *, search=False, label="Search", style=""):
         controls = (f'<div class="table-toolbar"><label class="searchbox table-search"><span class="sr-only">{e(label)}</span>'
                     + icon("search") + '<input type="search" data-table-search placeholder="Search records"></label>'
                     '<div class="table-options"><span data-table-count class="muted" aria-live="polite"></span>'
-                    '<label>Rows per page<select data-page-size><option>30</option><option>50</option><option>100</option></select></label></div></div>')
+                    '<label>Rows per page<select data-page-size><option>30</option><option>50</option><option>100</option></select></label>'
+                    '<button type="button" data-export-csv title="Download all matching row summaries, not just the current page">Export filtered CSV</button></div></div>')
     pager = ('<div class="table-toolbar paging"><button type="button" data-prev aria-label="Previous page">Previous</button>'
              '<span data-page class="muted"></span><button type="button" data-next aria-label="Next page">Next</button></div>') if search else ""
     empty = '<p data-table-empty class="empty" hidden>No matching records.</p>' if search else ""
@@ -742,11 +743,12 @@ function initGrid(grid){
  const headers=Array.from(grid.querySelectorAll(':scope > .table-scroll > table > thead [data-sort-column]'));
  const indexed=rows.map((row,index)=>({row,index,search:row.textContent.toLowerCase(),values:Array.from(row.cells,c=>c.textContent.trim())}));
  const collator=new Intl.Collator(undefined,{numeric:true,sensitivity:'base'});
- let page=0,size=30,ordered=indexed,sortColumn=-1,direction=1;
+ let page=0,size=30,ordered=indexed,filtered=indexed,sortColumn=-1,direction=1;
  function update(reset=false){
   if(reset)page=0;
   const terms=search.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const filtered=ordered.filter(record=>terms.every(term=>record.search.includes(term)));
+  filtered=ordered.filter(record=>terms.every(term=>record.search.includes(term)));
+  grid.querySelector('[data-export-csv]').disabled=filtered.length===0;
   const pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.min(page,pages-1);
   const visible=new Set(filtered.slice(page*size,(page+1)*size).map(record=>record.row));
   for(const row of rows)row.hidden=!visible.has(row);
@@ -767,6 +769,23 @@ function initGrid(grid){
   const fragment=document.createDocumentFragment();
   for(const record of ordered)fragment.append(record.row);
   tbody.append(fragment);update(true);
+ });
+ const exportButton=grid.querySelector('[data-export-csv]');
+ exportButton.addEventListener('click',()=>{
+  const columns=headers.map(button=>({index:Number(button.dataset.sortColumn),label:button.textContent.trim()}));
+  function csvCell(value){
+   let text=String(value??'');
+   // Spreadsheet programs may execute captured configuration as a formula.
+   // Prefix formula-like and leading control characters as literal text.
+   if(/^[\s\u0000-\u001f]*[=+\-@]/.test(text)||/^[\t\r\n]/.test(text))text="'"+text;
+   return '"'+text.replaceAll('"','""')+'"';
+  }
+  const records=[columns.map(c=>c.label),...filtered.map(record=>columns.map(c=>record.values[c.index]??''))];
+  const content='\uFEFF'+records.map(row=>row.map(csvCell).join(',')).join('\r\n');
+  const link=document.createElement('a');
+  const objectUrl=URL.createObjectURL(new Blob([content],{type:'text/csv;charset=utf-8'}));
+  link.href=objectUrl;link.download='central-worklist.csv';link.click();
+  setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);
  });
  sizeControl.addEventListener('change',()=>{size=Number(sizeControl.value);update(true);});
  search.addEventListener('input',()=>update(true));prev.addEventListener('click',()=>{page--;update();});
