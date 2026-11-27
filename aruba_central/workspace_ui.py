@@ -143,6 +143,26 @@ def setting_value(value):
     return '<span class="value-scalar">' + e(value) + '</span>'
 
 
+def ordered_list_movement(left, right):
+    """Map exact occurrences only; never infer semantic equivalence."""
+    from collections import defaultdict, deque
+    from .central_tool import canonical
+    if not isinstance(left, list) or not isinstance(right, list) or len(left) != len(right):
+        return None
+    positions = defaultdict(deque)
+    for index, value in enumerate(right, 1):
+        positions[canonical(value)].append(index)
+    moves = []
+    for index, value in enumerate(left, 1):
+        available = positions.get(canonical(value))
+        if not available:
+            return None
+        destination = available.popleft()
+        if index != destination:
+            moves.append((index, destination))
+    return moves
+
+
 def diff_table(fields, left="Local", right="Reference"):
     if fields is None:
         return '<p class="empty">No comparable reference captured.</p>'
@@ -157,11 +177,25 @@ def diff_table(fields, left="Local", right="Reference"):
         if key not in d:
             return '<span class="value-empty">Not returned</span>'
         kind = d.get(type_key, type(d[key]).__name__)
-        return '<small class="diff-type">' + e(types.get(kind, pretty(kind))) + '</small>' + setting_value(d[key])
+        value = d[key]
+        if isinstance(value, list) and value:
+            rendered = '<ol class="diff-ordered-list">' + "".join(
+                '<li>' + setting_value(item) + '</li>' for item in value) + '</ol>'
+        else:
+            rendered = setting_value(value)
+        return '<small class="diff-type">' + e(types.get(kind, pretty(kind))) + '</small>' + rendered
     def field(d):
         path = ".".join(map(str, d["path"])) or "(root)"
         kind = kinds.get(d.get("kind"), "Observed difference")
-        return '<strong class="diff-path">' + e(path) + '</strong><small>' + e(kind) + '</small>'
+        movement = ordered_list_movement(d.get("local_value"), d.get("reference_value"))
+        details = ""
+        if movement:
+            kind = "Same exact list members, different order"
+            # Match repeated equal entries by occurrence, not inferred identity.
+            details = '<small>' + e(f"{len(movement)} positions differ. Order may be significant.") + '</small>'
+            details += '<details><summary>Position changes</summary><ol class="diff-moves">' + "".join(
+                f'<li>Position {start} to {end}</li>' for start, end in movement) + '</ol></details>'
+        return '<strong class="diff-path">' + e(path) + '</strong><small>' + e(kind) + '</small>' + details
     return table(("Setting", left, right), [tr(field(f), value(f, "local_value", "local_type"),
                 value(f, "reference_value", "reference_type")) for f in fields], style="setting-table typed-diff")
 
@@ -402,6 +436,10 @@ form,.toolbar,.table-toolbar,.snapshot-picker { display: flex; flex-wrap: wrap; 
 .setting-table td { vertical-align: top; }
 .typed-diff .diff-type { font-weight:600; color:var(--muted); margin:0 0 4px; }
 .typed-diff .diff-path { overflow-wrap:anywhere; }
+.diff-ordered-list,.diff-moves { padding-left:24px; margin:6px 0; }
+.diff-ordered-list > li { padding:4px 0; }
+.diff-ordered-list > li::marker { font-weight:600; color:var(--muted); }
+.diff-moves { list-style:none; padding-left:0; font-variant-numeric:tabular-nums; }
 .typed-diff td:first-child small { color:var(--muted); }
 .value-scalar { white-space: pre-wrap; overflow-wrap: anywhere; }
 .value-empty { color: var(--muted); font-style: italic; }
