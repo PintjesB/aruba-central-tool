@@ -38,3 +38,19 @@ class ComparisonMatrixTests(unittest.TestCase):
             self.assertIn("Observed values differ", html)
             self.assertIn("Global / Global", html)
             self.assertIn("Site / Site", html)
+
+    def test_profile_suggestions_and_difference_filter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(fixture()))
+            workspace = Workspace(directory)
+            query = {"snapshot": name, "mode": "matrix", "persona": "ACCESS_SWITCH",
+                     "module": "layer2-vlan", "scope1": "1", "scope2": "2"}
+            html = workspace.comparison(query)
+            self.assertIn('list="matrix-identities"', html)
+            self.assertIn('<option value="10"></option>', html)
+            html = workspace.comparison({**query, "identity": "10", "fields": "differences"})
+            self.assertIn("Show all fields", html)
+            self.assertIn("Comparison summary", html)
+            self.assertNotIn(">Observed values match<", html)
+            self.assertIn("Profile evidence", html)
