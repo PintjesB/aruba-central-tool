@@ -37,3 +37,26 @@ class LibraryUsagePresentationTests(unittest.TestCase):
         self.assertIn("profile=Office", html)
         self.assertIn("100", html)
         self.assertNotIn("PrivateSwitch", html)
+
+
+    def test_exact_profile_drilldown_avoids_collection_wide_comparison(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from aruba_central.config_app import Workspace
+        from aruba_central.advanced_review import library_usage
+        from test_consolidation import fixture
+        bundle = fixture()
+        bundle["library"]["modules"]["roles"] = {"status": "list_parsed", "profiles": {"A": {"name": "A"}, "B": {"name": "B"}}}
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(bundle))
+            workspace = Workspace(directory)
+            reviewed = workspace.reviewed_snapshot(name)
+            workspace.advanced_snapshot(reviewed)
+            with patch("aruba_central.config_app.library_profile_comparison", side_effect=AssertionError("Unneeded full comparison")), patch("aruba_central.advanced_review.library_usage", wraps=library_usage) as use:
+                html = workspace.library({"snapshot": name, "module": "roles", "profile": "A"})
+                self.assertIn("A · Device visibility", html)
+                self.assertEqual(use.call_count, 1)
+                self.assertEqual(use.call_args.args[2], ["A"])
