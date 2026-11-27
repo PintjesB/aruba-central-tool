@@ -79,7 +79,7 @@ def assessment_view(workspace, query):
                 + f'<label>Review note<input name="note" maxlength="500" value="{e(disposition["note"])}"></label>'
                 + '<button type="submit">Save review status</button></form>'
                 '<p class="note">Local review record only. It is not approval or change authorization. A changed snapshot requires review again.</p>')
-        return tr(e(categories[row["category"]]), f'<strong>{e(row["profile"])}</strong><small>{e(module_label(row["module"]))}</small>',
+        return tr(f'<input type="checkbox" data-bulk-key="{e(key)}" aria-label="Select {e(row["profile"])}">', e(categories[row["category"]]), f'<strong>{e(row["profile"])}</strong><small>{e(module_label(row["module"]))}</small>',
            e(persona_label(row["persona"])), str(row["instances"]), e(row["unit"]), str(row["known"]),
            str(row["unknown"]) if row["unknown"] is not None else "Not assessed", e(row["next_step"]),
            e(STATES[disposition["state"]]),
@@ -91,9 +91,20 @@ def assessment_view(workspace, query):
              + select("state", [("", "All review statuses")] + list(STATES.items()), state_filter, "Review status")
              + '<button type="submit">Filter worklist</button></form>')
     review_rows = [review_row(row) for row in worklist if not category or row["category"] == category]
-    body += table(("Opportunity", "Profile / configuration", "Function", "Count", "Unit", "Observed device/function pairs", "Unknown device/function pairs", "Next step", "Review status", ""),
-                  [row for row in review_rows if row is not None], search=True)
-    body += '</section>'
+    body += '<div id="bulk-review-table">' + table(("", "Opportunity", "Profile / configuration", "Function", "Count", "Unit", "Observed device/function pairs", "Unknown device/function pairs", "Next step", "Review status", ""),
+                  [row for row in review_rows if row is not None], search=True) + '</div>'
+    body += ('<div class="table-toolbar"><button type="button" id="bulk-select-page">Select visible page</button>'
+             '<button type="button" id="bulk-clear">Clear selection</button><span id="bulk-selection" aria-live="polite">0 selected</span></div>'
+             f'<form id="bulk-review-form" method="post" action="{e(root + "bulk-review-disposition")}">'
+             f'<input type="hidden" name="csrf" value="{e(workspace.csrf)}"><input type="hidden" name="snapshot" value="{e(name)}">'
+             '<input type="hidden" name="keys" value="[]">'
+             + select("state", list(STATES.items()), "reviewed", "New review status").replace('id="state"', 'id="bulk-state"')
+             + '<label>Notes<select name="replace_notes"><option value="no">Preserve existing notes</option><option value="yes">Replace with shared note</option></select></label>'
+             '<label>Shared note<input name="note" maxlength="500"></label>'
+             '<label><input type="checkbox" name="confirmed" value="yes" required>Confirm local status update only</label>'
+             '<button type="submit" id="bulk-review-submit" disabled>Update selected findings</button></form>'
+             '<p class="note">Maximum 200 findings per update. Selections persist across table pages and searches. Existing notes are preserved by default. No Central changes or approvals.</p>')
+    body += '</section><script>' + BULK_REVIEW_JS + '</script>'
     body += '<section><h2>Evidence to resolve</h2>' + table(("Review queue", "Observed count", "Next step", ""), evidence) + '</section>'
     body += '<section><h2>Optimization opportunities</h2>' + table(("Review queue", "Observed count", "Next step", ""), opportunities) + '</section>'
     body += '<section><h2>Assessment scope</h2><p>Counts describe independent worklists and may overlap. They must not be summed as unique defects, affected devices or safe removals. No health score is inferred from missing or partial evidence.</p>'
@@ -104,3 +115,34 @@ def assessment_view(workspace, query):
         body += "<p>" + e(str(reused)) + " checkpoint observations reused (scope pairs and additional reads). " + ("Mixed-time evidence; not valid for remediation verification." if checkpoint.get("mixed_capture_times") else "No earlier observations reused.") + "</p>"
     body += private_export("configuration-assessment", {"snapshot": name, "assessment": report}) + '</section>'
     return page("Configuration assessment", body, workspace.nav(name))
+
+
+BULK_REVIEW_JS = r"""
+(() => {
+ const form = document.querySelector('#bulk-review-form');
+ const boxes = Array.from(document.querySelectorAll('#bulk-review-table [data-bulk-key]'));
+ const submit = document.querySelector('#bulk-review-submit');
+ const count = document.querySelector('#bulk-selection');
+ const confirmed = form.elements.confirmed;
+ const visible = box => !box.closest('tr').hidden;
+ function update() {
+   const selected = boxes.filter(box => box.checked);
+   const hidden = selected.filter(box => !visible(box)).length;
+   count.textContent = selected.length + ' selected' + (hidden ? ' (' + hidden + ' outside visible page)' : '') + (selected.length > 200 ? ' — maximum 200' : '');
+   form.elements.keys.value = JSON.stringify(selected.map(box => box.dataset.bulkKey));
+   submit.disabled = !selected.length || selected.length > 200 || !confirmed.checked;
+ }
+ for (const box of boxes) box.addEventListener('change', () => { confirmed.checked = false; update(); });
+ document.querySelector('#bulk-select-page').addEventListener('click', () => {
+   for (const box of boxes.filter(visible)) box.checked = true;
+   confirmed.checked = false; update();
+ });
+ document.querySelector('#bulk-clear').addEventListener('click', () => {
+   for (const box of boxes) box.checked = false;
+   confirmed.checked = false; update();
+ });
+ form.addEventListener('change', event => { if (event.target !== confirmed) confirmed.checked = false; update(); });
+ new MutationObserver(update).observe(document.querySelector('#bulk-review-table'), {subtree:true, attributes:true, attributeFilter:['hidden']});
+ update();
+})();
+"""
