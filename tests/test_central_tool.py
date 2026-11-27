@@ -1644,6 +1644,27 @@ class Tests(unittest.TestCase):
             self.assertEqual(handler.https_open(proxy), "standard")
             self.assertEqual(fallback.call_count, 3)
 
+    def test_rate_limit_backoff_and_gradual_recovery_respects_cap(self):
+        from unittest.mock import patch
+        client = Central(EU_REGIONS[0], token="test")
+        with patch("central_tool.time.monotonic", return_value=100):
+            client._rate_limit_response(5)
+            self.assertAlmostEqual(1 / client._request_interval, 8)
+            self.assertEqual(client._retry_at, 105)
+            client._rate_limit_response(10)
+            self.assertAlmostEqual(1 / client._request_interval, 7)
+            self.assertEqual(client._retry_at, 110)
+        with patch("central_tool.time.monotonic", return_value=150):
+            client._wait_rate_limit()
+            self.assertAlmostEqual(1 / client._request_interval, 7)
+        for now, rate in ((170, 7.5), (200, 8), (230, 8.5), (260, 9), (290, 9)):
+            with patch("central_tool.time.monotonic", return_value=now):
+                client._wait_rate_limit()
+                self.assertAlmostEqual(1 / client._request_interval, rate)
+        self.assertEqual(client._retry_delay("12", 0), 12)
+        self.assertEqual(client._retry_delay("invalid", 2), 4)
+        self.assertEqual(client._retry_delay("Thu, 01 Jan 1970 00:00:00 GMT", 0), 0)
+
     def test_transient_get_errors_retry_but_tls_and_post_do_not(self):
         from io import BytesIO
         from urllib.error import URLError

@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COM
 from collections import Counter, defaultdict
 from functools import lru_cache
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from http.client import IncompleteRead, RemoteDisconnected, HTTPSConnection, HTTPException
@@ -126,6 +127,7 @@ class Central:
         self._retry_at = 0.0
         self._next_request_at = 0.0
         self._request_interval = 1 / 9
+        self._rate_recover_at = 0.0
         self._custom_api_terminal_500s = 0
         self._get_metrics_lock = threading.Lock()
         self._get_metrics = Counter()
@@ -160,15 +162,41 @@ class Central:
 
     def _wait_rate_limit(self):
         # HPE documents 10 requests/s per account across all credentials.
-        # Pace at 9/s, backing off to 8/s if the shared account returns 429.
+        # Never exceed the conservative 9/s cap. Recover slowly after a
+        # quiet period instead of staying throttled for the entire audit.
         while True:
             with self._rate_lock:
                 now = time.monotonic()
                 delay = max(self._retry_at, self._next_request_at) - now
                 if delay <= 0:
+                    if self._request_interval > 1 / 9 and now >= self._rate_recover_at:
+                        rate = min(9, 1 / self._request_interval + 0.5)
+                        self._request_interval = 1 / rate
+                        self._rate_recover_at = now + 30
                     self._next_request_at = now + self._request_interval
                     return
             time.sleep(delay)
+
+    @staticmethod
+    def _retry_delay(hint, attempt):
+        if hint.isdigit():
+            return int(hint)
+        if hint:
+            try:
+                target = parsedate_to_datetime(hint)
+                if target.tzinfo is not None:
+                    return max(0, (target - datetime.now(timezone.utc)).total_seconds())
+            except (ValueError, TypeError, OverflowError):
+                pass
+        return 2 ** attempt
+
+    def _rate_limit_response(self, seconds):
+        with self._rate_lock:
+            now = time.monotonic()
+            self._retry_at = max(self._retry_at, now + seconds)
+            # Repeated throttling may indicate other active API consumers.
+            self._request_interval = 1 / max(6, min(8, 1 / self._request_interval - 1))
+            self._rate_recover_at = max(self._rate_recover_at, self._retry_at + 60)
 
     @staticmethod
     def _transient_get_error(exc):
@@ -218,21 +246,18 @@ class Central:
                 with self._rate_lock:
                     repeated_custom_500 = (custom_get and exc.code == 500
                                            and self._custom_api_terminal_500s >= 3)
-                retry_hint = exc.headers.get("Retry-After", "")
+                retry_hint = exc.headers.get("Retry-After", "") or ""
+                if is_get and exc.code == 429:
+                    self._rate_limit_response(self._retry_delay(retry_hint, attempt))
                 if repeated_custom_500 and not retry_hint and attempt < 3:
                     with self._get_metrics_lock:
                         self._get_metrics["custom_500_retry_sequences_suppressed"] += 1
                 if (is_get and exc.code in (429, 500, 502, 503, 504)
                         and attempt < 3 and (not repeated_custom_500 or bool(retry_hint))):
-                    delay = exc.headers.get("Retry-After", "")
-                    if delay.isdigit() and int(delay) > 60:
+                    seconds = self._retry_delay(retry_hint, attempt)
+                    if seconds > 60:
                         raise RuntimeError(f"{label}: rate-limit delay exceeds retry budget") from None
-                    seconds = int(delay) if delay.isdigit() else 2 ** attempt
-                    if exc.code == 429:
-                        with self._rate_lock:
-                            self._retry_at = max(self._retry_at, time.monotonic() + seconds)
-                            self._request_interval = max(self._request_interval, 1 / 8)
-                    else:
+                    if exc.code != 429:
                         time.sleep(seconds)
                     continue
                 if custom_get:
