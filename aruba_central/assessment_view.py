@@ -74,7 +74,8 @@ def assessment_view(workspace, query):
                 f'<input type="hidden" name="csrf" value="{e(workspace.csrf)}">'
                 f'<input type="hidden" name="snapshot" value="{e(name)}">'
                 f'<input type="hidden" name="key" value="{e(key)}">'
-                + select("state", list(STATES.items()), disposition["state"], "Review status")
+                + '<label>Review status<select name="state">' + "".join(
+                    f'<option value="{e(value)}"{" selected" if value == disposition["state"] else ""}>{e(label)}</option>' for value, label in STATES.items()) + '</select></label>'
                 + f'<label>Review note<input name="note" maxlength="500" value="{e(disposition["note"])}"></label>'
                 + '<button type="submit">Save review status</button></form>'
                 '<p class="note">Local review record only. It is not approval or change authorization. A changed snapshot requires review again.</p>')
