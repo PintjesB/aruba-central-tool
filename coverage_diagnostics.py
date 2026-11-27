@@ -364,6 +364,10 @@ def diagnostics(bundle):
             "logical_gets": sum(row["attempted"] for row in operations),
             "http_get_transport": ({key: count(transport.get(key)) for key in transport_fields}
                                    if isinstance(transport, dict) else None),
+            "http_config_validators": ({kind + "_" + field: count(bundle["http_config_validators"].get(kind + "_" + field))
+                                        for kind in ("collection", "keyed")
+                                        for field in ("responses", "strong_etag", "weak_etag", "last_modified")}
+                                       if isinstance(bundle.get("http_config_validators"), dict) else None),
             "elapsed_before_save_seconds": seconds(timing.get("elapsed_before_save_seconds")),
             "phases": phase_timing,
             "individual_reads": sum(keyed.values()),
