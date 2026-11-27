@@ -101,11 +101,11 @@ def evidence_id(record):
     return hashlib.sha256(canonical([selector, record["body"]]).encode()).hexdigest()
 
 
-def matching_fields(bundle, query, *, module="", persona=""):
+def matching_fields(bundle, query, *, module="", persona="", scope=None):
     terms = query.casefold().split()
     if not terms or len(query) > 200:
         raise ValueError("Invalid search")
-    for record in configuration_sources(bundle, module=module, persona=persona):
+    for record in configuration_sources(bundle, module=module, persona=persona, scope=scope):
         context = " ".join(str(record[k]) for k in ("persona", "module", "name", "scope", "identity", "view")).casefold()
         def matches(body, missing):
             # Terms are whitespace-delimited; the original separators were
@@ -136,13 +136,13 @@ def group_id(group):
     return hashlib.sha256(canonical(group).encode()).hexdigest()
 
 
-def grouped_search(bundle, query, *, module="", persona="", offset=0, limit=300):
+def grouped_search(bundle, query, *, module="", persona="", scope=None, offset=0, limit=300):
     if type(offset) is not int or offset < 0 or not 1 <= limit <= 1000:
         raise ValueError("Invalid search bounds")
     device_scopes = {(p, str(s["id"])) for p, entry in bundle["results"].items() for s in entry["scopes"] if s["kind"] == "device"}
     groups = {}
     total = 0
-    for record, matches in matching_fields(bundle, query, module=module, persona=persona):
+    for record, matches in matching_fields(bundle, query, module=module, persona=persona, scope=scope):
         for path, value in matches:
             total += 1
             selector = field_group(record, path, value)
@@ -164,13 +164,13 @@ def grouped_search(bundle, query, *, module="", persona="", offset=0, limit=300)
     return {"groups": rows, "total_groups": len(groups), "total": total, "truncated": len(groups) > offset + len(rows)}
 
 
-def search_configuration(bundle, query, *, module="", persona="", limit=300, offset=0, group=""):
+def search_configuration(bundle, query, *, module="", persona="", scope=None, limit=300, offset=0, group=""):
     if not 1 <= limit <= 1000 or type(offset) is not int or offset < 0:
         raise ValueError("Invalid search")
     if group and (len(group) != 64 or any(c not in "0123456789abcdef" for c in group)):
         raise ValueError("Invalid group identity")
     rows, total, scanned = [], 0, 0
-    for record, matches in matching_fields(bundle, query, module=module, persona=persona):
+    for record, matches in matching_fields(bundle, query, module=module, persona=persona, scope=scope):
         scanned += 1
         source_id = None
         for path, value in matches:
@@ -190,6 +190,7 @@ def search_view(workspace, query):
         return empty
     root, name, bundle, picker = loaded
     text, module, persona = (query.get(k, "") for k in ("q", "module", "persona"))
+    scope = query.get("scope") or None
     raw_modules = bundle.get("unadapted_profiles") or {}
     keyed = (bundle.get("keyed_profile_details") or {}).get("profiles") or {}
     modules = sorted({m for entry in bundle["results"].values() for m in entry["modules"]}
@@ -204,9 +205,13 @@ def search_view(workspace, query):
         raise ValueError("Unknown search filter")
     body = intro("Configuration search", "Find captured profile names, scope names, field paths and values across the tenant.", picker)
     body += f'<p><a href="{url(root, "report", snapshot=name)}">Return to configuration explorer</a></p>'
+    if scope is not None:
+        body += '<p class="note">Restricted to exact scope: ' + e(scope) + '</p>'
+    scope_field = f'<input type="hidden" name="scope" value="{e(scope)}">' if scope is not None else ""
     body += (f'<section><form class="filter-bar" method="get" action="{e(root + "report")}">'
              f'<input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="mode" value="search">'
-             f'<label>Search terms<input name="q" type="search" value="{e(text)}" maxlength="200" required></label>'
+             + scope_field
+             + f'<label>Search terms<input name="q" type="search" value="{e(text)}" maxlength="200" required></label>'
              + select("module", [("", "All modules")] + [(m, m) for m in modules], module, "Module")
              + select("persona", [("", "All functions")] + [(p, p) for p in personas], persona, "Device function")
              + '<button type="submit">Search configuration</button></form>'
@@ -217,13 +222,15 @@ def search_view(workspace, query):
         raise ValueError("Unknown search presentation")
     if text.strip():
         common = {"snapshot": name, "mode": "search", "q": text, "module": module, "persona": persona}
+        if scope is not None:
+            common["scope"] = scope
         body += f'<p><a class="button" href="{url(root, "report", **common, presentation="grouped")}">Group identical values</a> <a class="button" href="{url(root, "report", **common)}">All individual matches</a></p>'
         try:
             offset = int(query.get("offset", "0"))
         except (TypeError, ValueError) as exc:
             raise ValueError("Invalid search offset") from exc
         if presentation == "grouped":
-            result = grouped_search(bundle, text, module=module, persona=persona, offset=offset)
+            result = grouped_search(bundle, text, module=module, persona=persona, scope=scope, offset=offset)
             rows = []
             for row in result["groups"]:
                 function, mod, view, source, path, value = row["selector"]
@@ -238,7 +245,7 @@ def search_view(workspace, query):
                 body += f'<a class="button" href="{url(root, "report", **common, presentation="grouped", offset=offset + 300)}">Next group batch</a>'
             body += table(("Function", "Module", "View", "Source", "Field path", "Value", "Observed devices", "Observed scopes", "Observations", ""), rows, search=True) + '</section>'
             return page("Configuration explorer", body, workspace.nav(name))
-        result = search_configuration(bundle, text, module=module, persona=persona, offset=offset, group=group)
+        result = search_configuration(bundle, text, module=module, persona=persona, scope=scope, offset=offset, group=group)
         if group:
             body += '<p class="note">Showing only the selected exact field/value group.</p>'
         rows = []
