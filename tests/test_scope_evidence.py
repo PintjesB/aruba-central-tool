@@ -44,6 +44,27 @@ class ScopeEvidenceTests(unittest.TestCase):
         self.assertTrue(result["records"][1]["body_matches_inventory"])
         self.assertFalse(result["safe_to_apply"])
 
+    def test_keyed_assignment_requests_explicit_context_and_checks_metadata(self):
+        row = {"scope-id": "12", "device-function": "ACCESS_SWITCH",
+               "profile-type": "dns", "profile-instance": "example"}
+        class Client:
+            def __init__(self, raw):
+                self.raw = raw
+                self.calls = []
+            def get(self, path, **params):
+                self.calls.append((path, params))
+                return self.raw
+        for raw, expected in ((row, "identity_observed"),
+                              ({"config-assignment": [row], "metadata": {"count": 1}}, "identity_observed"),
+                              ({"config-assignment": [row], "metadata": {"total": 2}}, "count_mismatch"),
+                              ({"config-assignment": [row], "metadata": "invalid"}, "count_mismatch")):
+            client = Client(raw)
+            result = keyed_assignment_capture(client, {"rows": [row]})
+            self.assertEqual(result["outcomes"], {expected: 1})
+            self.assertEqual(client.calls[0][1], {"view-type": "LOCAL", "scope-id": "12",
+                    "device-function": "ACCESS_SWITCH", "effective": "false", "detailed": "true"})
+            self.assertFalse(result["complete"])
+
     def test_authentication_and_rate_limit_failures_propagate(self):
         class Client:
             def get(self, path, **params):
