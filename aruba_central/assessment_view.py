@@ -1,5 +1,5 @@
 """Customer assessment with linked review queues and private JSON report."""
-from .workspace_ui import e, page, intro, metrics, table, tr
+from .workspace_ui import e, page, intro, metrics, table, tr, module_label, persona_label
 from .workspace_views import load, url
 from .assessment_review import assessment
 from .history_view import private_export
@@ -10,7 +10,11 @@ def assessment_view(workspace, query):
     if empty:
         return empty
     root, name, bundle, picker = loaded
-    report = assessment(bundle)
+    from .consolidation import profile_recommendations
+    from .optimization_worklist import optimization_worklist
+    findings = profile_recommendations(bundle)
+    analysis = workspace.advanced_snapshot(bundle)
+    report = assessment(bundle, findings=findings, engineering=analysis)
     coverage = report["coverage"]
     engineering, consolidation, assignments, variants = (report[k] for k in ("engineering", "consolidation", "assignments", "variants"))
     rules, sequences = report["policy_rules"], report["policy_sequences"]
@@ -43,6 +47,26 @@ def assessment_view(workspace, query):
         linked("Overlapping assignment observations", assignments["overlaps"], "Review effective source and overlap", "assignments"),
         linked("Policy bodies with rule observations", rules["groups_with_findings"], "Review duplicate and broader earlier matches", "advanced", workflow="rules"),
         linked("Cross-policy match candidates", sequences["cross_policy_candidates"], "Review ordered policy groups and role applicability", "advanced", workflow="rules")]
+    categories = {"remove_override": "Redundant override review", "promote_local": "Repeated local profiles",
+                  "reuse_library": "Reuse Library profile", "duplicates": "Duplicate Library names",
+                  "ports": "Repeated port settings"}
+    worklist = optimization_worklist(bundle, findings, analysis)
+    category = query.get("category", "")
+    if category and category not in categories:
+        raise ValueError("Unknown optimization category")
+    from .workspace_views import select
+    body += '<section><h2>Prioritized optimization worklist</h2>'
+    body += '<p>Review larger groups first within each category. Counts describe observed review workload, not proven safe removals or a risk score. Recipient counts mean source recipients for local copies, observed shared deployments for Library names, and captured devices for ports. Unknown impact is not zero.</p>'
+    body += (f'<form class="filter-bar" method="get" action="{e(root + "assessment")}"><input type="hidden" name="snapshot" value="{e(name)}">'
+             + select("category", [("", "All categories")] + list(categories.items()), category, "Category")
+             + '<button type="submit">Filter worklist</button></form>')
+    body += table(("Opportunity", "Profile / configuration", "Function", "Count", "Unit", "Observed device/function pairs", "Unknown device/function pairs", "Next step", ""), [
+        tr(e(categories[row["category"]]), f'<strong>{e(row["profile"])}</strong><small>{e(module_label(row["module"]))}</small>',
+           e(persona_label(row["persona"])), str(row["instances"]), e(row["unit"]), str(row["known"]),
+           str(row["unknown"]) if row["unknown"] is not None else "Not assessed", e(row["next_step"]),
+           f'<a href="{url(root, row["route"], snapshot=name, **row["params"])}">Review finding</a>')
+        for row in worklist if not category or row["category"] == category], search=True)
+    body += '</section>'
     body += '<section><h2>Evidence to resolve</h2>' + table(("Review queue", "Observed count", "Next step", ""), evidence) + '</section>'
     body += '<section><h2>Optimization opportunities</h2>' + table(("Review queue", "Observed count", "Next step", ""), opportunities) + '</section>'
     body += '<section><h2>Assessment scope</h2><p>Counts describe independent worklists and may overlap. They must not be summed as unique defects, affected devices or safe removals. No health score is inferred from missing or partial evidence.</p>'

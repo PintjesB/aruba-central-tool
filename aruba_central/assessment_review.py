@@ -8,11 +8,11 @@ from .policy_rule_review import policy_rule_groups
 from .policy_sequence_review import policy_sequence_reviews
 
 
-def assessment(bundle):
+def assessment(bundle, *, findings=None, engineering=None):
     devices = {(p, s["id"]) for p, e in bundle["results"].items()
                for s in e["scopes"] if s["kind"] == "device"}
-    findings = profile_recommendations(bundle)
-    engineering = advanced_analysis(bundle)
+    findings = profile_recommendations(bundle) if findings is None else findings
+    engineering = advanced_analysis(bundle) if engineering is None else engineering
     assignments = assignment_review(bundle)
     variants = policy_variants(bundle)
     rules = policy_rule_groups(bundle)
