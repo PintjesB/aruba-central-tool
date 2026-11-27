@@ -1190,6 +1190,22 @@ def coverage_view(workspace, query):
     nac_rows.append(tr("MAC registrations", status(macs.get("status", "not_collected")),
                        str(len(macs.get("rows", []))), "Confirmed" if macs.get("count_confirmed") is True else "Unverified"))
     body += '<section><h2>Central NAC tenant collection</h2><p>Authentication profiles, authorization policies and identity stores use documented tenant-default parameters. Registration pagination is independent of configuration scope reads.</p>' + table(("Resource", "Read result", "Observed records", "Count evidence"), nac_rows) + f'<p><a href="{url(root, "nac", snapshot=name)}">Review NAC identities and authorization</a></p></section>'
+    assets = bundle.get("nac_portal_assets") or {}
+    if assets:
+        body += '<section><h2>Central NAC portal assets</h2><p>Uploaded image metadata and observed portal references. Binary image contents are not collected.</p>'
+        body += metrics([("Images observed", len(assets.get("images", [])), "Count confirmed" if assets.get("count_confirmed") else "Count unverified"),
+                         ("Individual metadata reads", len(assets.get("details", {})), "Exact observed image identifiers")])
+        body += '<p>Inventory: ' + status(assets.get("status", "not_collected")) + '</p>'
+        rows = []
+        for image in assets.get("images", []):
+            detail = assets.get("details", {}).get(image["imageID"], {})
+            references = image.get("referencedBy")
+            rows.append(tr(e(image.get("fileName", image["imageID"])), e(image.get("mimeType", "Unavailable")),
+                str(len(references)) if isinstance(references, list) else "Unavailable",
+                status(detail.get("status", "not_collected")),
+                inspect("Image metadata", property_table(image) + raw(detail, "Individual metadata response"), "Inspect")))
+        body += table(("Image", "MIME type", "Observed references", "Detail read", ""), rows, search=True)
+        body += raw(assets.get("list_read", {}), "Original image inventory response") + '</section>'
     catalog = discovery.get("documented_catalog") or {}
     if catalog:
         surveyed = set(library.get("modules", {})) | set(additional) | set(bundle.get("nac_configuration", {}))
