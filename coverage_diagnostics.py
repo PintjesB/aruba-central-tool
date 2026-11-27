@@ -102,6 +102,11 @@ def diagnostics(bundle):
     library = bundle.get("library") or {}
     library_summary = [{"module": module if module in modules else "other", **view_summary(view)}
                        for module, view in sorted(library.get("modules", {}).items())]
+    from library_visibility import visibility_summary
+    visibility = []
+    for row in visibility_summary(bundle):
+        if row["module"] in modules:
+            visibility.append({**row, "assignment_capture_status": safe_status(row["assignment_capture_status"])})
     scope_totals = Counter()
     for key, n in scoped.items():
         scope_totals[key[4]] += n
@@ -111,6 +116,7 @@ def diagnostics(bundle):
         "schema": 1, "kind": "anonymous_collection_diagnostics",
         "scoped_status_totals": dict(scope_totals),
         "library_views": library_summary,
+        "library_visibility": visibility,
         "keyed_read_outcomes": [{"persona": p, "module": m, "view": v, "status": s, "reads": n}
                                 for (p, m, v, s), n in sorted(keyed.items())],
         "invalid_selector_shapes": [{"module": m, "shape": shape, "reads": n}
