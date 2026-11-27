@@ -659,6 +659,25 @@ class Tests(unittest.TestCase):
         self.assertFalse(evidence["safe_to_apply"])
         self.assertNotIn("enable", profile)
 
+    def test_keyed_details_include_effective_only_and_deduplicate_local_identity(self):
+        from central_tool import capture_keyed_profile_details
+        both = {"name": "both"}
+        inherited = {"name": "inherited"}
+        results = {"ACCESS_SWITCH": {"modules": {"dns": {"scope_results": [
+            {"scope": "12", "local_view": {"status": "list_parsed", "profiles": {"both": both}},
+             "effective_view": {"status": "list_parsed", "profiles": {"both": both, "inherited": inherited}}},
+            {"scope": "13", "local_view": {"status": "empty_object"},
+             "effective_view": {"status": "list_parsed", "profiles": {"inherited": inherited}}}
+        ]}}}}
+        fake = Fake([both, both, inherited, inherited])
+        evidence = capture_keyed_profile_details(fake, results, {}, workers=1)
+        self.assertEqual(evidence["outcomes"], {"identity_observed": 4})
+        for sid in ("12", "13"):
+            self.assertEqual(set(evidence["profiles"]["ACCESS_SWITCH"][sid]["dns"]["inherited"]), {"effective"})
+        self.assertEqual(set(evidence["profiles"]["ACCESS_SWITCH"]["12"]["dns"]["both"]), {"local", "effective"})
+        self.assertEqual(sum(call[1].get("effective") == "true" for call in fake.calls), 3)
+        self.assertFalse(evidence["safe_to_apply"])
+
     def test_keyed_profile_rejects_ambiguous_identity_and_unsafe_selectors(self):
         from central_tool import keyed_profile_read
         fake = Fake([{"profiles": [{"name": "different"}]}])
