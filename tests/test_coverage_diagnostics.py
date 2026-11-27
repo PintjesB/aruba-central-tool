@@ -182,6 +182,6 @@ class DiagnosticsTests(unittest.TestCase):
         report = diagnostics(bundle)["collection_performance"]["http_get_transport"]
         self.assertEqual(report, {"http_get_attempts": 25, "http_get_retries": 5,
                                  "http_get_429": 1, "http_get_5xx": 4,
-                                 "custom_500_retry_sequences_suppressed": 2})
+                                 "custom_500_retry_sequences_suppressed": 2, "http_get_transient_errors": 0})
         del bundle["http_get_transport"]
         self.assertIsNone(diagnostics(bundle)["collection_performance"]["http_get_transport"])
