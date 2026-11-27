@@ -325,6 +325,42 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(overall_audit_progress("Saving snapshot", "standard", {},
                                                 250, 0, 0, 0, None)["stages"], 14)
 
+    def test_live_module_preview_is_read_only_and_cleared_on_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            release = threading.Event()
+            view = {"status": "list_parsed", "profiles": {"dns": {"name": "<private>"}}}
+            def refresh(progress=None, module_completed=None):
+                module_completed("ACCESS_SWITCH", "dns", {"scope_results": [
+                    {"scope": "12", "scope_kind": "device", "local_view": view,
+                     "effective_view": view, "review": {"qualified": True}}]},
+                    [{"id": "12", "name": "Switch", "kind": "device"}])
+                release.wait(3)
+                return self.fixture()
+            refresh.supports_module_preview = True
+            workspace = Workspace(directory, refresh)
+            try:
+                self.assertTrue(workspace.start_refresh())
+                deadline = time.monotonic() + 1
+                while workspace.status()["live_module_count"] == 0 and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertEqual(workspace.status()["live_module_count"], 1)
+                self.assertIn("Browse collected modules", workspace.home())
+                html = workspace.live_preview({"persona": "ACCESS_SWITCH", "module": "dns", "scope": "12"})
+                self.assertIn("Partial read-only evidence", html)
+                self.assertIn("&lt;private&gt;", html)
+                self.assertNotIn("<private>", html)
+                self.assertEqual(audit_files(Path(directory)), [])
+                with self.assertRaises(ValueError):
+                    workspace.live_preview({"persona": "ACCESS_SWITCH", "module": "unknown"})
+            finally:
+                release.set()
+            deadline = time.monotonic() + 3
+            while workspace.state == "running" and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertEqual(workspace.state, "complete")
+            self.assertEqual(workspace.status()["live_module_count"], 0)
+            self.assertIn("Open completed snapshot", workspace.live_preview({}))
+
     def test_refresh_single_flight_and_saved_capture(self):
         with tempfile.TemporaryDirectory() as directory:
             release = threading.Event()

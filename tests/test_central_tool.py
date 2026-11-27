@@ -1128,7 +1128,13 @@ class Tests(unittest.TestCase):
                    {"deviceFunction": "Hybrid NAC"}]
         with patch("central_tool.inventory", return_value=devices), patch("central_tool.discover_scopes",
              return_value=([scope("1", "global", []), scope("2", "device", [])], [])):
-            data = configuration_audit(Client())
+            published = {}
+            data = configuration_audit(Client(), module_completed=lambda persona, module, evidence, scopes:
+                                       published.__setitem__((persona, module), evidence))
+        self.assertEqual(set(published), {(persona, module) for persona, entry in data["results"].items()
+                                          for module in entry["modules"]})
+        self.assertTrue(all(evidence == data["results"][persona]["modules"][module]
+                            for (persona, module), evidence in published.items()))
         self.assertIn("wlan-ssids", data["results"]["CAMPUS_AP"]["modules"])
         self.assertNotIn("wlan-ssids", data["results"]["ACCESS_SWITCH"]["modules"])
         self.assertIn("switch-system", data["results"]["ACCESS_SWITCH"]["modules"])

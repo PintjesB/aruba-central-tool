@@ -2001,13 +2001,15 @@ def qualify_observed_identities(evidence):
 AUDIT_WORKERS = 12
 
 
-def ordered_parallel(items, function, workers=1, completed=None, item_completed=None):
+def ordered_parallel(items, function, workers=1, completed=None, item_completed=None, result_completed=None):
     """Bound concurrent reads; preserve input order and propagate failures."""
     items = list(items)
     if workers == 1 or len(items) <= 1:
         result = []
         for item in items:
             result.append(function(item))
+            if result_completed:
+                result_completed(result[-1])
             if completed:
                 completed(len(result), len(items))
             if item_completed:
@@ -2035,6 +2037,8 @@ def ordered_parallel(items, function, workers=1, completed=None, item_completed=
                 for future in finished:
                     index = pending.pop(future)
                     result[index] = future.result()
+                    if result_completed:
+                        result_completed(result[index])
                     count += 1
                     if completed:
                         completed(count, len(items))
@@ -3682,7 +3686,7 @@ def configuration_operational_vlan(bundle, persona, sid, vid):
             "may_be_truncated": len(lists[0]) >= 1000}
 
 
-def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None, deep_catalog=False, exhaustive_details=False, targeted_catalog=False, checkpoint_path=None, resume=False, identity_guard=None):
+def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None, deep_catalog=False, exhaustive_details=False, targeted_catalog=False, checkpoint_path=None, resume=False, identity_guard=None, module_completed=None):
     """Inventory-driven read-only audit with bounded parallel scope reads."""
     from api_coverage import ReadCoverage
     transport = client if isinstance(client, Central) else None
@@ -3783,18 +3787,14 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
                 checkpoint.save(persona, module, scope["id"], local, effective)
             return module, scope, local, effective
         grouped = defaultdict(list)
-        for module, scope, local, effective in ordered_parallel(
-                tasks, read_scope, workers,
-                item_completed=lambda done, total, task: audit_progress(
-                    progress, "Configuration scopes", completed_scopes + done,
-                    total_scopes, f"{persona} / {task[0]}")):
-            grouped[module].append((scope, local, effective))
-        completed_scopes += len(tasks)
-        for module, (identity, _, device_only) in modules.items():
+        expected = Counter(task[0] for task in tasks)
+        scope_order = {scope["id"]: index for index, scope in enumerate(scopes)}
+        def review_captured_module(module):
+            identity, _, device_only = modules[module]
             scope_results = []
             baseline = None
             totals = Counter()
-            captured = grouped[module]
+            captured = sorted(grouped[module], key=lambda item: scope_order[item[0]["id"]])
             applicable = captured
             for scope, _, effective in captured:
                 if scope["kind"] == "global" and effective["status"] == "list_parsed":
@@ -3817,6 +3817,28 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
                              if v["status"] not in ("list_parsed", "empty_object"))
             for (status, http), count in sorted(errors.items(), key=str):
                 print(f"    {status}{' HTTP ' + str(http) if http else ''}: {count}", flush=True)
+
+            if module_completed:
+                # This is a read-only preview of one completed structured
+                # module, not a completed audit or a qualified change plan.
+                module_completed(persona, module, module_results[module], scopes)
+
+        def retain_scope(observation):
+            module, scope, local, effective = observation
+            grouped[module].append((scope, local, effective))
+            if len(grouped[module]) == expected[module]:
+                review_captured_module(module)
+
+        ordered_parallel(tasks, read_scope, workers,
+                item_completed=lambda done, total, task: audit_progress(
+                    progress, "Configuration scopes", completed_scopes + done,
+                    total_scopes, f"{persona} / {task[0]}"),
+                result_completed=retain_scope)
+        completed_scopes += len(tasks)
+        for module in modules:
+            if module not in module_results:
+                review_captured_module(module)
+        module_results = {module: module_results[module] for module in modules}
         results[persona] = {"scopes": scopes, "modules": module_results}
     # Library definitions can exist without any assignment or active device
     # function. Always survey the entire explicitly supported Library catalog.
@@ -4241,11 +4263,15 @@ def main():
                     preferred = args.region_file.read_text(encoding="utf-8-sig").strip()
                 client = Central(preferred or EU_REGIONS[0], os.getenv("CENTRAL_ACCESS_TOKEN"),
                                  os.getenv("CENTRAL_CLIENT_ID"), os.getenv("CENTRAL_CLIENT_SECRET"))
-                def refresh(progress=None):
+                def refresh(progress=None, module_completed=None):
                     audit_progress(progress, "Connection", 0, 0, "Authenticating and detecting region")
                     detect_region(client, preferred)
                     return configuration_audit(client, progress=progress, deep_catalog=args.deep_catalog or args.targeted_catalog, exhaustive_details=args.exhaustive_details, targeted_catalog=args.targeted_catalog,
-                                               identity_guard=lambda incoming: verify_workspace_identity(args.directory, incoming))
+                                               identity_guard=lambda incoming: verify_workspace_identity(args.directory, incoming),
+                                               module_completed=module_completed)
+                refresh.supports_module_preview = True
+                refresh.collection_strategy = "targeted" if args.targeted_catalog else "deep" if args.deep_catalog else "standard"
+                refresh.exhaustive_details = args.exhaustive_details
             serve(args.directory, refresh=refresh, open_browser=not args.no_browser)
             return 0
         if args.output.exists():
