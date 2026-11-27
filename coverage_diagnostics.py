@@ -358,7 +358,7 @@ def diagnostics(bundle):
     detail_strategy = details.get("detail_strategy")
     transport = bundle.get("http_get_transport")
     transport_fields = ("http_get_attempts", "http_get_retries", "http_get_429",
-                        "http_get_5xx", "custom_500_retry_sequences_suppressed")
+                        "http_get_5xx", "custom_500_retry_sequences_suppressed", "http_get_transient_errors")
     return {
         "schema": 1, "kind": "anonymous_collection_diagnostics",
         "collection_performance": {
