@@ -16,7 +16,7 @@ def safe_status(value):
         "count_mismatch", "request_rejected", "read_failed", "response_received",
         "not_collected", "not_attempted", "no_response", "mixed_outcomes",
         "unqualified_adapter", "qualified", "partial", "unqualified",
-        "identity_observed", "pagination_unresolved", "cursor_unresolved",
+        "identity_observed", "scope_only_observed", "pagination_unresolved", "cursor_unresolved",
         "complete", "incomplete", "unknown", "count_confirmed", "pagination_exhausted",
         "page_limit_reached", "schema_unqualified", "ambiguous_registration_envelope",
         "duplicate_or_unqualified_registration_identity", "cursor_unqualified", "cursor_repeated_or_empty",
