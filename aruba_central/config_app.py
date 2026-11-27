@@ -396,6 +396,7 @@ class Workspace:
         self.snapshot_lock = threading.Lock()
         self._reviewed_snapshot = None
         self._overview_snapshot = None
+        self._advanced_snapshot = None
         self.state = "idle"
         self.phase = ""
         self.detail = ""
@@ -565,11 +566,27 @@ class Workspace:
                 return self._reviewed_snapshot[1]
             # Release the previous large bundle before parsing another file.
             self._reviewed_snapshot = None
+            self._advanced_snapshot = None
             bundle = refresh_configuration_review(read_audit(self.directory, name))
             if before != fingerprint():
                 raise ValueError("Snapshot changed while loading; open it again")
             self._reviewed_snapshot = (before, bundle)
             return bundle
+
+    def advanced_snapshot(self, bundle):
+        """Share read-only engineering evidence for the active reviewed capture.
+
+        Only cache results tied to the exact currently loaded bundle. Requests
+        already rendering an older capture may finish but cannot replace this
+        cache or retain another full snapshot.
+        """
+        from .advanced_review import advanced_analysis
+        with self.snapshot_lock:
+            if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle:
+                if self._advanced_snapshot is None:
+                    self._advanced_snapshot = advanced_analysis(bundle)
+                return self._advanced_snapshot
+        return advanced_analysis(bundle)
 
     def nav(self, snapshot=None):
         return navigation("/" + self.token + "/", snapshot)

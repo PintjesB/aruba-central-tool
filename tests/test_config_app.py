@@ -113,6 +113,28 @@ class WorkspaceTests(unittest.TestCase):
                     workspace.snapshot_overview(path.name)
                 self.assertEqual(read.call_count, 2)
 
+    def test_engineering_analysis_cache_follows_reviewed_snapshot_lifetime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            path = Path(directory) / "config-audit-one.json"
+            data = self.fixture()
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with patch("aruba_central.central_tool.refresh_configuration_review", side_effect=lambda data: data), patch(
+                    "aruba_central.advanced_review.advanced_analysis", side_effect=lambda data: {"revision": data.get("extra")}) as analyze:
+                first = workspace.reviewed_snapshot(path.name)
+                result = workspace.advanced_snapshot(first)
+                self.assertIs(result, workspace.advanced_snapshot(first))
+                self.assertEqual(analyze.call_count, 1)
+                data["extra"] = "changed snapshot"
+                path.write_text(json.dumps(data), encoding="utf-8")
+                second = workspace.reviewed_snapshot(path.name)
+                self.assertEqual(workspace.advanced_snapshot(second), {"revision": "changed snapshot"})
+                self.assertEqual(analyze.call_count, 2)
+                workspace.advanced_snapshot(first)
+                self.assertEqual(analyze.call_count, 3)
+                self.assertEqual(workspace.advanced_snapshot(second), {"revision": "changed snapshot"})
+                self.assertEqual(analyze.call_count, 3)
+
     def test_reviewed_snapshot_cache_is_bounded_and_invalidated_by_file_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace(directory)

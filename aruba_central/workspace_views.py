@@ -263,9 +263,8 @@ def advisor_view(workspace, query):
         findings = [f for f in findings if f["action"] == "remove_override"
                     and f["persona"] == query.get("persona") and f["module"] == query.get("module")
                     and f["identity"] == identity_filter and any(s["scope"] == scope_filter for s in f["sources"])]
-    from .advanced_review import advanced_analysis
     from .optimization_dependencies import attach_dependency_review
-    attach_dependency_review(findings, advanced_analysis(bundle)["references"])
+    attach_dependency_review(findings, workspace.advanced_snapshot(bundle)["references"])
     short = {key: value[0] for key, value in ACTION_GUIDE.items()}
     counts = Counter(f["action"] for f in findings)
     recommendation_options = [
@@ -644,13 +643,13 @@ def port_dependency_rows(record):
 
 
 def engineering_view(workspace, query):
-    from .advanced_review import advanced_analysis, library_usage, preferred_duplicate
+    from .advanced_review import library_usage, preferred_duplicate
     from .central_tool import field_differences
     loaded, empty = load(workspace, query, "Engineering review", "advanced")
     if empty:
         return empty
     root, name, bundle, picker = loaded
-    data = advanced_analysis(bundle)
+    data = workspace.advanced_snapshot(bundle)
     # Group the same winning/higher scope and bodies across devices instead of repeating rows.
     grouped = {}
     from .central_tool import canonical
@@ -1013,7 +1012,7 @@ def library_view(workspace, query):
                         for identity, profile in sorted(candidates.items())], search=True) + '</section>'
             return page("Library", body, workspace.nav(name))
         comparison = library_profile_comparison(bundle, module)
-        usage = library_usage(bundle, module, view["profiles"], advanced_analysis(bundle)["references"])
+        usage = library_usage(bundle, module, view["profiles"], workspace.advanced_snapshot(bundle)["references"])
         rows = []
         for identity, profile in sorted(view["profiles"].items()):
             review = comparison.get(identity, {})

@@ -1,6 +1,5 @@
 """Read-only worklist for investigating a profile before changing it."""
 from collections import Counter
-from .advanced_review import advanced_analysis
 from .dependency_impact import dependency_impact
 from .workspace_ui import e, page, intro, metrics, badge, table, tr, inspect, raw, module_label, persona_label, pretty
 from .workspace_views import load, select, url
@@ -15,7 +14,7 @@ def impact_view(workspace, query):
     persona, scope = query.get("persona", ""), query.get("scope", "")
     modules = sorted({m for entry in bundle["results"].values() for m in entry["modules"]}
                      | set((bundle.get("library") or {}).get("modules", {})))
-    data = advanced_analysis(bundle)
+    data = workspace.advanced_snapshot(bundle)
     refs = data["references"]
     modules = sorted(set(modules) | {r["target_module"] for r in refs})
     body = intro("Dependency impact", "Find what uses a profile and what it depends on, before changing or removing it.", picker)
