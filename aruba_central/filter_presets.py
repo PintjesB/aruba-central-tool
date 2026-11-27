@@ -7,9 +7,9 @@ from pathlib import Path
 from .workspace_ui import e, page, intro, table, tr, badge
 
 ROUTES = {
-    "assessment": {"mode", "category", "state", "persona", "group_by"},
+    "assessment": {"mode", "category", "state", "persona", "group_by", "parent_kind", "drill"},
     "overrides": {"persona", "device", "module", "result", "readiness"},
-    "report": {"mode", "persona", "module", "scope", "view", "q"},
+    "report": {"mode", "persona", "module", "scope", "view", "q", "evidence"},
     "compare": {"mode", "persona", "module", "left", "right", "view", "identity", "fields", *("scope" + str(i) for i in range(1, 6))},
     "library": {"module"},
     "advanced": {"workflow", "group"},
@@ -19,7 +19,7 @@ ROUTES = {
 LABELS = {"assessment": "Configuration assessment", "overrides": "Device overrides",
           "report": "Configuration explorer", "compare": "Compare", "library": "Library",
           "advanced": "Engineering", "assignments": "Library assignments", "advisor": "Consolidation"}
-TARGET_FIELDS = {"device", "scope", "left", "right", "identity", "group", *("scope" + str(i) for i in range(1, 6))}
+TARGET_FIELDS = {"device", "scope", "left", "right", "identity", "group", "drill", "evidence", *("scope" + str(i) for i in range(1, 6))}
 ID = re.compile(r"[0-9a-f]{32}")
 
 
@@ -115,11 +115,18 @@ def filters_view(workspace, query):
                  f'<input type="hidden" name="route" value="{e(source)}"><input type="hidden" name="params" value="{e(json.dumps(params, ensure_ascii=False))}">'
                  f'<input type="hidden" name="binding" value="{e(binding)}">'
                  '<label>Preset name<input name="name" required maxlength="100"></label><button type="submit">Save filter</button></form></section>')
-    body += '<p class="note">Presets retain submitted page filters, not temporary table searches or unsaved client-side selections. Scope and profile-specific presets are bound to their exact snapshot; generic filters can be reused on another capture. No Central changes are performed.</p>'
+    body += '<p class="note">Presets retain submitted page filters, not temporary table searches or unsaved client-side selections. Scope and profile-specific presets are bound to their exact snapshot; generic filters can be reused on another capture. Select the original snapshot to reopen a bound preset. No Central changes are performed.</p>'
     rows = []
     for record in read_presets(workspace.directory):
         applicable = record.get("binding") is None or (record.get("snapshot") == name and record["binding"] == binding)
-        open_link = f'<a href="{url(root, record["route"], snapshot=name, **record["params"])}">Open filter</a>' if applicable else badge("Different or changed snapshot")
+        if applicable:
+            open_link = f'<a href="{url(root, record["route"], snapshot=name, **record["params"])}">Open filter</a>'
+        else:
+            open_link = badge("Different or changed snapshot")
+            if record.get("snapshot") and record["snapshot"] != name:
+                from .config_app import audit_files
+                if any(p.name == record["snapshot"] for p in audit_files(workspace.directory)):
+                    open_link += f'<p><a href="{url(root, "filters", snapshot=record["snapshot"])}">Select original snapshot</a></p>'
         remove = (f'<form method="post" action="{e(root + "delete-filter")}"><input type="hidden" name="csrf" value="{e(workspace.csrf)}">'
                   f'<input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="id" value="{e(record["id"])}">'
                   '<button type="submit" class="quiet">Delete</button></form>')
