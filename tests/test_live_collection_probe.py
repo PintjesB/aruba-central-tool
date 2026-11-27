@@ -30,6 +30,31 @@ class LiveProbeTests(unittest.TestCase):
         self.assertFalse(report["incremental_reuse_qualified"])
         self.assertNotIn("PRIVATE", json.dumps(report))
 
+    def test_audit_impact_qualification_targets_configuration_and_redacts_scope_values(self):
+        from aruba_central.live_collection_probe import audit_impact_qualification, AUDIT_LOG_PATH
+        key = "12345678-1234-1234-1234-123456789abc"
+        other = "22345678-1234-1234-1234-123456789abc"
+        records = {
+            key: json.dumps({"auditId": key, "category": "Configuration", "action": "PRIVATE-ACTION",
+                             "logDetails": {"impactRadius": [{"context": "PRIVATE-CONTEXT",
+                                                              "values": ["PRIVATE-SCOPE"]}]}}),
+            other: json.dumps({"auditId": other, "category": "PRIVATE-CATEGORY", "action": "PRIVATE-ACTION"})}
+        scopes = {"ACCESS_SWITCH": {"scopes": [{"id": "PRIVATE-SCOPE", "kind": "device"}]}}
+        client = Mock()
+        client.get.return_value = {"auditId": key, "scope_info": {"scope_ids": ["PRIVATE-SCOPE"]},
+                                   "log_details": {"changed_fields": [{"field_label_key": "PRIVATE-FIELD"}],
+                                                   "changed_json": {"private": "PRIVATE-BODY"}}}
+        result = audit_impact_qualification(client, records, scopes)
+        client.get.assert_called_once_with(AUDIT_LOG_PATH + "/" + key)
+        self.assertEqual(result["list_categories"]["other"]["events"], 1)
+        self.assertEqual(result["list_categories"]["configuration"]["impact_has_inventory_id_candidate"], 1)
+        self.assertEqual(result["detail_categories"]["configuration"]["all_scope_ids_match_inventory"], 1)
+        self.assertEqual(result["detail_categories"]["configuration"]["changed_fields_present"], 1)
+        self.assertEqual(result["detail_categories"]["configuration"]["changed_json_present"], 1)
+        self.assertFalse(result["incremental_reuse_qualified"])
+        self.assertNotIn("PRIVATE", json.dumps(result))
+        self.assertNotIn(key, json.dumps(result))
+
     def test_change_windows_accept_limit_echo_only_with_reconciliation(self):
         from datetime import datetime, timezone
         from aruba_central.live_collection_probe import change_window_probe
