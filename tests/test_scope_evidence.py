@@ -44,7 +44,7 @@ class ScopeEvidenceTests(unittest.TestCase):
         self.assertTrue(result["records"][1]["body_matches_inventory"])
         self.assertFalse(result["safe_to_apply"])
 
-    def test_keyed_assignment_requests_explicit_context_and_checks_metadata(self):
+    def test_keyed_assignment_uses_path_only_contract_and_checks_metadata(self):
         row = {"scope-id": "12", "device-function": "ACCESS_SWITCH",
                "profile-type": "dns", "profile-instance": "example"}
         class Client:
@@ -61,8 +61,7 @@ class ScopeEvidenceTests(unittest.TestCase):
             client = Client(raw)
             result = keyed_assignment_capture(client, {"rows": [row]})
             self.assertEqual(result["outcomes"], {expected: 1})
-            self.assertEqual(client.calls[0][1], {"view-type": "LOCAL", "scope-id": "12",
-                    "device-function": "ACCESS_SWITCH", "effective": "false", "detailed": "true"})
+            self.assertEqual(client.calls[0][1], {})
             self.assertFalse(result["complete"])
 
     def test_authentication_and_rate_limit_failures_propagate(self):
@@ -166,3 +165,19 @@ class ScopeEvidenceTests(unittest.TestCase):
         self.assertEqual(result["outcomes"], {"invalid_selector": len(cases)})
         self.assertEqual(result["selector_rejections"], {reason: 1 for _, reason in cases})
         self.assertNotIn("private/name", str(result))
+
+
+    def test_observed_noninventory_persona_is_read_exactly_without_normalization(self):
+        row = {"scope-id": 12, "device-function": "OBSERVED_FUNCTION",
+               "profile-type": "dns", "profile-instance": "example"}
+        class Client:
+            def __init__(self):
+                self.calls = []
+            def get(self, path, **params):
+                self.calls.append((path, params))
+                return {"scope-id": 12, "persona": "OBSERVED_FUNCTION", "resource": "dns/example"}
+        client = Client()
+        result = keyed_assignment_capture(client, {"rows": [row, {**row, "device-function": "../unsafe"}]})
+        self.assertEqual(client.calls, [("/network-config/v1alpha1/config-assignments/12/OBSERVED_FUNCTION/dns/example", {})])
+        self.assertEqual(result["outcomes"], {"identity_observed": 1, "invalid_selector": 1})
+        self.assertFalse(result["safe_to_apply"])
