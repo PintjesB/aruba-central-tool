@@ -2,6 +2,7 @@
 from collections import Counter
 from .workspace_ui import e, page, intro, metrics, table, tr, badge, inspect, property_table, persona_label, pretty
 from .workspace_views import url
+from .nac_binding_review import context_label
 
 
 def tag_evidence(registrations, bindings, identity):
@@ -19,8 +20,8 @@ def tag_evidence(registrations, bindings, identity):
     conditions = [row for row in bindings["tag_condition_observations"] if identity in row["tag_candidates"]]
     # Exact policy ID and exact rule position only. A tag value in a
     # policy precondition does not prove any child rule is selected.
-    contexts = {(row["policy_id"], row["rule"]) for row in conditions}
-    vlans = [row for row in bindings["vlan_targets"] if (row["policy_id"], row["rule"]) in contexts]
+    contexts = {(row["policy_id"], row["rule_index"]) for row in conditions}
+    vlans = [row for row in bindings["vlan_targets"] if (row["policy_id"], row["rule_index"]) in contexts]
     return {"tag": registrations["tag_definitions"][identity], "registrations": rows,
             "conditions": conditions, "vlan_targets": vlans, "safe_to_apply": False, "complete": False}
 
@@ -48,7 +49,7 @@ def tag_review_view(root, snapshot, picker, nav, registrations, bindings, identi
     body += '<section><h2>Registered identities</h2><p>Exact ID, name-only and ambiguous registration observations remain separate.</p>' + table(("Registration", "MAC address", "Registration state", "Tag evidence", "Action"), rows, search=True) + '</section>'
     body += '<section><h2>Policy condition observations</h2><p>Matching captured values do not establish attribute semantics, policy selection, or actual client authorization.</p>' + table(
         ("Policy", "Rule", "Attribute", "Operator", "Value", "Tag identity candidates"),
-        [tr(e(r["policy"]), e(r["rule"] if r["rule"] is not None else "Policy precondition"), e(r["attribute"]),
+        [tr(e(r["policy"]), e(context_label(r)), e(r["attribute"]),
             e(r["operator"]), e(r["value"]), str(len(r["tag_candidates"]))) for r in report["conditions"]], search=True) + '</section>'
     vlan_rows = []
     for target in report["vlan_targets"]:
@@ -58,7 +59,7 @@ def tag_review_view(root, snapshot, picker, nav, registrations, bindings, identi
             tr(e(r["device"]), e(persona_label(r["persona"])), badge(pretty(r["status"])),
                f'<a href="{url(root, "report", snapshot=snapshot, persona=r["persona"], scope=r["scope"], module="layer2-vlan", view="all")}">VLAN configuration</a>')
             for r in visibility], search=True)
-        vlan_rows.append(tr(e(target["policy"]), e(target["rule"] if target["rule"] is not None else "Policy default"),
+        vlan_rows.append(tr(e(target["policy"]), e(context_label(target, "Policy default")),
                             e(target["value"]), e(pretty(target["status"])),
                             str(counts["observed"]), str(counts["count_confirmed_absence"]), str(counts["unverified"]),
                             inspect("VLAN evidence", details, "Review switches")))

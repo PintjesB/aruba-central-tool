@@ -67,20 +67,20 @@ def nac_bindings(bundle, registrations, authorization):
     conditions, vlan_targets = [], []
     for policy in authorization["policies"]:
         for row in tag_condition_observations(policy["conditions"], tags):
-            conditions.append({"policy_id": policy["id"], "policy": policy["name"], "rule": None, **row})
-        groups = [(None, policy["default_attributes"], not policy["default_gaps"], policy["enabled"])]
-        for rule in policy["rules"]:
+            conditions.append({"policy_id": policy["id"], "policy": policy["name"], "rule": None, "rule_index": None, **row})
+        groups = [(None, None, policy["default_attributes"], not policy["default_gaps"], policy["enabled"])]
+        for index, rule in enumerate(policy["rules"]):
             for row in tag_condition_observations(rule["conditions"], tags):
-                conditions.append({"policy_id": policy["id"], "policy": policy["name"], "rule": rule["position"], **row})
-            groups.append((rule["position"], rule["combined_candidate_attributes"] if not rule["gaps"] else rule["attributes"],
+                conditions.append({"policy_id": policy["id"], "policy": policy["name"], "rule": rule["position"], "rule_index": index, **row})
+            groups.append((rule["position"], index, rule["combined_candidate_attributes"] if not rule["gaps"] else rule["attributes"],
                            not rule["gaps"], rule["enabled"]))
-        for position, attrs, qualified, enabled in groups:
+        for position, index, attrs, qualified, enabled in groups:
             for attr in attrs:
                 if attr["kind"] != "defined-attr" or attr["name"] != "ATTR_VLAN_ID":
                     continue
                 vid = vlan_identity(attr["value"])
-                vlan_targets.append({"policy_id": policy["id"], "policy": policy["name"], "rule": position,
-                    "policy_enabled": policy["enabled"], "rule_enabled": enabled if position is not None else None,
+                vlan_targets.append({"policy_id": policy["id"], "policy": policy["name"], "rule": position, "rule_index": index,
+                    "policy_enabled": policy["enabled"], "rule_enabled": enabled if index is not None else None,
                     "value": attr["value"], "vlan_id": vid, "source": attr["source"],
                     "status": "conditional_vlan_candidate" if qualified and vid is not None else "unqualified_vlan_attribute"})
     identities = {v["vlan_id"] for v in vlan_targets if v["vlan_id"] is not None}
@@ -96,3 +96,12 @@ def nac_bindings(bundle, registrations, authorization):
                    for identity, tag in tags.items()]
     return {"tag_summary": tag_summary, "tag_condition_observations": conditions, "vlan_targets": vlan_targets,
             "vlan_visibility": coverage, "complete": False, "safe_to_apply": False}
+
+
+def context_label(row, policy_label="Policy precondition"):
+    """Use captured rule occurrence, not an ambiguous position, as context."""
+    index = row["rule_index"]
+    if index is None:
+        return policy_label
+    position = row.get("rule")
+    return f"Rule {position} (captured #{index+1})" if position is not None else f"Rule position unknown (captured #{index+1})"
