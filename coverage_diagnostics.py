@@ -302,6 +302,37 @@ def diagnostics(bundle):
             outcomes[safe_status(state)] += count(number)
         specialized[name] = {"collected": bool(entry), "outcomes": dict(outcomes),
                              "response_shapes": specialized_response_shapes(entry, name)}
+        if name == "assignments":
+            from scope_evidence import assignment_selector_rejection, assignment_identity, legacy_assignment_status
+            rows = ((bundle.get("library") or {}).get("assignments") or {}).get("rows", [])
+            rejected = Counter()
+            for row in rows:
+                reason = assignment_selector_rejection(row)
+                if reason:
+                    rejected[reason] += 1
+            specialized[name]["selector_rejection_reasons"] = dict(rejected)
+            # Offline qualification of retained legacy responses. Does not
+            # modify the capture or establish that new requests will succeed.
+            legacy = Counter()
+            for record in entry.get("records", []):
+                identity = assignment_identity(record.get("selector"))
+                raw = record.get("raw")
+                if identity and isinstance(raw, dict) and "persona" in raw and "resource" in raw:
+                    legacy[legacy_assignment_status(raw, identity)] += 1
+            specialized[name]["retained_legacy_identity_matches"] = dict(legacy)
+        if name == "hierarchy":
+            by_kind = Counter()
+            for record in entry.get("records", []):
+                kind = record.get("kind")
+                kind = kind if kind in ("global", "collection", "site", "group", "device") else "other"
+                version = record.get("endpoint_version", "v1")
+                version = version if version in ("v1", "v1alpha1") else "other"
+                error = record.get("http_error")
+                error = error if type(error) is int and 400 <= error <= 599 else None
+                by_kind[(kind, version, safe_status(record.get("status")), error)] += 1
+            specialized[name]["scope_outcomes"] = [
+                {"kind": kind, "version": version, "status": status, "http_error": error, "reads": n}
+                for (kind, version, status, error), n in sorted(by_kind.items(), key=lambda item: str(item[0]))]
         if name == "portal-assets":
             specialized[name].update(status=safe_status(entry.get("status", "not_collected")),
                                      images=len(entry.get("images", [])), count_confirmed=entry.get("count_confirmed") is True)
