@@ -79,6 +79,9 @@ def verify_workspace_identity(directory, incoming):
     try:
         previous = read_audit(directory, files[0].name)
         snapshot_identity_checks(previous, incoming)
+        # Return the label from the exact capture that established continuity.
+        # Callers that only verify identity need not use the return value.
+        return previous.get("tenant_name")
     except (ValueError, KeyError, TypeError, OSError, AttributeError) as exc:
         raise WorkspaceIdentityError("Workspace identity not established; use a separate customer directory") from exc
 
@@ -477,14 +480,10 @@ class Workspace:
                 if getattr(refresh, "supports_module_preview", False):
                     kwargs["module_completed"] = self.publish_module_preview
                 bundle = refresh(**kwargs)
-                verify_workspace_identity(self.directory, bundle)
-                # Inherit the last label only after the existing continuity
-                # check passed. The label itself never authorizes a refresh.
-                saved_label = label
-                if tenant_name is None:
-                    files = audit_files(self.directory)
-                    if files:
-                        saved_label = tenant_label(read_audit(self.directory, files[0].name).get("tenant_name"))
+                verified_label = verify_workspace_identity(self.directory, bundle)
+                # Use the same verified capture, not a second filesystem
+                # lookup that might resolve a different snapshot.
+                saved_label = tenant_label(verified_label) if tenant_name is None else label
                 if saved_label:
                     bundle["tenant_name"] = saved_label
                     bundle["tenant_name_source"] = "operator_label"
