@@ -53,3 +53,25 @@ class ConfigurationSearchTests(unittest.TestCase):
                 workspace.report({**query, "evidence": "0" * 64})
             with self.assertRaises(ValueError):
                 workspace.report({**query, "scope": "nonexistent"})
+
+    def test_search_batches_are_complete_and_disjoint(self):
+        bundle = fixture()
+        all_rows = search_configuration(bundle, "10", module="layer2-vlan", limit=1000)
+        total = all_rows["total"]
+        self.assertGreater(total, 2)
+        expected = all_rows["matches"]
+        observed = []
+        for offset in range(0, total, 2):
+            batch = search_configuration(bundle, "10", module="layer2-vlan", limit=2, offset=offset)
+            self.assertEqual(batch["total"], total)
+            self.assertEqual(batch["truncated"], offset + len(batch["matches"]) < total)
+            observed.extend(batch["matches"])
+        self.assertEqual(observed, expected)
+        with self.assertRaises(ValueError):
+            search_configuration(bundle, "10", offset=-1)
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(bundle))
+            html = Workspace(directory).report({"snapshot": name, "mode": "search", "q": "10", "offset": "300"})
+            self.assertIn("Previous result batch", html)
+            self.assertIn("loaded batch only", html)
