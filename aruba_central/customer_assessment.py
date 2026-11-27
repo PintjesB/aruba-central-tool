@@ -42,16 +42,22 @@ def report_view(workspace, query):
 
 PRINT_CSS = """
 @media print {
- :root { color-scheme: light !important; --bg: white !important; --surface: white !important; --text: #172334 !important; --muted: #455364 !important; --line: #c9cfd8 !important; }
+ :root, :root[data-theme=dark], :root:not([data-theme=light]) { color-scheme: light !important; --bg: white !important; --surface: white !important; --text: #172334 !important; --muted: #455364 !important; --line: #c9cfd8 !important; }
  body.app-shell { display: block !important; background: white !important; color: #172334 !important; }
  .sidebar,.topbar,.skip-link,.report-actions,dialog { display:none !important; }
+ .mobile-nav .app-body::before { display:none !important; }
+ .app-body { width:100% !important; }
+ .overview-metrics { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
  #main-content { padding: 0 !important; max-width: none !important; }
  .metric-card { break-inside: avoid; box-shadow:none; }
  section { box-shadow:none !important; break-inside:auto; }
  h1,h2 { break-after:avoid; }
  tr { break-inside:avoid; }
  .table-scroll { overflow:visible !important; }
- table { width:100%; }
+ table { width:100%; table-layout:fixed; }
+ th,td { overflow-wrap:anywhere; }
+ section { padding:12px !important; }
+ .metric-card { padding:12px !important; }
  @page { margin: 14mm; }
 }
 """
