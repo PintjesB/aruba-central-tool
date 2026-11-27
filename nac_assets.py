@@ -32,7 +32,9 @@ def image_comparison_body(row):
             "imageId": identity}
 
 
-def capture_portal_assets(client, workers=1, progress=None):
+def capture_portal_assets(client, workers=1, progress=None, *, detail_limit=None):
+    if detail_limit is not None and (type(detail_limit) is not int or detail_limit < 0):
+        raise ValueError("Invalid detail sample limit")
     result = {"list_read": evidence_read(client, ALPHA + "/cnac-image"),
               "images": [], "details": {}, "count_confirmed": False,
               "complete": False, "safe_to_apply": False}
@@ -80,7 +82,9 @@ def capture_portal_assets(client, workers=1, progress=None):
             else:
                 item["status"] = "identity_unresolved"
         return identity, item
-    result["details"] = dict(ordered_parallel(sorted(observed), detail, workers,
+    selected = sorted(observed) if detail_limit is None else sorted(observed)[:detail_limit]
+    result["detail_reads_planned"] = len(selected)
+    result["details"] = dict(ordered_parallel(selected, detail, workers,
         completed=lambda done, total: audit_progress(progress, "NAC portal assets", done, total,
                                                     "Reading observed image metadata")))
     result["outcomes"] = dict(Counter(item["status"] for item in result["details"].values()))
