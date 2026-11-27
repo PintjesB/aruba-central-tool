@@ -2309,8 +2309,9 @@ def keyed_profile_contracts(*, include_raw=False):
         if not match or request["method"] != "GET" or not required <= set(request["query"]):
             continue
         module, key = match.groups()
-        # Existing VLAN and special NAC adapters have separate query semantics.
-        if module in ("layer2-vlan", "auth-profiles"):
+        # Special NAC adapters use tenant-default query semantics. VLANs
+        # use a canonical numeric selector and are enabled in Deep captures.
+        if module == "auth-profiles" or (module == "layer2-vlan" and not include_raw):
             continue
         if module in CONFIG_MODULES and key == CONFIG_MODULES[module][0]:
             candidates[module].add(key)
@@ -2332,6 +2333,8 @@ def keyed_profile_read(client, module, identity_key, identity, params, collectio
             or ("/" in identity and not valid_port)
             or any(ord(c) < 32 or ord(c) == 127 for c in identity)):
         return {"status": "invalid_selector", "safe_to_apply": False}
+    if module == "layer2-vlan" and (identity_key != "vlan" or parse_reference_ids(identity) != {identity}):
+        return {"status": "invalid_selector", "safe_to_apply": False}
     try:
         raw = client.get(ALPHA + "/" + module + "/" + quote(identity, safe=""), **params)
     except APIError as exc:
@@ -2352,12 +2355,28 @@ def keyed_profile_read(client, module, identity_key, identity, params, collectio
         # An individual GET may return a single object or a single-object
         # envelope. Accept only exact identities, not arbitrary nested matches.
         def matches(value):
-            return (isinstance(value, dict) and type(value.get(identity_key)) in (str, int)
-                    and str(value[identity_key]) == identity)
-        if "metadata" not in raw and matches(raw):
-            profile = raw
-        elif len(raw) == 1 and matches(next(iter(raw.values()))):
-            profile = next(iter(raw.values()))
+            if not isinstance(value, dict) or type(value.get(identity_key)) not in (str, int):
+                return False
+            if identity_key == "vlan":
+                return parse_reference_ids(value[identity_key]) == {identity}
+            return str(value[identity_key]) == identity
+        metadata = raw.get("metadata", {})
+        if not isinstance(metadata, dict):
+            return result
+        counts = metadata.get("count_objects_in_module", {})
+        if not isinstance(counts, dict):
+            return result
+        for count in (metadata.get("count"), metadata.get("total"), counts.get(params.get("object-type", "ANY"))):
+            if count is not None and (type(count) is not int or count != 1):
+                return {**result, "status": "count_mismatch"}
+        offset = metadata.get("offset")
+        if offset is not None and (type(offset) is not int or offset not in (0, 1)):
+            return {**result, "status": "count_mismatch"}
+        fields = {key: value for key, value in raw.items() if key != "metadata"}
+        if matches(fields):
+            profile = fields
+        elif len(fields) == 1 and matches(next(iter(fields.values()))):
+            profile = next(iter(fields.values()))
         else:
             return result
     body = profile_body(profile)
@@ -2374,6 +2393,9 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
     profiles. Never query guessed identifiers or special multi-key resources.
     """
     contracts = keyed_profile_contracts()
+    raw_contracts = keyed_profile_contracts(include_raw=True)
+    if raw_contracts.get("layer2-vlan") == "vlan":
+        contracts["layer2-vlan"] = "vlan"
     from nac_authorization import NAC_TENANT_MODULES
     tenant_contracts = {**NAC_TENANT_MODULES, "auth-profiles": "auth-profile-id"}
     tasks = []
@@ -2405,7 +2427,6 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
 
     # Raw surveys may contain profiles absent from the persona-filtered adapter.
     # Use only exact documented single keys, positive records and known contexts.
-    raw_contracts = keyed_profile_contracts(include_raw=True)
     existing = {task[:5] for task in tasks}
     supplemental_count = 0
     def add(persona, sid, module, identity, kind, profile):
