@@ -1503,6 +1503,24 @@ def documented_offset_collections():
                      and {"limit", "offset"} <= set(request["query"]))
 
 
+def explicit_initial_page(module, params, metadata, initial):
+    """Trust an existing first page only with explicit documented offset evidence.
+
+    Ambiguous implicit limits and next-offset conventions retain the existing
+    replay from offset zero. Never infer completeness from a short page.
+    """
+    if (module not in documented_offset_collections() or {"limit", "offset"} & params.keys()
+            or params.get("view-type") == "LIBRARY" or not initial
+            or type(metadata.get("offset")) is not int or metadata["offset"] != 0
+            or type(metadata.get("count")) is not int or metadata["count"] != len(initial)
+            or type(metadata.get("limit")) is not int or not 1 <= metadata["limit"] <= 1000
+            or len(initial) > metadata["limit"]
+            or not all(isinstance(row, dict) for row in initial)
+            or len({canonical(row) for row in initial}) != len(initial)):
+        return None
+    return metadata["limit"]
+
+
 def uncounted_profile_pages(client, module, params, raw, identity=None):
     """Follow explicit offsets when no total is advertised, retaining all raw evidence.
 
@@ -1546,11 +1564,20 @@ def uncounted_profile_pages(client, module, params, raw, identity=None):
     if module == "device-persona-mapping":
         return {"pagination_status": "offset_behavior_unverified", "raw_pages": []}
     pages, combined, seen, seen_ids = [], [], set(), set()
+    limit = explicit_initial_page(module, params, meta, initial)
+    if limit is not None:
+        parsed = module_view({envelope: initial}, identity, object_type) if identity is not None else None
+        if parsed is None or parsed["status"] == "list_parsed":
+            combined.extend(initial)
+            seen.update(canonical(item) for item in initial)
+            if parsed is not None:
+                seen_ids.update(parsed["profiles"])
+    limit = limit if combined else 100
     def incomplete(reason, **extra):
         return {"pagination_status": reason, "raw_pages": pages, **extra}
     for _ in range(10000):
         try:
-            page = client.get(ALPHA + "/" + module, **params, limit=100, offset=len(combined))
+            page = client.get(ALPHA + "/" + module, **params, limit=limit, offset=len(combined))
         except APIError as exc:
             if exc.status in (401, 429):
                 raise
@@ -1561,7 +1588,7 @@ def uncounted_profile_pages(client, module, params, raw, identity=None):
         if not isinstance(page, dict) or set(page) - {"metadata", envelope} or envelope not in page:
             return incomplete("schema_changed")
         batch = page[envelope]
-        if (not isinstance(batch, list) or len(batch) > 100 or not all(isinstance(row, dict) for row in batch)
+        if (not isinstance(batch, list) or len(batch) > limit or not all(isinstance(row, dict) for row in batch)
                 or not valid_metadata(page.get("metadata", {}), len(batch), len(combined))):
             return incomplete("count_or_offset_changed")
         if not batch:
@@ -1619,12 +1646,19 @@ def read_module_view(client, module, identity, params, *, paginate_uncounted=Fal
             or counts.get(object_type, total) != total):
         return {**parsed, "raw": raw}
     pages, items, seen = [], [], set()
+    limit = explicit_initial_page(module, params, meta, initial)
+    if limit is not None:
+        first = module_view({envelope: initial}, identity, object_type)
+        if first["status"] == "list_parsed":
+            items.extend(initial)
+            seen.update(first["profiles"])
+    limit = limit if items else 100
     def incomplete(reason):
         return {**parsed, "raw": raw, "pagination_status": reason, "raw_pages": pages}
-    # Start at zero so offset semantics do not depend on the implicit limit.
+    # Replay from zero unless explicit first-page metadata establishes the offset.
     for _ in range(10000):
         try:
-            page = client.get(ALPHA + "/" + module, **params, limit=100, offset=len(items))
+            page = client.get(ALPHA + "/" + module, **params, limit=limit, offset=len(items))
         except APIError as exc:
             if exc.status in (401, 429):
                 raise
@@ -2038,11 +2072,16 @@ def read_raw_profile_collection(client, module, params, *, paginate_uncounted=Fa
     if total < len(initial):
         return {**result, "status": "count_mismatch"}
     pages, combined, signatures = [], [], set()
+    limit = explicit_initial_page(module, params, meta, initial)
+    if limit is not None:
+        combined.extend(initial)
+        signatures.add(canonical(initial))
+    limit = limit if combined else 100
     def incomplete(reason):
         return {**result, "status": "partial_response", "pagination_status": reason, "raw_pages": pages}
     for _ in range(10000):
         try:
-            page = client.get(ALPHA + "/" + module, **params, limit=100, offset=len(combined))
+            page = client.get(ALPHA + "/" + module, **params, limit=limit, offset=len(combined))
         except APIError as exc:
             if exc.status in (401, 429):
                 raise
