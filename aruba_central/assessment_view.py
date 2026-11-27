@@ -97,14 +97,20 @@ def assessment_view(workspace, query):
                 + f'<label>Review note<input name="note" maxlength="500" value="{e(disposition["note"])}"></label>'
                 + '<button type="submit">Save review status</button></form>'
                 '<p class="note">Local review record only. It is not approval or change authorization. A changed snapshot requires review again.</p>')
-        return tr(f'<input type="checkbox" data-bulk-key="{e(key)}" aria-label="Select {e(row["profile"])}">', e(categories[row["category"]]), f'<strong>{e(row["profile"])}</strong><small>{e(module_label(row["module"]))}</small>',
-           e(persona_label(row["persona"])), str(row["instances"]), e(row["unit"]), reduction_cell, str(row["known"]),
-           str(row["unknown"]) if row["unknown"] is not None else "Not assessed", e(row["next_step"]),
-           badge(STATES[disposition["state"]], "warn" if disposition["state"] == "investigate" else "info" if disposition["state"] == "deferred" else "neutral") + (f'<small class="review-note-preview">{e(disposition["note"])}</small>' if disposition["note"] else ""),
-           f'<a href="{url(root, row["route"], snapshot=name, **row["params"])}">Review finding</a> · ' + inspect("Review disposition", form, "Set status"))
+        finding = f'<strong>{e(row["profile"])}</strong><small>{e(categories[row["category"]])} · {e(module_label(row["module"]))}</small><small>{e(persona_label(row["persona"]))}</small>'
+        workload = f'<strong>{row["instances"]}</strong> {e(row["unit"])}<small>Conditional reduction: {reduction_cell}</small>'
+        impact = f'<strong>{row["known"]}</strong> observed<small>' + (f'{row["unknown"]} unknown' if row["unknown"] is not None else "Unknown impact not assessed") + '</small>'
+        next_step = (badge("Preview blocked", "warn") + '<small>Resolve evidence before preview</small>'
+                     if row["next_step"] == "Evidence blocks preview" else e(row["next_step"]))
+        review = badge(STATES[disposition["state"]], "warn" if disposition["state"] == "investigate" else "info" if disposition["state"] == "deferred" else "neutral")
+        if disposition["note"]:
+            review += f'<small class="review-note-preview">{e(disposition["note"])}</small>'
+        actions = f'<a href="{url(root, row["route"], snapshot=name, **row["params"])}">Review finding</a><div>' + inspect("Review disposition", form, "Set status") + '</div>'
+        return tr(f'<input type="checkbox" data-bulk-key="{e(key)}" aria-label="Select {e(row["profile"])}">',
+                  finding, workload, impact, next_step, review, actions)
     body += '<section id="optimization-worklist"><h2>Prioritized optimization worklist</h2>'
-    body += '<p>Conditional reduction counts are illustrative per proposal, exclude assignment objects, and must not be summed across overlapping proposals. Hover over a count for its assumptions. No reduction is guaranteed.</p>'
-    body += '<p>Review larger groups first within each category. Counts describe observed review workload, not proven safe removals or a risk score. Recipient counts mean source recipients for local copies, observed shared deployments for Library names, and captured devices for ports. Unknown impact is not zero.</p>'
+    body += '<p>Review larger groups first. Counts are observed review workload, not safe removals. Unknown impact is not zero.</p>'
+    body += '<details><summary>How to interpret the counts</summary><p>Conditional reduction counts exclude assignments and must not be summed across overlapping proposals. Hover over a reduction for its assumptions. Recipient counts represent source recipients for local copies, observed shared deployments for Library names, and captured devices for ports. No reduction is guaranteed.</p></details>'
     body += (f'<form class="filter-bar" method="get" action="{e(root + "assessment")}"><input type="hidden" name="snapshot" value="{e(name)}">'
              + select("category", [("", "All categories")] + list(categories.items()), category, "Category")
              + select("state", [("", "All review statuses")] + list(STATES.items()), state_filter, "Review status")
@@ -112,8 +118,8 @@ def assessment_view(workspace, query):
     review_rows = [review_row(row, key, disposition) for row, key, disposition in records if not category or row["category"] == category]
     visible_count = sum(row is not None for row in review_rows)
     body += f'<p class="filter-hint"><strong>{visible_count}</strong> findings in this worklist · {overview["total"]} total review groups.</p>'
-    body += '<div id="bulk-review-table">' + table(("", "Opportunity", "Profile / configuration", "Function", "Count", "Unit", "Conditional reduction", "Observed device/function pairs", "Unknown device/function pairs", "Next step", "Review status", ""),
-                  [row for row in review_rows if row is not None], search=True) + '</div>'
+    body += '<div id="bulk-review-table">' + table(("", "Finding", "Configuration count", "Device/function impact", "Next step", "Review status", "Actions"),
+                  [row for row in review_rows if row is not None], search=True, style="compact-review-table") + '</div>'
     body += ('<div class="table-toolbar"><button type="button" id="bulk-select-page">Select visible page</button>'
              '<button type="button" id="bulk-clear">Clear selection</button><span id="bulk-selection" aria-live="polite">0 selected</span></div>'
              f'<form id="bulk-review-form" method="post" action="{e(root + "bulk-review-disposition")}">'
