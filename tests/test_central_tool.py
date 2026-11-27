@@ -1678,6 +1678,43 @@ class Tests(unittest.TestCase):
         self.assertEqual(client._retry_delay("invalid", 2), 4)
         self.assertEqual(client._retry_delay("Thu, 01 Jan 1970 00:00:00 GMT", 0), 0)
 
+    def test_conditional_validator_probe_never_returns_headers_or_bodies(self):
+        from unittest.mock import patch
+        import json
+        client = Central(EU_REGIONS[0], token="PRIVATE-TOKEN")
+        path = "/network-config/v1alpha1/dns"
+        params = {"view-type": "LOCAL", "scope-id": "12345", "effective": "true"}
+        def response(request, label, *, response_headers=None):
+            if request.get_header("If-none-match"):
+                self.assertEqual(request.get_header("If-none-match"), '"PRIVATE-TAG"')
+                raise APIError(label, 304)
+            response_headers({"ETag": '"PRIVATE-TAG"'})
+            return {"private": "PRIVATE-BODY"}
+        with patch.object(client, "_request", side_effect=response) as read:
+            result = client.probe_config_validator(path, params)
+            self.assertEqual(result, {"status": "not_modified", "http_status": 304})
+            self.assertEqual(read.call_count, 2)
+            self.assertEqual(read.call_args_list[0].args[0].full_url,
+                             read.call_args_list[1].args[0].full_url)
+        def weak(request, label, *, response_headers=None):
+            response_headers({"ETag": 'W/"PRIVATE-TAG"'})
+            return {"private": "PRIVATE-BODY"}
+        with patch.object(client, "_request", side_effect=weak) as read:
+            self.assertEqual(client.probe_config_validator(path, params),
+                             {"status": "strong_validator_unavailable"})
+            read.assert_called_once()
+        def ignored(request, label, *, response_headers=None):
+            response_headers({"ETag": '"PRIVATE-TAG"'})
+            return {"private": "PRIVATE-BODY"}
+        with patch.object(client, "_request", side_effect=ignored):
+            result = client.probe_config_validator(path, params)
+            self.assertEqual(result["status"], "full_response")
+            self.assertTrue(result["body_identical"])
+            self.assertTrue(result["strong_validator_unchanged"])
+        self.assertNotIn("PRIVATE", json.dumps(result))
+        with self.assertRaises(ValueError):
+            client.probe_config_validator("/unqualified", params)
+
     def test_transient_get_errors_retry_but_tls_and_post_do_not(self):
         from io import BytesIO
         from urllib.error import URLError
