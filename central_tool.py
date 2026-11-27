@@ -3293,6 +3293,9 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     print(f"NAC MAC registration coverage: {nac_registrations['status']}; observed={len(nac_registrations['rows'])}", flush=True)
     health = capture_configuration_health(client, records, workers, progress)
     keyed_details = capture_keyed_profile_details(client, results, library, workers, progress, checkpoint=checkpoint, nac_configuration=nac_configuration) if deep_catalog else None
+    from scope_evidence import hierarchy_capture, keyed_assignment_capture
+    hierarchy_evidence = hierarchy_capture(client, scopes_by_persona, workers, progress) if deep_catalog else None
+    assignment_details = keyed_assignment_capture(client, assignments, workers, progress) if deep_catalog else None
     details = capture_vlan_instance_details(client, results, workers, progress)
     operational = capture_configuration_operational_vlans(client, results, workers, progress)
     cli = capture_switch_vlan_cli(client, results, details, workers, progress)
@@ -3305,6 +3308,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             "operational_vlans": operational, "vlan_instance_details": details, "switch_vlan_cli": cli,
             "configuration_health": health, "nac_registrations": nac_registrations, "nac_configuration": nac_configuration,
             "keyed_profile_details": keyed_details,
+            "scope_hierarchy_evidence": hierarchy_evidence, "keyed_assignment_details": assignment_details,
             "api_read_coverage": client.report(),
             "collection_checkpoint": checkpoint.evidence() if checkpoint else {"enabled": False, "mixed_capture_times": False},
             "catalog_exhaustive": False, "safe_to_apply": False}

@@ -1147,6 +1147,26 @@ def coverage_view(workspace, query):
         tr("Additional assignment identities", "Recovered by scoped queries", str(assignments.get("additional_assignments", "Unavailable"))),
         tr("Unqualified device functions", e(", ".join(bundle.get("unqualified_personas", [])) or "None recorded"), str(len(bundle.get("unqualified_personas", []))))])
     body += '<p class="note">Assignment and profile catalog completeness are not verified.</p></section>'
+    hierarchy = bundle.get("scope_hierarchy_evidence") or {}
+    individual = bundle.get("keyed_assignment_details") or {}
+    if hierarchy or individual:
+        body += '<section><h2>Direct hierarchy and assignment evidence</h2>'
+        body += '<p class="note">Independent reads of discovered scopes and observed assignment identities. They do not establish complete hierarchy or assignment coverage.</p>'
+        if hierarchy:
+            body += '<h3>Scope hierarchy</h3>' + table(("Scope", "Type", "Status", ""), [
+                tr(e(r["scope"]), e(r["kind"]), status(r["status"]),
+                   inspect("Scope hierarchy", raw(r, "Captured hierarchy response"), "Inspect"))
+                for r in hierarchy.get("records", [])], search=True)
+        if individual:
+            body += '<h3>Individual assignments</h3><p>' + e(", ".join(f"{pretty(k)}: {v}" for k, v in sorted(individual.get("outcomes", {}).items()))) + '</p>'
+            body += table(("Scope", "Device function", "Module", "Profile", "Status", "Body comparison", ""), [
+                tr(e(r["selector"]["scope-id"]), e(persona_label(r["selector"]["device-function"])),
+                   e(module_label(r["selector"]["profile-type"])), e(r["selector"]["profile-instance"]),
+                   status(r["status"]), "Identical" if r.get("body_matches_inventory") is True else
+                   "Different" if r.get("body_matches_inventory") is False else "Unavailable",
+                   inspect("Assignment", raw(r, "Captured assignment response"), "Inspect"))
+                for r in individual.get("records", [])], search=True)
+        body += '</section>'
     from library_visibility import visibility_summary
     visibility = visibility_summary(bundle)
     body += '<section><h2>Library definitions and scope visibility</h2><p>Library objects can be assigned or referenced by other profiles. Empty scope responses do not prove they are unused. Review observed assignments and references before any cleanup.</p>'
@@ -1191,7 +1211,7 @@ def coverage_view(workspace, query):
             ("Supported keyed modules", len(keyed.get("supported_modules", [])), "Documented single-key selectors"),
             ("Individual reads", sum(outcomes.values()), "Includes failed or invalid selectors"),
             ("Identity observed", outcomes.get("identity_observed", 0), "Source not qualified"),
-        ]) + '<p class="note">Open a profile in Library or Configuration to compare individual and collection responses. Only observed Library and saved local identities are queried; inherited-only and other resource types remain outstanding.</p>'
+        ]) + '<p class="note">Open a profile in Library or Configuration to compare individual and collection responses. Observed Library, saved local and inherited effective identities are queried where a documented single-key contract exists. Other resource types require separate adapters.</p>'
         body += '<p>' + e(", ".join(f"{pretty(k)}: {v}" for k, v in sorted(outcomes.items())) or "No observed profile identities") + '</p></section>'
     else:
         body += '<section><h2>Individual profile evidence</h2><p class="muted">Not collected. Select Deep catalog collection to retrieve additional individual profile settings.</p></section>'
