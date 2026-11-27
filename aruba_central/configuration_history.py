@@ -87,6 +87,17 @@ def configuration_drift(before, after, *, confirmed=False):
         a, b = before["results"].get(persona, {}), after["results"].get(persona, {})
         sa = {s["id"]: s for s in a.get("scopes", [])}
         sb = {s["id"]: s for s in b.get("scopes", [])}
+        modules = sorted(a.get("modules", {}).keys() | b.get("modules", {}).keys())
+        def scope_index(entry):
+            index = {}
+            for module, data in entry.get("modules", {}).items():
+                by_scope = {}
+                for row in data.get("scope_results", []):
+                    # Preserve the first observation selected by the former scan.
+                    by_scope.setdefault(row["scope"], row)
+                index[module] = by_scope
+            return index
+        indexed_a, indexed_b = scope_index(a), scope_index(b)
         for sid in sorted(sa.keys() | sb.keys()):
             x, y = sa.get(sid), sb.get(sid)
             name = (y or x).get("name") or sid
@@ -105,11 +116,9 @@ def configuration_drift(before, after, *, confirmed=False):
             if fields:
                 records.append({"persona": persona, "scope": sid, "scope_name": name, "module": "Scope inventory",
                                 "view": "inventory", "identity": "", "status": "changed", "fields": fields})
-            for module in sorted(a.get("modules", {}).keys() | b.get("modules", {}).keys()):
-                def at(entry):
-                    return next((v for v in entry.get("modules", {}).get(module, {}).get("scope_results", [])
-                                 if v["scope"] == sid), {})
-                va, vb = at(a), at(b)
+            for module in modules:
+                va = indexed_a.get(module, {}).get(sid, {})
+                vb = indexed_b.get(module, {}).get(sid, {})
                 if not va and not vb:
                     continue
                 for kind in ("local", "effective"):
