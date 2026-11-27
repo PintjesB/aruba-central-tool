@@ -12,10 +12,10 @@ from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from http.client import IncompleteRead, RemoteDisconnected
+from http.client import IncompleteRead, RemoteDisconnected, HTTPSConnection, HTTPException
 import socket
 from urllib.parse import quote, urlencode, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 CONFIG = "/network-config/v1"
 ALPHA = CONFIG + "alpha1"
@@ -35,6 +35,52 @@ class APIError(RuntimeError):
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+class PersistentCentralHTTPS(HTTPSHandler):
+    """One reusable direct TLS connection per thread-local urllib opener.
+
+    Proxy requests, OAuth and writes keep the standard urllib transport.
+    Never send a request to a different origin over a retained connection.
+    A failed connection is discarded; the existing GET retry policy decides
+    whether to retry. The response must be consumed before the next request.
+    """
+    def __init__(self):
+        super().__init__()
+        self.connection = None
+        self.origin = None
+
+    def close(self):
+        if self.connection is not None:
+            self.connection.close()
+        self.connection = self.origin = None
+
+    def https_open(self, req):
+        host = req.host
+        if (req.get_method() != "GET" or req.has_proxy() or getattr(req, "_tunnel_host", None)
+                or not re.fullmatch(r"[a-z0-9-]+\.api\.central\.arubanetworks\.com", host or "")
+                or not req.selector.startswith("/")):
+            return super().https_open(req)
+        if self.origin != host or self.connection is None:
+            self.close()
+            self.connection = HTTPSConnection(host, timeout=req.timeout, context=self._context)
+            self.origin = host
+        connection = self.connection
+        headers = dict(req.unredirected_hdrs)
+        headers.update({k: v for k, v in req.headers.items() if k not in headers})
+        try:
+            connection.request("GET", req.selector, headers=headers)
+            response = connection.getresponse()
+        except (OSError, HTTPException):
+            self.close()
+            raise
+        # Error responses may not be consumed by urllib's caller. Never reuse
+        # that socket. Keep urllib's ordinary HTTPError/redirect handling.
+        if not 200 <= response.status < 300:
+            self.close()
+        response.url = req.full_url
+        response.msg = response.reason
+        return response
 
 
 def canonical(value):
@@ -132,7 +178,8 @@ class Central:
 
     def _request(self, request, label):
         if not hasattr(self._http, "opener"):
-            self._http.opener = build_opener(NoRedirect())
+            self._http.persistent = PersistentCentralHTTPS()
+            self._http.opener = build_opener(NoRedirect(), self._http.persistent)
         # This optional endpoint returned HTTP 500 at every observed scope
         # in the first exhaustive audit. Keep every logical GET, but avoid
         # repeated backoff on a persistently failing endpoint. Success or
@@ -149,7 +196,13 @@ class Central:
                         self._get_metrics["http_get_retries"] += 1
             try:
                 with self._http.opener.open(request, timeout=30) as response:
-                    payload = json.load(response)
+                    try:
+                        payload = json.load(response)
+                    except BaseException:
+                        persistent = getattr(self._http, "persistent", None)
+                        if persistent is not None:
+                            persistent.close()
+                        raise
                     self._observe_config_validators(request, response)
                 if custom_get:
                     with self._rate_lock:

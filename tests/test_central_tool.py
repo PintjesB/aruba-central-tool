@@ -1606,6 +1606,38 @@ class Tests(unittest.TestCase):
                           "collection_last_modified": 1, "keyed_responses": 1,
                           "keyed_weak_etag": 1})
 
+    def test_direct_https_handler_reuses_connection_and_discards_errors(self):
+        from central_tool import PersistentCentralHTTPS
+        from urllib.request import Request
+        from unittest.mock import Mock, patch
+        from types import SimpleNamespace
+        handler = PersistentCentralHTTPS()
+        first = Request(EU_REGIONS[0] + "/example")
+        second = Request(EU_REGIONS[1] + "/example")
+        first.timeout = second.timeout = 30
+        with patch("central_tool.HTTPSConnection") as factory:
+            connection = factory.return_value
+            connection.getresponse.side_effect = [
+                SimpleNamespace(status=200, reason="OK"), SimpleNamespace(status=200, reason="OK"),
+                SimpleNamespace(status=503, reason="Unavailable"), SimpleNamespace(status=200, reason="OK")]
+            handler.https_open(first)
+            handler.https_open(first)
+            self.assertEqual(factory.call_count, 1)
+            handler.https_open(first)
+            self.assertIsNone(handler.connection)
+            handler.https_open(second)
+            self.assertEqual(factory.call_count, 2)
+            self.assertEqual(factory.call_args.args[0], second.host)
+            handler.close()
+            self.assertIsNone(handler.connection)
+        with patch("urllib.request.HTTPSHandler.https_open", return_value="standard") as fallback:
+            self.assertEqual(handler.https_open(Request(EU_REGIONS[0] + "/example", method="POST")), "standard")
+            self.assertEqual(handler.https_open(Request("https://sso.common.cloud.hpe.com/example")), "standard")
+            proxy = Request(EU_REGIONS[0] + "/example")
+            proxy.set_proxy("proxy.example:8080", "https")
+            self.assertEqual(handler.https_open(proxy), "standard")
+            self.assertEqual(fallback.call_count, 3)
+
     def test_transient_get_errors_retry_but_tls_and_post_do_not(self):
         from io import BytesIO
         from urllib.error import URLError
