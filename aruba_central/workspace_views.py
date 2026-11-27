@@ -1437,6 +1437,9 @@ def coverage_view(workspace, query):
 
 
 def explorer_view(workspace, query):
+    if query.get("mode") == "search":
+        from .configuration_search import search_view
+        return search_view(workspace, query)
     from .central_tool import config_review_rows, configuration_view_shape
     loaded, empty = load(workspace, query, "Configuration explorer", "report")
     if empty:
@@ -1505,6 +1508,7 @@ def explorer_view(workspace, query):
                            badge(profile_state_label(r["status"]), "good" if r["status"] in ("inherited", "shared", "local_matches_global") else "warn" if r["status"] in ("source_conflict", "local_differs_from_global", "local_effective_mismatch") else "neutral"), inspect(title, detail)))
     q = sum(v["review"]["qualified"] for _, _, _, v in records)
     body = intro("Configuration", "Inspect captured profiles at a selected scope or module.", picker) + '<section class="filter-section">' + controls + '</section>'
+    body += f'<p><a class="button" href="{url(root, "report", snapshot=name, mode="search")}">Search all captured configuration</a></p>'
     body += f'<section><h2>{len(rows)} records</h2><p class="muted">{q}/{len(records)} selected scope views qualified.</p>' + table(("Scope", "Module", "Profile", "Source / state", ""), rows, search=True) + '</section>'
     body += f'<p class="note">For grouped consolidation recommendations, open <a href="{url(root, "advisor", snapshot=name)}">Consolidation</a>. Global comparison does not establish inheritance or safe removal.</p>'
     # Preserve the standalone report and CSV export through a separate optional route.
