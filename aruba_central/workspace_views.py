@@ -657,7 +657,7 @@ $('advisor-export-csv').addEventListener('click',()=>{
   if(/^[\s\u0000-\u001f]*[=+\-@]/.test(text)||/^[\t\r\n]/.test(text))text="'"+text;
   return '"'+text.replaceAll('"','""')+'"';
  }
- const records=[['Finding ID','Profile','Module','Device function','Recommendation','Readiness','Local copies','Source scopes','Suggested next step','Devices matching','Devices compared','Devices not comparable','Selected for preview']];
+ const records=[['Finding ID','Profile','Module','Device function','Recommendation','Readiness','Local copies','Source scopes','Suggested next step','Devices matching','Device observations','Devices not comparable','Selected for preview']];
  for(const row of filtered){
   const check=row.querySelector('.choose'),f=JSON.parse(check.dataset.plan);
   const field=row.querySelector('.destination'),observed=f.observed_devices||{};

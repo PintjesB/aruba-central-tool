@@ -94,11 +94,26 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
                 ("render_inventory", lambda: workspace.scopes({"snapshot": snapshot})),
                 ("render_advisor", lambda: workspace.advisor({"snapshot": snapshot})),
                 ("render_advisor_repeat", lambda: workspace.advisor({"snapshot": snapshot})),
+                ("render_engineering_ports", lambda: workspace.advanced({"snapshot": snapshot, "workflow": "ports"})),
+                ("render_engineering_duplicates", lambda: workspace.advanced({"snapshot": snapshot, "workflow": "duplicates"})),
                 ("render_coverage", lambda: workspace.coverage({"snapshot": snapshot})),
                 ("render_entity_search", lambda: workspace.report({"snapshot": snapshot, "mode": "entities", "q": "vlan"})),
                 ("render_field_search", lambda: workspace.report({"snapshot": snapshot, "mode": "search", "q": "vlan"})),
             ):
                 render(label, action)
+            from .optimization_worklist import engineering_group_id
+            from .review_dispositions import snapshot_binding
+            binding = snapshot_binding(workspace, snapshot, bundle)
+            for workflow, key in (("ports", "port_groups"), ("duplicates", "library_duplicates")):
+                if engineering[key]:
+                    group = engineering_group_id(workflow, engineering[key][0])
+                    render("render_engineering_" + workflow + "_detail",
+                           lambda: workspace.advanced({"snapshot": snapshot, "workflow": workflow,
+                                                      "group": group, "detail": "1", "binding": binding}))
+            if findings:
+                group = findings[0]["id"]
+                render("render_advisor_detail", lambda: workspace.advisor({"snapshot": snapshot, "group": group,
+                                                                          "detail": "1", "binding": binding}))
             first_library = next(((module, sorted(view["profiles"])[0])
                                   for module, view in sorted((bundle.get("library") or {}).get("modules", {}).items())
                                   if view.get("status") == "list_parsed" and view.get("profiles")), None)
