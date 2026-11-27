@@ -19,9 +19,8 @@ def assessment_view(workspace, query):
     if empty:
         return empty
     root, name, bundle, picker = loaded
-    from .consolidation import profile_recommendations
     from .optimization_worklist import optimization_worklist, reduction_scenario
-    findings = profile_recommendations(bundle)
+    findings = workspace.consolidation_snapshot(bundle)
     analysis = workspace.advanced_snapshot(bundle)
     report = assessment(bundle, findings=findings, engineering=analysis)
     coverage = report["coverage"]

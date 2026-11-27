@@ -76,7 +76,6 @@ def save_disposition(directory, key, state, note):
 
 def update_dispositions(workspace, snapshot, keys, state, note, *, replace_notes=False):
     """Validate every selected finding before writing any local review record."""
-    from .consolidation import profile_recommendations
     from .optimization_worklist import optimization_worklist
     if (not isinstance(keys, list) or not 1 <= len(keys) <= 200
             or any(not isinstance(key, str) or not ID.fullmatch(key) for key in keys)
@@ -86,7 +85,7 @@ def update_dispositions(workspace, snapshot, keys, state, note, *, replace_notes
         raise ValueError("Invalid review disposition")
     bundle = workspace.reviewed_snapshot(snapshot)
     binding = snapshot_binding(workspace, snapshot, bundle)
-    rows = optimization_worklist(bundle, profile_recommendations(bundle), workspace.advanced_snapshot(bundle))
+    rows = optimization_worklist(bundle, workspace.consolidation_snapshot(bundle), workspace.advanced_snapshot(bundle))
     if not set(keys) <= {finding_key(binding, row) for row in rows}:
         raise ValueError("Finding changed or unavailable")
     # Read existing notes before making any changes.
