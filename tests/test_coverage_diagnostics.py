@@ -63,3 +63,20 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(sum(g["attempted"] for g in groups), 1)
         self.assertTrue(any(row["selector_required"] for row in gaps))
         self.assertNotIn("/network-config/v1alpha1/layer2-vlan", {row["path"] for row in gaps})
+
+
+    def test_raw_shapes_distinguish_metadata_from_profile_records(self):
+        private = "PRIVATE-VALUE"
+        bundle = {"schema": 1, "kind": "configuration_audit", "unadapted_profiles": {
+            "lldp": {"library": {"raw": {"metadata": {"count": 2}}},
+                     "source_views": [{"committed": {"raw": {"private-envelope": [
+                         {"name": private}, {"name": "another"}, {"unrecognized": private}]}},
+                                       "effective": {"raw": {"private-envelope": []}}}]}}}
+        report = diagnostics(bundle)
+        shapes = {r["shape"]: r for r in report["raw_profile_shapes"]}
+        self.assertEqual(shapes["record_list"]["records"], 3)
+        self.assertEqual(shapes["record_list"]["records_with_documented_key"], 2)
+        self.assertEqual(shapes["metadata_only"]["records"], 0)
+        self.assertEqual(shapes["empty_list"]["records"], 0)
+        self.assertNotIn(private, json.dumps(report))
+        self.assertNotIn("private-envelope", json.dumps(report))
