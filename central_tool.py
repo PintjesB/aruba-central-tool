@@ -469,7 +469,8 @@ def check_empty_local(annotated):
     return "unverified_annotations" if uncertain else "consistent_with_effective_annotations"
 
 
-def discover_scopes(client, persona, devices):
+def discover_shared_scopes(client):
+    """Read tenant-wide scopes once; these endpoints have no persona selector."""
     global_row = client.get(CONFIG + "/global")
     scopes = [{"id": scope_id(global_row), "kind": "global", "name": "Global"}]
     for kind, path, keys in (
@@ -480,6 +481,11 @@ def discover_scopes(client, persona, devices):
         for row in offset_rows(client, CONFIG + "/" + path, keys):
             scopes.append({"id": scope_id(row), "kind": kind, "name": row.get("scopeName", ""),
                            "metadata": row})
+    return scopes
+
+
+def discover_scopes(client, persona, devices, *, shared_scopes=None):
+    scopes = list(discover_shared_scopes(client) if shared_scopes is None else shared_scopes)
     excluded = []
     for device in devices:
         function = device_identity(device)["persona"]
@@ -3596,11 +3602,14 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     # Enumerate scopes once, then supplement the assignment inventory before
     # choosing the module catalog so newly discovered types are included.
     scopes_by_persona = {}
+    shared_scopes = None
     for persona in personas:
         if persona not in NETWORK_PERSONAS:
             continue
         audit_progress(progress, "Discovery", 0, 0, f"Discovering {persona} scopes")
-        scopes_by_persona[persona], _ = discover_scopes(client, persona, devices)
+        scopes_by_persona[persona], _ = discover_scopes(client, persona, devices, shared_scopes=shared_scopes)
+        if shared_scopes is None:
+            shared_scopes = [scope for scope in scopes_by_persona[persona] if scope["kind"] != "device"]
     assignments = collect_scoped_assignments(client, assignments, scopes_by_persona, workers, progress, paginate_uncounted=deep_catalog)
     print("Assignment evidence coverage: " + canonical({
         "additional_assignments": assignments["additional_assignments"],
@@ -3630,7 +3639,9 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             continue
         scopes = scopes_by_persona.get(persona)
         if scopes is None:
-            scopes, _ = discover_scopes(client, persona, devices)
+            scopes, _ = discover_scopes(client, persona, devices, shared_scopes=shared_scopes)
+            if shared_scopes is None:
+                shared_scopes = [scope for scope in scopes if scope["kind"] != "device"]
         plans.append((persona, modules, scopes))
     if identity_guard is not None:
         identity_guard({"region": client.base, "inventory": records,
