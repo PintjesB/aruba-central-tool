@@ -379,6 +379,16 @@ def diagnostics(bundle):
                                  for m in sorted(modules & set(details.get("candidate_reads_by_module") or {}))],
             "http_get_transport": ({key: count(transport.get(key)) for key in transport_fields}
                                    if isinstance(transport, dict) else None),
+            "http_get_performance": ({
+                **{key: count(bundle["http_get_performance"].get(key))
+                   for key in ("rate_wait_ms", "successful_get_ms", "successful_gets")},
+                "phase_worker_budgets": {
+                    key: count(bundle["http_get_performance"].get("phase_worker_budgets", {}).get(key))
+                    for key in ("assignments", "configuration_scopes", "library", "supplemental",
+                                "nac_assets", "health", "keyed_details", "hierarchy",
+                                "assignment_details", "vlan_details", "operational", "switch_cli")
+                    if key in bundle["http_get_performance"].get("phase_worker_budgets", {})}}
+                if isinstance(bundle.get("http_get_performance"), dict) else None),
             "http_config_validators": ({kind + "_" + field: count(bundle["http_config_validators"].get(kind + "_" + field))
                                         for kind in ("collection", "keyed")
                                         for field in ("responses", "strong_etag", "weak_etag", "last_modified")}
