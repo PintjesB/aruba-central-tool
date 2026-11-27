@@ -19,7 +19,9 @@ class LiveProbeTests(unittest.TestCase):
                                   page([one, two], 2, limit=500, offset=0)]
         with patch("live_collection_probe.qualified_scopes", return_value=scopes), patch(
             "central_tool.documented_offset_collections", return_value={"net-services"}
-        ), patch("live_collection_probe.PERFORMANCE_MODULES", ("net-services",)):
+        ), patch("live_collection_probe.PERFORMANCE_MODULES", ("net-services",)), patch.dict(
+            "live_collection_probe.CONFIG_MODULES", {"net-services": ("name", {"ACCESS_SWITCH"}, False)}
+        ):
             result = performance_probe(client, {}, 1)
         self.assertEqual(client.get.call_count, 4)
         context = result["contexts"][0]
@@ -39,7 +41,9 @@ class LiveProbeTests(unittest.TestCase):
             client.get.return_value = raw
             with patch("live_collection_probe.qualified_scopes", return_value=scopes), patch(
                 "central_tool.documented_offset_collections", return_value={"net-services"}
-            ), patch("live_collection_probe.PERFORMANCE_MODULES", ("net-services",)):
+            ), patch("live_collection_probe.PERFORMANCE_MODULES", ("net-services",)), patch.dict(
+            "live_collection_probe.CONFIG_MODULES", {"net-services": ("name", {"ACCESS_SWITCH"}, False)}
+        ):
                 result = performance_probe(client, {}, 1)
             self.assertEqual(result["contexts"][0]["projection"], "unqualified")
             self.assertFalse(result["safe_to_apply"])
