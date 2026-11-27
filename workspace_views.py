@@ -601,13 +601,15 @@ def usage_detail(usage):
                 tr("Distinct configuration objects referencing this name", usage_cells(usage)[2]),
                 tr("Saved definitions referencing this name", str(usage.get("definition_reference_count", 0))),
                 tr("Effective objects referencing this name", str(usage.get("effective_reference_count", 0))),
+                tr("Conflicting individual observations", str(usage.get("conflicting_reference_count", 0))),
                 tr("Devices with incomplete module reads", usage_cells(usage)[3]),
                 tr("Devices with matching settings but unverified Library source", str(len(usage["matching_other_devices"])))])
             + '<h3>Assigned at</h3>' + table(("Scope", "Device function"), [
                 tr(e(a.get("scope-name", a.get("scope-id", "Unknown"))), e(persona_label(a.get("device-function", "")))) for a in usage["assignments"]])
             + '<h3>Devices with matching shared configuration</h3>' + list_items([d["name"] for d in usage["shared_devices"]])
-            + '<h3>Configuration references</h3>' + table(("Source scope", "View", "Module", "Object", "Field"), [
-                tr(e(r["device"]), e(pretty(r.get("source_view", "effective"))), e(module_label(r["source_module"])), e(r["source"]), e(".".join(map(str, r.get("path", []))))) for r in usage["references"]])
+            + '<h3>Configuration references</h3>' + table(("Source scope", "View", "Module", "Object", "Field", "Evidence"), [
+                tr(e(r["device"]), e(pretty(r.get("source_view", "effective"))), e(module_label(r["source_module"])), e(r["source"]), e(".".join(map(str, r.get("path", [])))),
+                   badge("Conflicting observation", "warn") if r.get("collection_conflict") else e("Individual read" if r.get("source_evidence") == "individual" else "Collection")) for r in usage["references"]])
             + '<p class="note">These are separate observations, not traffic usage. Zero observed references does not prove a profile is unused. Reference coverage is incomplete.</p>')
 
 
