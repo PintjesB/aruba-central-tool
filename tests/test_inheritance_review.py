@@ -1,5 +1,5 @@
 import unittest
-from inheritance_review import nearest_fallback
+from aruba_central.inheritance_review import nearest_fallback
 
 
 def fixture(group=None, site=None, collection=None, global_=None, group_known=True):

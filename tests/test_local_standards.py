@@ -4,7 +4,7 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from local_standards import (create_standard, evaluate_standard, exception_candidates,
+from aruba_central.local_standards import (create_standard, evaluate_standard, exception_candidates,
                              approve_exception, active_exceptions, read_record)
 from test_configuration_history import snapshot
 
@@ -58,7 +58,7 @@ class LocalStandardTests(unittest.TestCase):
             evaluate_standard(self.directory, standard, self.current, confirmed=True)
 
     def test_revocation_preserves_history_and_reopens_deviation(self):
-        from local_standards import revoke_exception, exception_history
+        from aruba_central.local_standards import revoke_exception, exception_history
         standard = self.standard()
         current, result = evaluate_standard(self.directory, standard, self.current, confirmed=True)
         candidates = exception_candidates(current, standard, result)
@@ -77,7 +77,7 @@ class LocalStandardTests(unittest.TestCase):
         self.assertEqual(history[0]["state"], "revoked")
         self.assertEqual(history[0]["revocations"], [revoked])
         self.assertEqual(read_record(self.directory, "exception", approval["id"]), approval)
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         html = Workspace(self.directory).standards({"snapshot": self.current, "standard": standard["id"], "confirmed": "yes"})
         self.assertIn("Exception history", html)
         self.assertIn("Revoked", html)
@@ -85,7 +85,7 @@ class LocalStandardTests(unittest.TestCase):
         self.assertIn("Approve exact deviation", html)
 
     def test_field_standard_ignores_unselected_changes_and_preserves_approval(self):
-        from field_standards import field_key
+        from aruba_central.field_standards import field_key
         base, current = snapshot(), snapshot("Changed")
         for data in (base, current):
             for row in data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]:
@@ -110,14 +110,14 @@ class LocalStandardTests(unittest.TestCase):
         self.write(self.current, current)
         bundle, result = evaluate_standard(self.directory, standard, self.current, confirmed=True)
         self.assertEqual(set(exception_candidates(bundle, standard, result)), {key})
-        from local_standards import apply_approvals
+        from aruba_central.local_standards import apply_approvals
         candidates = exception_candidates(bundle, standard, result)
         apply_approvals(result, candidates, active_exceptions(self.directory, standard["id"], candidates))
         target = next(r for r in result["findings"] if r["scope"] == "4")
         self.assertEqual(target["status"], "approved_exceptions")
 
     def test_whole_profile_standard_independent_field_approvals(self):
-        from local_standards import apply_approvals
+        from aruba_central.local_standards import apply_approvals
         base, current = snapshot(), snapshot("Changed")
         for data in (base, current):
             for row in data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]:
@@ -155,7 +155,7 @@ class LocalStandardTests(unittest.TestCase):
                             module="template:services", target="2", confirmed=True)
 
     def test_standard_ui(self):
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         standard = self.standard()
         html = Workspace(self.directory).standards({"snapshot": self.current, "standard": standard["id"], "confirmed": "yes"})
         self.assertIn("Access switching", html)

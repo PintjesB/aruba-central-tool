@@ -1,5 +1,5 @@
 import unittest
-from dependency_impact import dependency_impact
+from aruba_central.dependency_impact import dependency_impact
 
 
 def edge(source, target, scope="1", view="effective", state="observed", persona="ACCESS_SWITCH"):
@@ -41,7 +41,7 @@ class ImpactTests(unittest.TestCase):
         import json
         import tempfile
         from pathlib import Path
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         from test_consolidation import fixture
         with tempfile.TemporaryDirectory() as directory:
             name = "config-audit-test.json"

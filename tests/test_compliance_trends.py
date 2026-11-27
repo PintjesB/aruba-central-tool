@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from datetime import datetime, timezone
-from compliance_trends import historical_approvals, compliance_trends
-from local_standards import create_standard
+from aruba_central.compliance_trends import historical_approvals, compliance_trends
+from aruba_central.local_standards import create_standard
 from test_configuration_history import snapshot
 
 
@@ -39,7 +39,7 @@ class TrendTests(unittest.TestCase):
             self.assertEqual(result["entries"][1]["counts"]["differences_observed"], 1)
             self.assertEqual(result["skipped"][0]["snapshot"], names[2])
             self.assertFalse(result["safe_to_apply"])
-            from config_app import Workspace
+            from aruba_central.config_app import Workspace
             html = Workspace(directory).trends({"snapshot": names[1], "standard": standard["id"], "confirmed": "yes"})
             self.assertIn("Historical compliance observations", html)
             self.assertIn("Skipped snapshots", html)

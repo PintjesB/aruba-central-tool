@@ -20,6 +20,16 @@ jobs:
           if ! command -v google-chrome && ! command -v chromium; then
             python -m playwright install --with-deps chromium
           fi
+      - name: Verify package and compatibility CLI entry points
+        run: |
+          python -m aruba_central --help
+          python -m aruba_central.coverage_diagnostics --help
+          python -m aruba_central.live_collection_probe --help
+          python -m aruba_central.vlan_change --help
+          python central_tool.py --help
+          python coverage_diagnostics.py --help
+          python live_collection_probe.py --help
+          python vlan_change.py --help
       - run: python -m unittest discover -s tests -v
         env:
           CENTRAL_UI_PREVIEW_DIR: ${{ runner.temp }}/central-ui-preview

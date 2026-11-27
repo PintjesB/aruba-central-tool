@@ -1,5 +1,5 @@
 import unittest
-from central_tool import APIError, Central, EmptyCommittedLocal, EU_REGIONS, check_empty_local, detect_region, inventory, offset_rows, report, review_local_profiles, scoped_vlan_rows, vlan_map, vlan_rows
+from aruba_central.central_tool import APIError, Central, EmptyCommittedLocal, EU_REGIONS, check_empty_local, detect_region, inventory, offset_rows, report, review_local_profiles, scoped_vlan_rows, vlan_map, vlan_rows
 
 
 class Fake:
@@ -214,7 +214,7 @@ class Tests(unittest.TestCase):
             Central("https://de1.api.central.arubanetworks.com.evil.example", token="fake")
 
     def test_exact_field_diff_distinguishes_missing_null_and_false(self):
-        from central_tool import field_differences
+        from aruba_central.central_tool import field_differences
         left = {"vlan": 10, "enable": False, "igmp": {"snooping": True}, "is-l3-vlan": None}
         right = {"vlan": 10, "enable": 0, "igmp": {"snooping": False}, "voice-enable": False}
         differences = {tuple(d["path"]): d for d in field_differences(left, right)}
@@ -231,7 +231,7 @@ class Tests(unittest.TestCase):
     def test_summary_contains_no_customer_values_or_unknown_keys(self):
         import contextlib
         import io
-        from central_tool import field_differences, print_review_summary
+        from aruba_central.central_tool import field_differences, print_review_summary
         diff = field_differences({"name": "private-name", "private-key": "secret-value"},
                                  {"name": "other-private-name", "private-key": "other-secret-value"})
         data = {"local_profile_review": [{"recommendation": "resolve_library_conflict",
@@ -246,7 +246,7 @@ class Tests(unittest.TestCase):
         self.assertIn("name: value_difference", result)
 
     def test_default_aware_assessment_does_not_assume_multicast_or_l3_equivalence(self):
-        from central_tool import assess_vlan_reference
+        from aruba_central.central_tool import assess_vlan_reference
         local = {"vlan": 10}
         shared = {"vlan": 10, "enable": True, "voice-enable": False,
                   "dhcpv4-snooping": {"enable": False}}
@@ -276,7 +276,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(review["status"], "review_only")
 
     def test_device_capabilities_detect_known_and_unknown(self):
-        from central_tool import inventory_capabilities
+        from aruba_central.central_tool import inventory_capabilities
         records = inventory_capabilities([
             {"model": "6100", "firmwareVersion": "PL.10.16.1006", "deviceFunction": "Access Switch"},
             {"model": "6200", "firmwareVersion": "FL.10.99.1000", "deviceFunction": "Core Switch"},
@@ -291,12 +291,12 @@ class Tests(unittest.TestCase):
 
     def test_scan_all_uses_discovered_personas(self):
         from unittest.mock import patch
-        from central_tool import scan_all, select_snapshot
+        from aruba_central.central_tool import scan_all, select_snapshot
         devices = [{"deviceFunction": "Access Switch"}, {"deviceFunction": "Core Switch"},
                    {"deviceFunction": "Campus AP"}, {"deviceFunction": "Access Switch"}]
         class Client:
             base = "test"
-        with patch("central_tool.inventory", return_value=devices), patch("central_tool.scan") as scan:
+        with patch("aruba_central.central_tool.inventory", return_value=devices), patch("aruba_central.central_tool.scan") as scan:
             scan.side_effect = lambda client, persona, devices: {"persona": persona}
             result = scan_all(Client())
         self.assertEqual(set(result["snapshots"]), {"ACCESS_SWITCH", "CORE_SWITCH"})
@@ -308,7 +308,7 @@ class Tests(unittest.TestCase):
 
     def test_audit_reviews_every_discovered_persona_and_reports_unqualified(self):
         from unittest.mock import patch
-        from central_tool import audit
+        from aruba_central.central_tool import audit
         class Client:
             base = "test"
         source = {"kind": "multi_persona_scan", "region": "test", "inventory": [
@@ -316,11 +316,11 @@ class Tests(unittest.TestCase):
             {"identity": {"persona": "CORE_SWITCH"}, "vlan_scan_supported_persona": True},
             {"identity": {"persona": "CAMPUS_AP"}, "vlan_scan_supported_persona": False}],
             "snapshots": {p: {"persona": p, "region": "test"} for p in ("ACCESS_SWITCH", "CORE_SWITCH")}}
-        with patch("central_tool.scan_all", return_value=source) as scan, \
-             patch("central_tool.discover_dependencies", return_value={}) as probe, \
-             patch("central_tool.report", return_value={}), \
-             patch("central_tool.dependency_review", return_value={"safe_to_apply": False}) as review, \
-             patch("central_tool.print_review_summary"), patch("central_tool.print_dependency_summary"):
+        with patch("aruba_central.central_tool.scan_all", return_value=source) as scan, \
+             patch("aruba_central.central_tool.discover_dependencies", return_value={}) as probe, \
+             patch("aruba_central.central_tool.report", return_value={}), \
+             patch("aruba_central.central_tool.dependency_review", return_value={"safe_to_apply": False}) as review, \
+             patch("aruba_central.central_tool.print_review_summary"), patch("aruba_central.central_tool.print_dependency_summary"):
             result = audit(Client())
             self.assertEqual(set(result["results"]), {"ACCESS_SWITCH", "CORE_SWITCH"})
             self.assertEqual(result["unqualified_personas"], {"CAMPUS_AP": 1})
@@ -333,7 +333,7 @@ class Tests(unittest.TestCase):
                 audit(Client())
 
     def test_dependencies_probe_distinguishes_empty_from_permission(self):
-        from central_tool import discover_dependencies
+        from aruba_central.central_tool import discover_dependencies
         class Probe:
             def get(self, path, **params):
                 if path.endswith("sw-port-profiles"):
@@ -346,7 +346,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(caps["sw-port-profiles"], "permission_denied")
 
     def test_dependency_review_protects_svi_and_multicast(self):
-        from central_tool import dependency_review
+        from aruba_central.central_tool import dependency_review
         local = {"vlan": 10, "is-l3-vlan": True}
         shared = {"vlan": 10, "igmp": {"snooping": False}}
         device = scope("2", "device", [local], [local])
@@ -371,7 +371,7 @@ class Tests(unittest.TestCase):
             dependency_review(snapshot, deps, report(snapshot))
 
     def test_reference_candidates_keep_unresolved_and_ignore_annotations(self):
-        from central_tool import reference_candidates
+        from aruba_central.central_tool import reference_candidates
         payload = {"interfaces": [{"switchport": {"native-vlan": 10, "allowed-vlans": ["20-22", 40]},
                                    "unknown-vlan-field": 99, "name": "1/1/10",
                                    "@": {"vlan": 123}, "metadata": {"vlan": 100}},
@@ -382,7 +382,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(result["unresolved_paths"]), 3)
 
     def test_operational_probe_uses_known_inventory_identity_only(self):
-        from central_tool import probe_operational_vlans, operational_vlan_summary
+        from aruba_central.central_tool import probe_operational_vlans, operational_vlan_summary
         fake = Fake([{"items": [{"id": 10, "igmp": True}]}])
         self.assertEqual(probe_operational_vlans(fake, {"serialNumber": "../bad"})["status"], "identity_unresolved")
         self.assertEqual(fake.calls, [])
@@ -392,7 +392,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(operational_vlan_summary(result)["status"], "schema_observed")
 
     def test_operational_probe_falls_back_to_discovered_serial(self):
-        from central_tool import probe_operational_vlans, operational_vlan_summary
+        from aruba_central.central_tool import probe_operational_vlans, operational_vlan_summary
         class Probe:
             def __init__(self):
                 self.calls = []
@@ -412,7 +412,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(summary["multicast_operational_verified"])
 
     def test_role_reference_resolution_is_exact_and_unambiguous(self):
-        from central_tool import reference_candidates
+        from aruba_central.central_tool import reference_candidates
         payload = {"roles": [{"vlan-type": "VLAN_NAME", "access-vlan-name": "A"},
                              {"vlan-type": "VLAN_ID", "access-vlan-id": 30},
                              {"access-vlan-name": "B"}, {"access-vlan-name": "unknown"}]}
@@ -422,7 +422,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(result["unresolved_paths"]), 2)
 
     def test_audit_compare_distinguishes_local_removal_from_effective_change(self):
-        from central_tool import compare_audits
+        from aruba_central.central_tool import compare_audits
         def bundle(local, effective):
             snapshot = {"persona": "ACCESS_SWITCH", "region": "test",
                         "scopes": [scope("g", "global", [{"vlan": 10}]),
@@ -444,7 +444,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(comparison["same_tenant_verified"])
 
     def test_offline_review_keeps_reference_previews_nonexecutable(self):
-        from central_tool import offline_audit_review
+        from aruba_central.central_tool import offline_audit_review
         from unittest.mock import patch
         body = {"vlan": 10}
         snapshot = {"persona": "ACCESS_SWITCH", "region": "test",
@@ -455,7 +455,7 @@ class Tests(unittest.TestCase):
         row = {"vlan": "10", "scope": "s", "scope_kind": "device", "profile": body,
                "proposed_review": "review_restore_global_inheritance",
                "dependency_blockers": ["operational_equivalence_unverified"], "reference_candidate_modules": []}
-        with patch("central_tool.report", return_value={}), patch("central_tool.dependency_review",
+        with patch("aruba_central.central_tool.report", return_value={}), patch("aruba_central.central_tool.dependency_review",
                    return_value={"local_profile_review": [row]}):
             result = offline_audit_review(bundle)
         preview = result["results"]["ACCESS_SWITCH"]["previews"][0]
@@ -465,7 +465,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(preview["effective_after_change_verified"])
 
     def test_assignment_evidence_filters_persona_type_and_instance(self):
-        from central_tool import vlan_assignment_evidence
+        from aruba_central.central_tool import vlan_assignment_evidence
         base = {"scope-id": "g", "profile-type": "layer2-vlan",
                 "device-function": "ACCESS_SWITCH", "profile-instance": "10"}
         snap = {"persona": "ACCESS_SWITCH", "scopes": [scope("g", "global", [])],
@@ -477,7 +477,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(evidence["inheritance_verified"])
 
     def test_removal_evidence_detects_changed_fields_without_claiming_equivalence(self):
-        from central_tool import removal_evidence
+        from aruba_central.central_tool import removal_evidence
         def bundle(name):
             return {"results": {"ACCESS_SWITCH": {"dependencies": {"devices": [
                 {"scope_id": "s", "operational_vlans": {"status": "response_received",
@@ -490,7 +490,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(result["behavior_preserved_verified"])
 
     def test_generic_module_preserves_exact_differences_and_sources(self):
-        from central_tool import module_view, review_module_scope
+        from aruba_central.central_tool import module_view, review_module_scope
         base = {"name": "profile", "enabled": True, "description": "base"}
         local = module_view({"profiles": [{"name": "profile", "enabled": False}]}, "name", "LOCAL")
         effective = module_view({"profiles": [
@@ -509,7 +509,7 @@ class Tests(unittest.TestCase):
                          ["profiles"][1]["status"], "device_local_profile")
 
     def test_generic_module_rejects_partial_unknown_and_duplicate_shapes(self):
-        from central_tool import module_view, review_module_scope
+        from aruba_central.central_tool import module_view, review_module_scope
         self.assertEqual(module_view({"profiles": [{"name": "a"}], "metadata": {"total": 2}}, "name")
                          ["status"], "count_mismatch")
         self.assertEqual(module_view({"profiles": [{"name": "a"}, {"name": "a"}]}, "name")
@@ -524,7 +524,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(review_module_scope(local, module_view({}, "name"), {})["qualified"])
 
     def test_documented_catalog_contains_verified_configuration_get_paths(self):
-        from central_tool import documented_profile_catalog
+        from aruba_central.central_tool import documented_profile_catalog
         catalog = documented_profile_catalog()
         self.assertEqual(catalog["folders_read"], 25)
         self.assertEqual(catalog["get_requests"], 427)
@@ -538,7 +538,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(catalog["exhaustive"])
 
     def test_documented_global_survey_is_independent_of_assignments(self):
-        from central_tool import inspect_unadapted_profiles
+        from aruba_central.central_tool import inspect_unadapted_profiles
         discovery = {"unknown_adapter_modules": [], "survey_modules": ["aaa-profile"],
                      "modules": {}, "documented_catalog": {"modules": {
                          "aaa-profile": {"all_function_scope": True}}}}
@@ -559,7 +559,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(evidence["safe_to_apply"])
 
     def test_deep_catalog_surveys_lower_scopes_without_assignments(self):
-        from central_tool import inspect_unadapted_profiles
+        from aruba_central.central_tool import inspect_unadapted_profiles
         discovery = {"unknown_adapter_modules": [], "survey_modules": ["example"],
                      "modules": {}, "documented_catalog": {"modules": {
                          "example": {"source": "vendor_collection", "all_function_scope": True}}}}
@@ -586,7 +586,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(result["safe_to_apply"])
 
     def test_single_supplemental_module_uses_parallel_scope_workers(self):
-        from central_tool import inspect_unadapted_profiles
+        from aruba_central.central_tool import inspect_unadapted_profiles
         import threading
         barrier = threading.Barrier(2)
         lock = threading.Lock()
@@ -612,7 +612,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(result["catalog_scope_coverage"]["unfiltered_scopes_not_surveyed"], 0)
 
     def test_targeted_catalog_limits_empty_modules_and_expands_positive_evidence(self):
-        from central_tool import inspect_unadapted_profiles
+        from aruba_central.central_tool import inspect_unadapted_profiles
         discovery = {"unknown_adapter_modules": [], "survey_modules": ["example"],
                      "modules": {}, "documented_catalog": {"modules": {
                          "example": {"source": "vendor_collection", "all_function_scope": True}}}}
@@ -644,7 +644,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(result["catalog_scope_coverage"]["unfiltered_scopes_not_surveyed"], 0)
 
     def test_deep_catalog_handles_documented_scope_without_function_selector(self):
-        from central_tool import inspect_unadapted_profiles
+        from aruba_central.central_tool import inspect_unadapted_profiles
         discovery = {"unknown_adapter_modules": [], "survey_modules": ["example"],
                      "modules": {}, "documented_catalog": {"modules": {
                          "example": {"source": "vendor_collection", "all_function_scope": False}}}}
@@ -657,7 +657,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(result["catalog_scope_coverage"]["unfiltered_scopes_not_surveyed"], 0)
 
     def test_configuration_health_preserves_issues_and_checks_inventory(self):
-        from central_tool import capture_configuration_health
+        from aruba_central.central_tool import capture_configuration_health
         fake = Fake([{"devices": [{"serial": "A", "configStatus": "Failure",
                                    "activeIssues": 1}], "total": 2},
                      {"devices": [{"serialNumber": "B", "activeIssues": 0}], "total": 2},
@@ -675,7 +675,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(result["safe_to_apply"])
 
     def test_configuration_health_does_not_accept_repeated_pages(self):
-        from central_tool import capture_configuration_health
+        from aruba_central.central_tool import capture_configuration_health
         page = {"devices": [{"serial": "A"}]}
         fake = Fake([page, page, {"issues": []}])
         result = capture_configuration_health(fake, [], workers=1)
@@ -685,14 +685,14 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(result["devices"]), 1)
 
     def test_configuration_health_unverified_count_with_no_total(self):
-        from central_tool import capture_configuration_health
+        from aruba_central.central_tool import capture_configuration_health
         fake = Fake([{"devices": [{"serial": "A"}]}, {"devices": []}, {"issues": []}])
         result = capture_configuration_health(fake, [], workers=1)
         self.assertEqual(result["summary_status"], "pagination_exhausted")
         self.assertFalse(result["count_confirmed"])
 
     def test_keyed_profile_reads_preserve_additional_fields_without_overwriting(self):
-        from central_tool import keyed_profile_contracts, capture_keyed_profile_details
+        from aruba_central.central_tool import keyed_profile_contracts, capture_keyed_profile_details
         self.assertEqual(keyed_profile_contracts()["dns"], "name")
         self.assertNotIn("layer2-vlan", keyed_profile_contracts())
         profile = {"name": "example name"}
@@ -718,7 +718,7 @@ class Tests(unittest.TestCase):
         self.assertNotIn("enable", profile)
 
     def test_keyed_details_include_effective_only_and_deduplicate_local_identity(self):
-        from central_tool import capture_keyed_profile_details
+        from aruba_central.central_tool import capture_keyed_profile_details
         both = {"name": "both"}
         inherited = {"name": "inherited"}
         results = {"ACCESS_SWITCH": {"modules": {"dns": {"scope_results": [
@@ -737,7 +737,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(evidence["safe_to_apply"])
 
     def test_keyed_reads_include_observed_raw_profiles_without_mixed_scope_guessing(self):
-        from central_tool import capture_keyed_profile_details, keyed_profile_contracts
+        from aruba_central.central_tool import capture_keyed_profile_details, keyed_profile_contracts
         self.assertEqual(keyed_profile_contracts(include_raw=True)["portals"], "portal-id")
         self.assertNotIn("portals", keyed_profile_contracts())
         self.assertNotIn("policy-groups", keyed_profile_contracts(include_raw=True))
@@ -774,7 +774,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(result["safe_to_apply"])
 
     def test_unfiltered_details_preserve_conflicting_bodies_and_local_only_observations(self):
-        from central_tool import capture_keyed_profile_details
+        from aruba_central.central_tool import capture_keyed_profile_details
         profile = {"name": "dns", "enable": True}
         local = {"name": "local", "@": {"aruba-annotation:object_type": "LOCAL",
                                         "aruba-annotation:inherited": False}}
@@ -804,7 +804,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(len([p for _, p in client.calls if p.get("scope-id") == "13"]), 1)
 
     def test_supplemental_collection_reuses_exact_successful_reads(self):
-        from central_tool import inspect_unadapted_profiles
+        from aruba_central.central_tool import inspect_unadapted_profiles
         class Client:
             def __init__(self):
                 self.calls = []
@@ -829,7 +829,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(result["dns"]["source_views"][0]["effective"]["raw"], raw)
 
     def test_supplemental_collection_reuses_exact_committed_fallback(self):
-        from central_tool import inspect_unadapted_profiles
+        from aruba_central.central_tool import inspect_unadapted_profiles
         raw = {"dns": [{"name": "example"}]}
         view = {"status": "list_parsed", "raw": raw, "count_confirmed": True}
         local = {"status": "list_parsed", "alternate_raw": raw,
@@ -847,7 +847,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(result["dns"]["source_views"][0]["committed"]["raw"], raw)
 
     def test_adaptive_verification_preserves_direct_interface_and_local_counterparts(self):
-        from central_tool import capture_keyed_profile_details
+        from aruba_central.central_tool import capture_keyed_profile_details
         annotation = {"aruba-annotation:inherited": True, "aruba-annotation:object_type": "SHARED"}
         def entry(module, identity):
             profile = {"name": identity, "@": annotation}
@@ -873,7 +873,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(result["collection_only_by_module"], {"dns": 1})
 
     def test_adaptive_unfiltered_details_keep_selectors_separate_and_expand_on_difference(self):
-        from central_tool import capture_keyed_profile_details
+        from aruba_central.central_tool import capture_keyed_profile_details
         profile = {"name": "service", "enable": True, "@": {
             "aruba-annotation:inherited": True, "aruba-annotation:object_type": "SHARED"}}
         def view(*profiles):
@@ -905,7 +905,7 @@ class Tests(unittest.TestCase):
             self.assertEqual(len(client.calls), 6)
 
     def test_adaptive_inherited_higher_scopes_are_grouped_by_scope_kind(self):
-        from central_tool import capture_keyed_profile_details
+        from aruba_central.central_tool import capture_keyed_profile_details
         profile = {"name": "dns", "@": {"aruba-annotation:inherited": True}}
         scopes = [{"scope": str(i), "scope_kind": kind,
                    "local_view": {"status": "list_parsed", "profiles": {}},
@@ -932,7 +932,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(client.calls), 7)
 
     def test_adaptive_keyed_details_keep_scope_data_and_expand_on_disagreement(self):
-        from central_tool import capture_keyed_profile_details
+        from aruba_central.central_tool import capture_keyed_profile_details
         profile = {"name": "dns", "enable": True, "@": {
             "aruba-annotation:inherited": True, "aruba-annotation:object_type": "SHARED"}}
         scopes = [{"scope": str(i), "scope_kind": "device",
@@ -968,7 +968,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(result["detail_strategy"], "exhaustive")
 
     def test_parseable_first_page_does_not_hide_later_positive_observations(self):
-        from central_tool import observed_profile_candidates
+        from aruba_central.central_tool import observed_profile_candidates
         a, b, c = ({"name": name, "enable": False} for name in ("a", "b", "c"))
         view = {"status": "list_parsed", "count_confirmed": False,
                 "profiles": {"a": a, "b": b}, "raw": {"profiles": [a, b]},
@@ -979,7 +979,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(view["count_confirmed"])
 
     def test_partial_profile_candidates_keep_valid_rows_and_exclude_conflicts(self):
-        from central_tool import observed_profile_candidates, capture_keyed_profile_details
+        from aruba_central.central_tool import observed_profile_candidates, capture_keyed_profile_details
         a, b, c = ({"name": name, "enable": False} for name in ("a", "b", "c"))
         partial = {"status": "count_mismatch", "profiles": {}, "raw": {"profiles": [a, b]},
                    "raw_pages": [{"profiles": [a, c, {"invalid": True}]},
@@ -994,7 +994,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(result["safe_to_apply"])
 
     def test_keyed_singleton_metadata_is_validated_without_discarding_fields(self):
-        from central_tool import keyed_profile_read
+        from aruba_central.central_tool import keyed_profile_read
         profile = {"name": "example", "enabled": False, "future-field": {"value": 0}}
         for raw in ({**profile, "metadata": {"count": 1}},
                     {"dns": profile, "metadata": {"count_objects_in_module": {"ANY": 1}}}):
@@ -1010,7 +1010,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(result["status"], "schema_unresolved")
 
     def test_deep_keyed_vlan_reads_cover_library_and_all_observed_scopes(self):
-        from central_tool import capture_keyed_profile_details, keyed_profile_read
+        from aruba_central.central_tool import capture_keyed_profile_details, keyed_profile_read
         profile = {"vlan": 10, "name": "example"}
         def view(*profiles):
             return {"status": "list_parsed", "profiles": {str(p["vlan"]): p for p in profiles}}
@@ -1037,7 +1037,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(client.calls), 4)
 
     def test_keyed_profile_rejects_ambiguous_identity_and_unsafe_selectors(self):
-        from central_tool import keyed_profile_read
+        from aruba_central.central_tool import keyed_profile_read
         fake = Fake([{"profiles": [{"name": "different"}]}])
         result = keyed_profile_read(fake, "dns", "name", "expected", {}, None)
         self.assertEqual(result["status"], "identity_unresolved")
@@ -1046,7 +1046,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
 
     def test_keyed_ethernet_numeric_interface_is_encoded_as_one_segment(self):
-        from central_tool import keyed_profile_read, ALPHA
+        from aruba_central.central_tool import keyed_profile_read, ALPHA
         fake = Fake([{"ethernet-interface": {"name": "1/1/24", "enable": True}}])
         result = keyed_profile_read(fake, "ethernet-interfaces", "name", "1/1/24",
                                     {"scope-id": "1"}, {"name": "1/1/24"})
@@ -1059,7 +1059,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
 
     def test_observed_named_adapters_have_exact_keyed_contracts(self):
-        from central_tool import CONFIG_MODULES, keyed_profile_contracts
+        from aruba_central.central_tool import CONFIG_MODULES, keyed_profile_contracts
         contracts = keyed_profile_contracts()
         for module in ("net-services", "named-vlan", "role-gpids", "radios", "dot1xauth",
                        "captive-portal", "auth-server-global-config", "devicefingerprinting",
@@ -1072,7 +1072,7 @@ class Tests(unittest.TestCase):
         self.assertIn("ACCESS_SWITCH", CONFIG_MODULES["dot1xauth"][1])
 
     def test_observed_profile_adapters_have_documented_contracts_and_raw_surveys(self):
-        from central_tool import CONFIG_MODULES, keyed_profile_contracts, SUPPLEMENTAL_RAW_MODULES
+        from aruba_central.central_tool import CONFIG_MODULES, keyed_profile_contracts, SUPPLEMENTAL_RAW_MODULES
         contracts = keyed_profile_contracts()
         expected = {
             "airgroup-policies": "name", "airgroup-service-definitions": "name",
@@ -1097,13 +1097,13 @@ class Tests(unittest.TestCase):
         self.assertNotIn("policy-groups", CONFIG_MODULES)
 
     def test_shared_scope_discovery_reuses_tenant_inventory(self):
-        from central_tool import discover_scopes
+        from aruba_central.central_tool import discover_scopes
         from unittest.mock import patch
         shared = [{"id": "1", "kind": "global", "name": "Global"},
                   {"id": "2", "kind": "site", "name": "Site"}]
         devices = [{"deviceFunction": "Campus AP", "scopeId": 3},
                    {"deviceFunction": "Access Switch", "scopeId": 4}]
-        with patch("central_tool.discover_shared_scopes", return_value=shared) as read:
+        with patch("aruba_central.central_tool.discover_shared_scopes", return_value=shared) as read:
             ap, _ = discover_scopes(object(), "CAMPUS_AP", devices)
             switch, _ = discover_scopes(object(), "ACCESS_SWITCH", devices,
                                         shared_scopes=[s for s in ap if s["kind"] != "device"])
@@ -1114,7 +1114,7 @@ class Tests(unittest.TestCase):
         self.assertNotEqual(ap[-1]["id"], switch[-1]["id"])
 
     def test_configuration_audit_uses_persona_catalog(self):
-        from central_tool import configuration_audit
+        from aruba_central.central_tool import configuration_audit
         from unittest.mock import patch
         class Client:
             base = "test"
@@ -1126,7 +1126,7 @@ class Tests(unittest.TestCase):
                 return {"profiles": []}
         devices = [{"deviceFunction": "Campus AP"}, {"deviceFunction": "Access Switch"},
                    {"deviceFunction": "Hybrid NAC"}]
-        with patch("central_tool.inventory", return_value=devices), patch("central_tool.discover_scopes",
+        with patch("aruba_central.central_tool.inventory", return_value=devices), patch("aruba_central.central_tool.discover_scopes",
              return_value=([scope("1", "global", []), scope("2", "device", [])], [])):
             published = {}
             data = configuration_audit(Client(), module_completed=lambda persona, module, evidence, scopes:
@@ -1154,7 +1154,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(data["safe_to_apply"])
 
     def test_configuration_browser_escapes_evidence_and_marks_unknown(self):
-        from central_tool import configuration_html, configuration_view_shape
+        from aruba_central.central_tool import configuration_html, configuration_view_shape
         view = {"status": "count_mismatch", "raw": {"profiles": [{"name": "CUSTOMER_SECRET"}],
                 "metadata": {"total": 2, "count_objects_in_module": {"LOCAL": 1, "SHARED": 1}}}}
         shape = configuration_view_shape(view)
@@ -1180,7 +1180,7 @@ class Tests(unittest.TestCase):
         self.assertIn("default-src 'none'", html)
 
     def test_metadata_only_zero_requires_requested_count(self):
-        from central_tool import module_view
+        from aruba_central.central_tool import module_view
         payload = {"metadata": {"count_objects_in_module": {"LOCAL": 0, "SHARED": 3, "ANY": 3}}}
         result = module_view(payload, "name", "LOCAL")
         self.assertEqual(result["status"], "list_parsed")
@@ -1194,7 +1194,7 @@ class Tests(unittest.TestCase):
                                      "name", "LOCAL")["status"], "count_mismatch")
 
     def test_refresh_saved_config_requalifies_only_proven_empty(self):
-        from central_tool import refresh_configuration_review
+        from aruba_central.central_tool import refresh_configuration_review
         local = {"status": "schema_unresolved", "raw": {
             "metadata": {"count_objects_in_module": {"LOCAL": 0, "SHARED": 1, "ANY": 1}}}}
         effective = {"status": "list_parsed", "raw": {"profiles": [
@@ -1211,7 +1211,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(module["summary"]["qualified_scopes"], 1)
 
     def test_dashboard_distinguishes_infrastructure_and_exact_repeat_groups(self):
-        from config_dashboard import finding_category, repeated_local_profiles
+        from aruba_central.config_dashboard import finding_category, repeated_local_profiles
         def record(module, sid, body, status="local_differs_from_global", persona="ACCESS_SWITCH"):
             row = {"identity": "10", "status": status, "local": body}
             return persona, module, sid, {"scope": sid, "scope_kind": "device",
@@ -1229,7 +1229,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(finding_category(a[1], a[3], a[3]["review"]["profiles"][0]), "candidate")
 
     def test_annotated_committed_recovery_requires_complete_count_and_sources(self):
-        from central_tool import annotated_committed_local
+        from aruba_central.central_tool import annotated_committed_local
         shared = {"name": "a", "@": {"aruba-annotation:object_type": "SHARED",
                                      "aruba-annotation:inherited": False}}
         local = {"name": "b", "@": {"aruba-annotation:object_type": "LOCAL",
@@ -1245,7 +1245,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(annotated_committed_local(bad, "name")["status"], "annotation_recovery_unverified")
 
     def test_explicit_initial_page_avoids_replaying_offset_zero(self):
-        from central_tool import read_module_view, read_raw_profile_collection
+        from aruba_central.central_tool import read_module_view, read_raw_profile_collection
         a, b, c = ({"name": name} for name in ("a", "b", "c"))
         for reader in (lambda client, deep: read_module_view(client, "dns", "name", {"view-type": "LOCAL"}, paginate_uncounted=deep),
                        lambda client, deep: read_raw_profile_collection(client, "dns", {"view-type": "LOCAL"}, paginate_uncounted=deep)):
@@ -1264,7 +1264,7 @@ class Tests(unittest.TestCase):
                 self.assertEqual(result.get("count_confirmed", result.get("collection_count_verified")), total is not None)
 
     def test_generic_module_recovers_truncated_collection(self):
-        from central_tool import read_module_view
+        from aruba_central.central_tool import read_module_view
         def page(names):
             return {"metadata": {"total": 3, "count": len(names)},
                     "profiles": [{"name": name} for name in names]}
@@ -1277,7 +1277,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(view["raw_pages"]), 2)
 
     def test_module_recovers_count_only_truncation_and_next_offsets(self):
-        from central_tool import read_module_view, module_view
+        from aruba_central.central_tool import read_module_view, module_view
         def page(names, offset, total=3):
             return {"metadata": {"count_objects_in_module": {"LOCAL": total, "ANY": total},
                                  "count": len(names), "offset": offset},
@@ -1294,7 +1294,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(read_module_view(fake, "snmp", "name", {})["pagination_status"], "count_changed")
 
     def test_generic_module_rejects_repeated_or_changed_pages(self):
-        from central_tool import read_module_view
+        from aruba_central.central_tool import read_module_view
         def page(names, total=3):
             return {"metadata": {"total": total, "count": len(names)},
                     "profiles": [{"name": name} for name in names]}
@@ -1312,13 +1312,13 @@ class Tests(unittest.TestCase):
                 self.assertEqual(view["profiles"], {})
 
     def test_explicit_null_envelope_requires_zero_count(self):
-        from central_tool import module_view
+        from aruba_central.central_tool import module_view
         self.assertEqual(module_view({"metadata": {"count_objects_in_module": {"ANY": 0}}, "snmp": None}, "name")["status"], "list_parsed")
         self.assertNotEqual(module_view({"snmp": None}, "name")["status"], "list_parsed")
         self.assertNotEqual(module_view({"metadata": {"count_objects_in_module": {"ANY": 0}, "total": 1}, "snmp": None}, "name")["status"], "list_parsed")
 
     def test_empty_local_is_retried_only_when_direct_local_is_observed(self):
-        from central_tool import recover_local_view
+        from aruba_central.central_tool import recover_local_view
         ann = {"aruba-annotation:object_type": "LOCAL", "aruba-annotation:inherited": False}
         profile = {"name": "one", "@": ann}
         effective = {"status": "list_parsed", "profiles": {"one": profile}}
@@ -1336,7 +1336,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(no_retry.calls, [])
 
     def test_library_reads_nac_with_default_parameters_once(self):
-        from central_tool import library_inventory
+        from aruba_central.central_tool import library_inventory
         fake = Fake([{"profiles": [{"auth-profile-id": "a"}]},
                      {"profiles": [{"vlan": 10}]}, {"config-assignment": []}])
         result = library_inventory(fake, {"auth-profiles", "layer2-vlan", "ethernet-interfaces"})
@@ -1347,7 +1347,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(result["assignment_coverage_verified"])
 
     def test_scoped_assignment_reads_recover_and_cross_check(self):
-        from central_tool import collect_scoped_assignments, discover_profile_types
+        from aruba_central.central_tool import collect_scoped_assignments, discover_profile_types
         def row(sid, name, module="snmp"):
             return {"scope-id": sid, "device-function": "ACCESS_SWITCH",
                     "profile-instance": name, "profile-type": module}
@@ -1367,7 +1367,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(fake.calls[1][1], {"scope-id": "2", "device-function": "ACCESS_SWITCH"})
 
     def test_assignment_inventory_recovers_pages_and_retains_partial_observations(self):
-        from central_tool import profile_inventory_view, collect_scoped_assignments
+        from aruba_central.central_tool import profile_inventory_view, collect_scoped_assignments
         def record(name):
             return {"scope-id": "1", "device-function": "ACCESS_SWITCH",
                     "profile-type": "new-module", "profile-instance": name}
@@ -1387,7 +1387,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(partial["coverage_verified"])
 
     def test_profile_failures_preserve_other_collection_work(self):
-        from central_tool import read_module_view, read_raw_profile_collection
+        from aruba_central.central_tool import read_module_view, read_raw_profile_collection
         class Client:
             def __init__(self, failure):
                 self.failure = failure
@@ -1403,7 +1403,7 @@ class Tests(unittest.TestCase):
                     read(Client(APIError("test", code)))
 
     def test_partial_assignment_pages_and_mixed_responses_retain_exact_matches(self):
-        from central_tool import collect_scoped_assignments
+        from aruba_central.central_tool import collect_scoped_assignments
         def record(sid, name):
             return {"scope-id": sid, "device-function": "ACCESS_SWITCH",
                     "profile-type": "dns", "profile-instance": name}
@@ -1420,7 +1420,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(result["coverage_verified"])
 
     def test_profile_type_discovery_keeps_unknown_and_scope_map_evidence(self):
-        from central_tool import discover_profile_types
+        from aruba_central.central_tool import discover_profile_types
         assignments = {"rows": [{"profile-type": "layer2-vlan", "device-function": "ACCESS_SWITCH"},
                                {"profile-type": "dns", "device-function": "CAMPUS_AP"},
                                {"profile-type": "../private", "device-function": "ACCESS_SWITCH"}]}
@@ -1434,7 +1434,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(data["complete"])
 
     def test_deep_uncounted_profile_pagination_preserves_all_records_without_proof(self):
-        from central_tool import read_module_view, read_raw_profile_collection
+        from aruba_central.central_tool import read_module_view, read_raw_profile_collection
         a, b, c = ({"name": name} for name in ("a", "b", "c"))
         initial = {"profiles": [a]}
         pages = [initial, {"profiles": [a, b]}, {"profiles": [c]}, {"profiles": []}]
@@ -1450,7 +1450,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(raw["collection_count_verified"])
 
     def test_uncounted_library_and_persona_mapping_preserve_unverified_records(self):
-        from central_tool import read_module_view, read_raw_profile_collection
+        from aruba_central.central_tool import read_module_view, read_raw_profile_collection
         for module, key, params, reason in (
             ("dns", "name", {"view-type": "LIBRARY"}, "library_pagination_unavailable"),
             ("device-persona-mapping", "device-type", {"view-type": "LOCAL"}, "offset_behavior_unverified")):
@@ -1466,7 +1466,7 @@ class Tests(unittest.TestCase):
                 self.assertEqual(view["raw_pages"], [])
 
     def test_uncounted_pages_reject_ignored_offsets_and_conflicting_identities(self):
-        from central_tool import read_module_view, read_raw_profile_collection
+        from aruba_central.central_tool import read_module_view, read_raw_profile_collection
         a, b = {"name": "a"}, {"name": "b"}
         initial = {"profiles": [a]}
         for page, reason in (({"profiles": [a]}, "duplicate_records"),
@@ -1484,7 +1484,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(raw["collection_count_verified"])
 
     def test_uncounted_pagination_is_opt_in_and_requires_documented_path(self):
-        from central_tool import read_module_view
+        from aruba_central.central_tool import read_module_view
         initial = {"profiles": [{"name": "a"}]}
         for module, enabled in (("dns", False), ("undocumented", True)):
             fake = Fake([initial])
@@ -1493,7 +1493,7 @@ class Tests(unittest.TestCase):
             self.assertNotIn("pagination_status", view)
 
     def test_raw_profile_collection_recovers_explicitly_truncated_pages(self):
-        from central_tool import read_raw_profile_collection
+        from aruba_central.central_tool import read_raw_profile_collection
         def page(total, offset, items):
             return {"metadata": {"total": total, "offset": offset, "count": len(items)}, "profiles": items}
         a, b, c = {"name": "one"}, {"name": "two"}, {"name": "three"}
@@ -1514,7 +1514,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(result["collection_count_verified"])
 
     def test_unadapted_profile_inspection_deduplicates_source_views_and_rejects_bad_selectors(self):
-        from central_tool import discover_profile_types, inspect_unadapted_profiles
+        from aruba_central.central_tool import discover_profile_types, inspect_unadapted_profiles
         assignments = {"rows": [{"profile-type": "new-module", "profile-instance": "a",
                                  "device-function": "ACCESS_SWITCH", "scope-id": "12"}]}
         maps = {"rows": [{"resource": "new-module/a", "persona": "ACCESS_SWITCH", "scope-id": 12},
@@ -1533,7 +1533,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(fake.calls[2][1], {"view-type": "LIBRARY", "detailed": "true"})
 
     def test_discovered_modules_are_surveyed_across_unassigned_scopes(self):
-        from central_tool import discover_profile_types, inspect_unadapted_profiles
+        from aruba_central.central_tool import discover_profile_types, inspect_unadapted_profiles
         assignments = {"rows": [{"profile-type": "new-module", "profile-instance": "a",
                                  "device-function": "ACCESS_SWITCH", "scope-id": "12"}]}
         discovery = discover_profile_types(assignments, {})
@@ -1550,7 +1550,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(evidence["safe_to_apply"])
 
     def test_runtime_identity_requires_unique_inventory_match_and_counts(self):
-        from central_tool import qualify_observed_identities
+        from aruba_central.central_tool import qualify_observed_identities
         def source(ambiguous=False):
             rows = [{"identifier": v, "description": v if ambiguous else "example",
                      "@": {"aruba-annotation:object_type": "LOCAL",
@@ -1574,7 +1574,7 @@ class Tests(unittest.TestCase):
     def test_ordered_parallel_bounds_workers_and_preserves_order(self):
         import threading
         import time
-        from central_tool import ordered_parallel, AUDIT_WORKERS
+        from aruba_central.central_tool import ordered_parallel, AUDIT_WORKERS
         lock = threading.Lock()
         active = peak = 0
         updates = []
@@ -1594,7 +1594,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(updates, [(i, 12) for i in range(1, 13)])
 
     def test_config_validator_metrics_are_aggregate_and_ignore_other_requests(self):
-        from central_tool import Central, ALPHA
+        from aruba_central.central_tool import Central, ALPHA
         from urllib.request import Request
         from types import SimpleNamespace
         base = "https://de1.api.central.arubanetworks.com"
@@ -1613,7 +1613,7 @@ class Tests(unittest.TestCase):
                           "keyed_weak_etag": 1})
 
     def test_direct_https_handler_reuses_connection_and_discards_errors(self):
-        from central_tool import PersistentCentralHTTPS
+        from aruba_central.central_tool import PersistentCentralHTTPS
         from urllib.request import Request
         from unittest.mock import Mock, patch
         from types import SimpleNamespace
@@ -1621,7 +1621,7 @@ class Tests(unittest.TestCase):
         first = Request(EU_REGIONS[0] + "/example")
         second = Request(EU_REGIONS[1] + "/example")
         first.timeout = second.timeout = 30
-        with patch("central_tool.HTTPSConnection") as factory:
+        with patch("aruba_central.central_tool.HTTPSConnection") as factory:
             connection = factory.return_value
             connection.getresponse.side_effect = [
                 SimpleNamespace(status=200, reason="OK"), SimpleNamespace(status=200, reason="OK"),
@@ -1645,7 +1645,7 @@ class Tests(unittest.TestCase):
             self.assertEqual(fallback.call_count, 3)
 
     def test_worker_budget_adapts_only_with_enough_successful_latency_samples(self):
-        from central_tool import AUDIT_WORKERS, AUDIT_MAX_WORKERS
+        from aruba_central.central_tool import AUDIT_WORKERS, AUDIT_MAX_WORKERS
         client = Central(EU_REGIONS[0], token="test")
         client._successful_get_latency.extend([2.0] * 31)
         self.assertEqual(client.recommended_audit_workers(AUDIT_WORKERS), AUDIT_WORKERS)
@@ -1660,18 +1660,18 @@ class Tests(unittest.TestCase):
     def test_rate_limit_backoff_and_gradual_recovery_respects_cap(self):
         from unittest.mock import patch
         client = Central(EU_REGIONS[0], token="test")
-        with patch("central_tool.time.monotonic", return_value=100):
+        with patch("aruba_central.central_tool.time.monotonic", return_value=100):
             client._rate_limit_response(5)
             self.assertAlmostEqual(1 / client._request_interval, 8)
             self.assertEqual(client._retry_at, 105)
             client._rate_limit_response(10)
             self.assertAlmostEqual(1 / client._request_interval, 7)
             self.assertEqual(client._retry_at, 110)
-        with patch("central_tool.time.monotonic", return_value=150):
+        with patch("aruba_central.central_tool.time.monotonic", return_value=150):
             client._wait_rate_limit()
             self.assertAlmostEqual(1 / client._request_interval, 7)
         for now, rate in ((170, 7.5), (200, 8), (230, 8.5), (260, 9), (290, 9)):
-            with patch("central_tool.time.monotonic", return_value=now):
+            with patch("aruba_central.central_tool.time.monotonic", return_value=now):
                 client._wait_rate_limit()
                 self.assertAlmostEqual(1 / client._request_interval, rate)
         self.assertEqual(client._retry_delay("12", 0), 12)
@@ -1724,7 +1724,7 @@ class Tests(unittest.TestCase):
         client = Central(EU_REGIONS[0], token="test")
         client._http.opener = Mock()
         request = Request(client.base + "/network-config/v1alpha1/dns")
-        with patch.object(client, "_wait_rate_limit"), patch("central_tool.time.sleep"):
+        with patch.object(client, "_wait_rate_limit"), patch("aruba_central.central_tool.time.sleep"):
             client._http.opener.open.side_effect = [URLError(TimeoutError()), ConnectionResetError(),
                                                        BytesIO(b'{"items":[]}')]
             self.assertEqual(client._request(request, "dns"), {"items": []})
@@ -1757,7 +1757,7 @@ class Tests(unittest.TestCase):
         def failure(request, **kwargs):
             raise HTTPError(request.full_url, 500, "error", {}, None)
         client._http.opener.open.side_effect = failure
-        with patch.object(client, "_wait_rate_limit"), patch("central_tool.time.sleep"):
+        with patch.object(client, "_wait_rate_limit"), patch("aruba_central.central_tool.time.sleep"):
             for _ in range(3):
                 with self.assertRaises(APIError):
                     client._request(custom, "custom")
@@ -1781,7 +1781,7 @@ class Tests(unittest.TestCase):
                 "custom_500_retry_sequences_suppressed": 1})
 
     def test_ordered_parallel_bounded_submission_and_order(self):
-        from central_tool import ordered_parallel
+        from aruba_central.central_tool import ordered_parallel
         from unittest.mock import patch
         from concurrent.futures import ThreadPoolExecutor
         from threading import Event, Thread
@@ -1799,7 +1799,7 @@ class Tests(unittest.TestCase):
                 raise RuntimeError("scheduler failed to replenish")
             return value * 2
         progress = []
-        with patch("central_tool.ThreadPoolExecutor", RecordingExecutor):
+        with patch("aruba_central.central_tool.ThreadPoolExecutor", RecordingExecutor):
             result = ordered_parallel(range(100), collect, workers=2,
                                       completed=lambda done, total: progress.append((done, total)))
         self.assertEqual(result, [i * 2 for i in range(100)])
@@ -1807,7 +1807,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(submitted, list(range(100)))
 
     def test_ordered_parallel_does_not_admit_entire_queue_on_failure(self):
-        from central_tool import ordered_parallel
+        from aruba_central.central_tool import ordered_parallel
         from unittest.mock import patch
         from concurrent.futures import ThreadPoolExecutor
         submitted = []
@@ -1819,7 +1819,7 @@ class Tests(unittest.TestCase):
             if value == 0:
                 raise ValueError("fatal")
             return value
-        with patch("central_tool.ThreadPoolExecutor", RecordingExecutor):
+        with patch("aruba_central.central_tool.ThreadPoolExecutor", RecordingExecutor):
             with self.assertRaisesRegex(ValueError, "fatal"):
                 ordered_parallel(range(10000), collect, workers=2)
         self.assertLessEqual(len(submitted), 4)
@@ -1827,7 +1827,7 @@ class Tests(unittest.TestCase):
     def test_concurrent_token_refresh_is_single_flight(self):
         import time
         from unittest.mock import patch
-        from central_tool import Central, EU_REGIONS, ordered_parallel
+        from aruba_central.central_tool import Central, EU_REGIONS, ordered_parallel
         client = Central(EU_REGIONS[0], client_id="test", client_secret="secret")
         def token(*args):
             time.sleep(.02)
@@ -1838,7 +1838,7 @@ class Tests(unittest.TestCase):
 
     def test_configuration_operational_capture_is_best_effort_and_switch_only(self):
         from unittest.mock import patch
-        from central_tool import capture_configuration_operational_vlans
+        from aruba_central.central_tool import capture_configuration_operational_vlans
         results = {
             "ACCESS_SWITCH": {"scopes": [{"id": "1", "kind": "global"},
                                          {"id": "2", "kind": "device", "metadata": {"serial": "a"}},
@@ -1848,7 +1848,7 @@ class Tests(unittest.TestCase):
             if metadata["serial"] == "a":
                 return {"status": "response_received", "payload": {"vlans": []}}
             raise RuntimeError("sanitized failure")
-        with patch("central_tool.probe_operational_vlans", side_effect=probe) as read:
+        with patch("aruba_central.central_tool.probe_operational_vlans", side_effect=probe) as read:
             data = capture_configuration_operational_vlans(object(), results, workers=1)
         self.assertEqual(read.call_count, 2)
         self.assertEqual(data["ACCESS_SWITCH"]["2"]["status"], "response_received")
@@ -1856,7 +1856,7 @@ class Tests(unittest.TestCase):
         self.assertNotIn("CAMPUS_AP", data)
 
     def test_vlan_instance_reads_validate_identity_and_local_source(self):
-        from central_tool import read_vlan_instance, VLAN
+        from aruba_central.central_tool import read_vlan_instance, VLAN
         annotation = {"aruba-annotation:object_type": "LOCAL",
                       "aruba-annotation:inherited": False}
         fake = Fake([{"l2-vlan": [{"vlan": 1, "name": "DEFAULT_VLAN_1", "enable": True, "@": annotation}]},
@@ -1877,7 +1877,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(read_vlan_instance(fake, "ACCESS_SWITCH", "12", "1", False)["status"], "source_unverified")
 
     def test_vlan_instance_capture_only_targets_omitted_fields(self):
-        from central_tool import capture_vlan_instance_details
+        from aruba_central.central_tool import capture_vlan_instance_details
         from unittest.mock import patch
         data = {"ACCESS_SWITCH": {"modules": {"layer2-vlan": {"scope_results": [
             {"scope": "12", "scope_kind": "device", "review": {"qualified": True, "profiles": [
@@ -1885,14 +1885,14 @@ class Tests(unittest.TestCase):
                 {"identity": "10", "local": {"vlan": 10, "name": "Complete", "enable": True},
                  "effective": {"vlan": 10, "name": "Complete", "enable": True}},
                 {"identity": "20", "local": None, "effective": {"vlan": 20}}]}}]}}}}
-        with patch("central_tool.read_vlan_instance", return_value={"status": "observed", "profile": {"vlan": 1}}) as read:
+        with patch("aruba_central.central_tool.read_vlan_instance", return_value={"status": "observed", "profile": {"vlan": 1}}) as read:
             details = capture_vlan_instance_details(object(), data, workers=1)
         self.assertEqual(read.call_count, 2)
         self.assertEqual(set(details["ACCESS_SWITCH"]["12"]["1"]), {"local", "effective"})
         self.assertNotIn("10", details["ACCESS_SWITCH"]["12"])
 
     def test_vlan_detail_reuses_exact_keyed_response_with_source_validation(self):
-        from central_tool import capture_vlan_instance_details
+        from aruba_central.central_tool import capture_vlan_instance_details
         from unittest.mock import patch
         data = {"ACCESS_SWITCH": {"modules": {"layer2-vlan": {"scope_results": [
             {"scope": "12", "scope_kind": "device", "review": {"qualified": True, "profiles": [
@@ -1901,7 +1901,7 @@ class Tests(unittest.TestCase):
         keyed = {"profiles": {"ACCESS_SWITCH": {"12": {"layer2-vlan": {"1": {
             "local": {"status": "identity_observed", "raw": raw},
             "effective": {"status": "identity_observed", "raw": raw}}}}}}}
-        with patch("central_tool.read_vlan_instance") as read:
+        with patch("aruba_central.central_tool.read_vlan_instance") as read:
             result = capture_vlan_instance_details(object(), data, workers=1, keyed_details=keyed)
             read.assert_not_called()
         self.assertEqual(result["ACCESS_SWITCH"]["12"]["1"]["local"]["status"], "source_unverified")
@@ -1909,12 +1909,12 @@ class Tests(unittest.TestCase):
         self.assertTrue(result["ACCESS_SWITCH"]["12"]["1"]["effective"]["reused_exact_individual"])
         keyed["profiles"]["ACCESS_SWITCH"]["12"]["layer2-vlan"]["1"]["effective"] = {
             "status": "collection_only_sampled"}
-        with patch("central_tool.read_vlan_instance", return_value={"status": "observed"}) as read:
+        with patch("aruba_central.central_tool.read_vlan_instance", return_value={"status": "observed"}) as read:
             capture_vlan_instance_details(object(), data, workers=1, keyed_details=keyed)
             self.assertEqual(read.call_count, 1)
 
     def test_monitoring_voice_filters_require_a_complete_disjoint_partition(self):
-        from central_tool import collect_monitoring_voice_filter
+        from aruba_central.central_tool import collect_monitoring_voice_filter
         metadata = {"serial": "ABC123"}
         evidence = {"status": "response_received", "identity_field": "serial",
                     "payload": {"items": [{"id": 1}, {"id": 10}]}}
@@ -1934,7 +1934,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(collect_monitoring_voice_filter(Fake([]), metadata, complete)["status"], "not_needed_or_unavailable")
 
     def test_multicast_interface_absence_does_not_prove_snooping_disabled(self):
-        from central_tool import multicast_interface_evidence, monitoring_vlan_records
+        from aruba_central.central_tool import multicast_interface_evidence, monitoring_vlan_records
         ids = {"1", "10"}
         for field in ("igmp", "mld"):
             text = f"\n{field.upper()} is not enabled on any of the interfaces.\n"
@@ -1949,7 +1949,7 @@ class Tests(unittest.TestCase):
         self.assertIsNone(monitoring_vlan_records({"items": [{"id": 1}], "count": 1, "total": 1, "offset": 1}))
 
     def test_multicast_interface_commands_use_explicit_snooping_flag(self):
-        from central_tool import parse_multicast_interface_output
+        from aruba_central.central_tool import parse_multicast_interface_output
         for field in ("igmp", "mld"):
             label = field.upper()
             text = (f"VRF Name : default\nInterface : vlan10\n{label} Operating Version : 2\n"
@@ -1962,7 +1962,7 @@ class Tests(unittest.TestCase):
             self.assertEqual(parse_multicast_interface_output("No entries found", field, {"10"}), {})
 
     def test_live_dhcp_output_and_central_rejection(self):
-        from central_tool import parse_vlan_feature, supported_show_commands
+        from aruba_central.central_tool import parse_vlan_feature, supported_show_commands
         ids = {"1", "1000"}
         def envelope(command, output):
             return {"status": "COMPLETED", "output": {"results": [
@@ -1985,7 +1985,7 @@ class Tests(unittest.TestCase):
                          {"show vlan", "show running-config all"})
 
     def test_running_config_only_recovers_explicit_vlan_context(self):
-        from central_tool import parse_vlan_running_config
+        from aruba_central.central_tool import parse_vlan_running_config
         text = ("Current configuration:\n!\nvlan 1\n    no voice\n"
                 "vlan 10,20\n    voice\n    ip igmp snooping enable\n"
                 "    ipv6 mld snooping disable\n"
@@ -1998,7 +1998,7 @@ class Tests(unittest.TestCase):
         self.assertNotIn("30", result)
 
     def test_vlan_feature_parsers_require_explicit_evidence(self):
-        from central_tool import parse_vlan_feature
+        from aruba_central.central_tool import parse_vlan_feature
         ids = {"1", "10", "20"}
         voice = "VLAN Name Status Type Interfaces\n10 Phone up static 1/1/1"
         self.assertEqual(parse_vlan_feature(voice, "voice-enable", ids)["vlans"],
@@ -2020,7 +2020,7 @@ class Tests(unittest.TestCase):
             self.assertEqual(parse_vlan_feature("Invalid input", field, ids)["status"], "schema_unresolved")
 
     def test_show_vlan_parser_distinguishes_shutdown_from_link_state(self):
-        from central_tool import parse_show_vlan
+        from aruba_central.central_tool import parse_show_vlan
         output = "VLAN Name Status Reason Type Interfaces\n1 DEFAULT_VLAN_1 up ok static 1/1/1\n20 Management VLAN down admin_down static 1/1/2\n30 Guest down no_member_port static\n"
         evidence = parse_show_vlan({"status": "COMPLETED", "output": [{"command": "show vlan", "output": output}]})
         self.assertEqual(evidence["status"], "observed")
@@ -2031,7 +2031,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(parse_show_vlan({"output": "show vlan failed"})["status"], "schema_unresolved")
 
     def test_svi_identity_does_not_guess(self):
-        from central_tool import svi_vlan_id
+        from aruba_central.central_tool import svi_vlan_id
         self.assertEqual(svi_vlan_id({"id": 10, "vlan": "10"}), "10")
         for item in ({"id": "1/1/10"}, {"name": "vlan10"}, {"id": 10, "vlan": 20}):
             with self.subTest(item=item), self.assertRaises(ValueError):

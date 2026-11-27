@@ -1,5 +1,5 @@
 import unittest
-from assignment_review import assignment_review
+from aruba_central.assignment_review import assignment_review
 from test_inheritance_review import fixture
 
 
@@ -37,7 +37,7 @@ class AssignmentReviewTests(unittest.TestCase):
         import json
         import tempfile
         from pathlib import Path
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         from test_configuration_history import snapshot
         with tempfile.TemporaryDirectory() as directory:
             name = "config-audit-test.json"

@@ -1,5 +1,5 @@
 import unittest
-from policy_variants import policy_variants
+from aruba_central.policy_variants import policy_variants
 
 
 class PolicyVariantTests(unittest.TestCase):

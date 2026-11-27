@@ -2,7 +2,7 @@ import copy
 import unittest
 from unittest.mock import patch
 
-from remediation_review import verify_override, verify_library_migration, comparable
+from aruba_central.remediation_review import verify_override, verify_library_migration, comparable
 from test_configuration_history import snapshot
 
 
@@ -20,7 +20,7 @@ class RemediationTests(unittest.TestCase):
         target = after["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"][-1]
         target["local_view"] = {"status": "list_parsed", "count_confirmed": True, "profiles": {}}
         target["effective_view"]["profiles"]["20"]["@"] = {"aruba-annotation:inherited": True}
-        with patch("remediation_review.override_candidates", return_value=[candidate]):
+        with patch("aruba_central.remediation_review.override_candidates", return_value=[candidate]):
             result = verify_override(before, after, "candidate", confirmed=True)
             self.assertEqual(result["rows"][0]["status"], "observed_goal_met")
             self.assertFalse(result["safe_to_apply"])
@@ -47,7 +47,7 @@ class RemediationTests(unittest.TestCase):
         group = {"module": module, "identities": ["keep", "old"], "usage": {
             "keep": dict(common), "old": {**common, "matching_other_devices": [{"persona": persona, "scope": "4", "name": "Target"}]}}}
         after["library"]["assignments"] = {"rows": [{"profile-type": module, "profile-instance": "old"}]}
-        with patch("remediation_review.duplicate_candidates", return_value=[group]), patch("remediation_review.advanced_analysis", return_value={"references": [{"target_module": module, "target": "old"}]}):
+        with patch("aruba_central.remediation_review.duplicate_candidates", return_value=[group]), patch("aruba_central.remediation_review.advanced_analysis", return_value={"references": [{"target_module": module, "target": "old"}]}):
             report = verify_library_migration(before, after, module, "keep", confirmed=True)
         self.assertEqual(report["rows"][0]["status"], "observed_profiles_match_goal")
         self.assertEqual(len(report["remaining_references"]), 1)
@@ -59,7 +59,7 @@ class RemediationTests(unittest.TestCase):
         import json
         import tempfile
         from pathlib import Path
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         before, after = self.captures()
         with tempfile.TemporaryDirectory() as directory:
             for name, data in (("before", before), ("after", after)):

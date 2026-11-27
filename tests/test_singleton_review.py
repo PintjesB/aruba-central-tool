@@ -1,6 +1,6 @@
 import unittest
-from central_tool import inspect_unadapted_profiles
-from singleton_review import singleton_view, singleton_review
+from aruba_central.central_tool import inspect_unadapted_profiles
+from aruba_central.singleton_review import singleton_view, singleton_review
 
 
 class SingletonTests(unittest.TestCase):

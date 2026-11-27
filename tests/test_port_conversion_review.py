@@ -1,5 +1,5 @@
 import unittest
-from port_conversion_review import port_conversion_review
+from aruba_central.port_conversion_review import port_conversion_review
 
 
 class PortConversionTests(unittest.TestCase):

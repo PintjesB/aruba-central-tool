@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 from unittest.mock import patch
 
-from config_app import Workspace, audit_files, compare_devices, handler_for, read_audit
+from aruba_central.config_app import Workspace, audit_files, compare_devices, handler_for, read_audit
 
 
 class WorkspaceTests(unittest.TestCase):
@@ -76,7 +76,7 @@ class WorkspaceTests(unittest.TestCase):
             name = "config-audit-supplemental.json"
             (Path(directory) / name).write_text(json.dumps(data), encoding="utf-8")
             query = {"snapshot": name, "module": "portals", "persona": "ACCESS_SWITCH", "scope": "a"}
-            with patch("central_tool.refresh_configuration_review", side_effect=lambda data: data) as review:
+            with patch("aruba_central.central_tool.refresh_configuration_review", side_effect=lambda data: data) as review:
                 html = workspace.unadapted(query)
                 self.assertIn("Observed profiles", html)
                 self.assertIn("Different observed settings", html)
@@ -99,7 +99,7 @@ class WorkspaceTests(unittest.TestCase):
             two = Path(directory) / "config-audit-two.json"
             one.write_text(json.dumps(self.fixture()), encoding="utf-8")
             two.write_text(json.dumps(self.fixture()), encoding="utf-8")
-            with patch("central_tool.refresh_configuration_review", side_effect=lambda data: data) as review:
+            with patch("aruba_central.central_tool.refresh_configuration_review", side_effect=lambda data: data) as review:
                 first = workspace.reviewed_snapshot(one.name)
                 self.assertIs(first, workspace.reviewed_snapshot(one.name))
                 self.assertEqual(review.call_count, 1)
@@ -165,7 +165,7 @@ class WorkspaceTests(unittest.TestCase):
                 opaque = {**same, "Origin": "null", "Sec-Fetch-Site": "same-origin"}
                 form = urlencode({"csrf": workspace.csrf, "client_id": "example-id",
                                   "client_secret": "example-secret", "region": "", "depth": "deep"})
-                with patch("config_app.credential_refresh", return_value=lambda progress=None: self.fixture()) as factory:
+                with patch("aruba_central.config_app.credential_refresh", return_value=lambda progress=None: self.fixture()) as factory:
                     self.assertEqual(request("POST", root + "credentials",
                                              {**opaque, "Sec-Fetch-Site": "cross-site"}, form)[0], 403)
                     self.assertEqual(request("POST", root + "credentials",
@@ -190,7 +190,7 @@ class WorkspaceTests(unittest.TestCase):
                 thread.join()
 
     def test_coverage_distinguishes_partial_and_unqualified(self):
-        from config_app import module_coverage
+        from aruba_central.config_app import module_coverage
         bundle = {"results": {"ACCESS_SWITCH": {"modules": {
             "a": {"scope_results": [{"review": {"qualified": True}}]},
             "b": {"scope_results": [{"review": {"qualified": True}}, {"review": {"qualified": False}}]},
@@ -202,11 +202,11 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_one_shot_credentials_are_not_saved_or_retained(self):
         from unittest.mock import patch
-        from config_app import credential_refresh
-        from central_tool import EU_REGIONS
+        from aruba_central.config_app import credential_refresh
+        from aruba_central.central_tool import EU_REGIONS
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace(directory)
-            with patch("central_tool.detect_region"), patch("central_tool.configuration_audit", return_value=self.fixture()):
+            with patch("aruba_central.central_tool.detect_region"), patch("aruba_central.central_tool.configuration_audit", return_value=self.fixture()):
                 refresh = credential_refresh("test-client-id", "test-secret", EU_REGIONS[0])
                 from inspect import getclosurevars
                 client = getclosurevars(refresh).nonlocals['client']
@@ -228,7 +228,7 @@ class WorkspaceTests(unittest.TestCase):
                 credential_refresh("id", "secret", "https://example.com")
 
     def test_library_comparison_joins_exact_identities_and_qualified_local_bodies(self):
-        from config_app import library_profile_comparison
+        from aruba_central.config_app import library_profile_comparison
         data = self.fixture()
         data["library"] = {"modules": {"layer2-vlan": {"status": "list_parsed", "profiles": {
             "10": {"vlan": 10, "name": "A", "@": {"source": "shared"}},
@@ -251,7 +251,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(len(library_profile_comparison(data, "layer2-vlan")["10"]["local_variants"]), 1)
 
     def test_customer_boundary_rejects_unrelated_inventory(self):
-        from config_app import verify_workspace_identity, WorkspaceIdentityError
+        from aruba_central.config_app import verify_workspace_identity, WorkspaceIdentityError
         def capture(serial, region="region", global_id="1"):
             return {"schema": 1, "kind": "configuration_audit", "region": region,
                     "inventory": [{"inventory": {"serial": serial}}],
@@ -274,7 +274,7 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(len(audit_files(directory)), 1)
 
     def test_refresh_failure_is_sanitized(self):
-        from central_tool import APIError
+        from aruba_central.central_tool import APIError
         def fail(progress=None):
             raise APIError("OAuth", 403)
         with tempfile.TemporaryDirectory() as directory:
@@ -289,8 +289,8 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(audit_files(Path(directory)), [])
 
     def test_compact_performance_cache_is_bound_to_snapshot(self):
-        from config_app import read_performance, historical_phase_times
-        from central_tool import write_private
+        from aruba_central.config_app import read_performance, historical_phase_times
+        from aruba_central.central_tool import write_private
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config-audit-test.json"
             bundle = self.fixture()
@@ -306,7 +306,7 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(record["attempts"], 50)
             self.assertTrue(path.with_suffix(".performance.json").exists())
             self.assertEqual(len(audit_files(Path(directory))), 1)
-            with patch("config_app.read_audit", side_effect=AssertionError("unexpected full snapshot parse")):
+            with patch("aruba_central.config_app.read_audit", side_effect=AssertionError("unexpected full snapshot parse")):
                 self.assertEqual(read_performance(path), record)
                 self.assertEqual(historical_phase_times(Path(directory), "deep")["Profile details"], 10)
                 self.assertIn("Collection performance history", Workspace(directory).performance_history())
@@ -320,11 +320,11 @@ class WorkspaceTests(unittest.TestCase):
             workspace = Workspace(directory)
             workspace.state = "running"
             workspace.started = 100
-            with patch("config_app.time.monotonic", return_value=160):
+            with patch("aruba_central.config_app.time.monotonic", return_value=160):
                 workspace.update_progress("Discovery", 0, 0, "Inventory")
-            with patch("config_app.time.monotonic", return_value=200):
+            with patch("aruba_central.config_app.time.monotonic", return_value=200):
                 workspace.update_progress("Profile details", 0, 100, "Details")
-            with patch("config_app.time.monotonic", return_value=220):
+            with patch("aruba_central.config_app.time.monotonic", return_value=220):
                 workspace.update_progress("Profile details", 40, 100, "Details")
                 state = workspace.status()
             self.assertEqual(state["elapsed"], 120)
@@ -333,13 +333,13 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(state["phase_eta_seconds"], 30)
             self.assertEqual(state["phase_history"], [
                 {"phase": "Discovery", "done": 0, "total": 0, "seconds": 40}])
-            with patch("config_app.time.monotonic", return_value=230):
+            with patch("aruba_central.config_app.time.monotonic", return_value=230):
                 workspace.update_progress("Profile detail expansion", 0, 20, "Expansion")
                 self.assertIsNone(workspace.status()["phase_eta_seconds"])
                 self.assertEqual(workspace.status()["phase_elapsed"], 0)
 
     def test_overall_progress_uses_time_weighted_remaining_phases(self):
-        from config_app import overall_audit_progress
+        from aruba_central.config_app import overall_audit_progress
         history = {"Configuration scopes": 100, "Additional profile types": 300,
                    "Profile details": 200, "Scope hierarchy": 20}
         state = overall_audit_progress("Additional profile types", "deep", history,

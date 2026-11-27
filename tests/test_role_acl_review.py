@@ -1,7 +1,7 @@
 import unittest
-from role_acl_review import literal_destination, acl_prefix_review
-from policy_rule_review import rule_review
-from advanced_review import explicit_references
+from aruba_central.role_acl_review import literal_destination, acl_prefix_review
+from aruba_central.policy_rule_review import rule_review
+from aruba_central.advanced_review import explicit_references
 
 
 def rule(position, destination, action="PERMIT", role="Guest", vrf="default", **fields):

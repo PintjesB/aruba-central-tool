@@ -2,7 +2,7 @@ import unittest
 import tempfile
 import json
 from pathlib import Path
-from assessment_review import assessment
+from aruba_central.assessment_review import assessment
 from test_consolidation import fixture
 
 
@@ -18,7 +18,7 @@ class AssessmentTests(unittest.TestCase):
         self.assertFalse(report["complete"])
 
     def test_workspace_links_and_report(self):
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         with tempfile.TemporaryDirectory() as tmp:
             name = "config-audit-test.json"
             (Path(tmp) / name).write_text(json.dumps(fixture()))

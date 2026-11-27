@@ -1,5 +1,5 @@
 import unittest
-from nac_review import read_mac_registrations, nac_review, normalized_mac
+from aruba_central.nac_review import read_mac_registrations, nac_review, normalized_mac
 
 
 def row(id_, mac, tags=None):

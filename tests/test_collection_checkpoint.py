@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
-from collection_checkpoint import ScopeCheckpoint, mark_complete, qualification_manifest
+from aruba_central.collection_checkpoint import ScopeCheckpoint, mark_complete, qualification_manifest
 
 
 class CheckpointTests(unittest.TestCase):
@@ -59,7 +59,7 @@ class CheckpointTests(unittest.TestCase):
             qualification_manifest("region", plans, [], "catalog")
 
     def test_mixed_capture_not_valid_for_remediation(self):
-        from remediation_review import comparable
+        from aruba_central.remediation_review import comparable
         with self.assertRaisesRegex(ValueError, "fresh captures"):
             comparable({}, {"collection_checkpoint": {"mixed_capture_times": True}}, True)
 
@@ -85,8 +85,8 @@ class CheckpointTests(unittest.TestCase):
             self.assertEqual(resumed.evidence()["additional_observations_saved"], {"raw_catalog": 1})
 
     def test_workspace_lists_only_valid_checkpoints(self):
-        from collection_checkpoint import available_checkpoints
-        from config_app import Workspace
+        from aruba_central.collection_checkpoint import available_checkpoints
+        from aruba_central.config_app import Workspace
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
             path = directory / ("collection-" + "a" * 32 + ".db")

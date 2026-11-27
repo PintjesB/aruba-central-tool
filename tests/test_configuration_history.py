@@ -1,5 +1,5 @@
 import unittest
-from configuration_history import configuration_drift, reference_compliance, view_changes
+from aruba_central.configuration_history import configuration_drift, reference_compliance, view_changes
 
 
 def view(name="Office", confirmed=True):
@@ -93,7 +93,7 @@ class HistoryTests(unittest.TestCase):
         self.assertFalse(result["reference_count_confirmed"])
 
     def test_drift_groups_keep_views_separate_and_count_device_impact(self):
-        from drift_review import drift_groups
+        from aruba_central.drift_review import drift_groups
         before, current = snapshot(), snapshot("Changed")
         result = configuration_drift(before, current, confirmed=True)
         groups = drift_groups(result["records"], current)
@@ -106,7 +106,7 @@ class HistoryTests(unittest.TestCase):
         self.assertFalse(group["safe_to_apply"])
 
     def test_drift_groups_do_not_merge_different_transitions(self):
-        from drift_review import drift_groups
+        from aruba_central.drift_review import drift_groups
         current = snapshot("Changed")
         rows = configuration_drift(snapshot(), current, confirmed=True)["records"]
         rows[0]["after"] = {"name": "Other"}
@@ -117,7 +117,7 @@ class HistoryTests(unittest.TestCase):
         import json
         import tempfile
         from pathlib import Path
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         with tempfile.TemporaryDirectory() as directory:
             for name, data in (("config-audit-old.json", snapshot()),
                                ("config-audit-new.json", snapshot("Changed"))):

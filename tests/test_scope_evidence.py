@@ -1,6 +1,6 @@
 import unittest
-from central_tool import APIError
-from scope_evidence import hierarchy_capture, keyed_assignment_capture
+from aruba_central.central_tool import APIError
+from aruba_central.scope_evidence import hierarchy_capture, keyed_assignment_capture
 
 
 class ScopeEvidenceTests(unittest.TestCase):
@@ -94,7 +94,7 @@ class ScopeEvidenceTests(unittest.TestCase):
 
 
     def test_legacy_assignment_resource_preserves_exact_full_identity(self):
-        from scope_evidence import legacy_assignment_status
+        from aruba_central.scope_evidence import legacy_assignment_status
         row = {"scope-id": 12, "device-function": "ACCESS_SWITCH",
                "profile-type": "ethernet-interfaces", "profile-instance": "1/1/24"}
         identity = ("12", "ACCESS_SWITCH", "ethernet-interfaces", "1/1/24")
@@ -149,7 +149,7 @@ class ScopeEvidenceTests(unittest.TestCase):
         self.assertFalse(result["complete"])
 
     def test_assignment_rejection_reasons_do_not_expose_identifiers(self):
-        from scope_evidence import assignment_selector_rejection
+        from aruba_central.scope_evidence import assignment_selector_rejection
         row = {"scope-id": 12, "device-function": "ACCESS_SWITCH",
                "profile-type": "dns", "profile-instance": "example"}
         self.assertIsNone(assignment_selector_rejection(row))

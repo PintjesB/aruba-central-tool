@@ -1,5 +1,5 @@
 import unittest
-from policy_sequence_review import sequence_entries, compare_sequence, policy_sequence_reviews
+from aruba_central.policy_sequence_review import sequence_entries, compare_sequence, policy_sequence_reviews
 from test_policy_rule_review import policy, rule
 
 
