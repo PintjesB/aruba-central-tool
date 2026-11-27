@@ -37,14 +37,20 @@ def impact_view(workspace, query):
                          ("Reachable consumers", counts["consumers"], "Per resolved context"),
                          ("Reachable dependencies", counts["dependencies"], "Per resolved context"),
                          ("Unresolved target observations", len(result["unresolved_target_observations"]), "Could affect this module")])
+        direction = query.get("direction", "")
+        if direction not in ("", "consumers", "dependencies"):
+            raise ValueError("Unknown reference direction")
+        body += direction_panel(root, name, module, identity, persona, scope, counts, direction, result["truncated"])
         rows = []
         for p in sorted(paths, key=lambda v: (v["direction"], v["depth"], v["persona"], v["scope"], v["module"], v["identity"])):
+            if direction and p["direction"] != direction:
+                continue
             chain = []
             for ref in p["edges"]:
                 chain.append(tr(e(module_label(ref["source_module"]) + " / " + ref["source"]),
                                 e(".".join(map(str, ref["path"]))),
                                 e(module_label(ref["target_module"]) + " / " + str(ref["target"]))))
-            details = table(("Source", "Reference field", "Target"), chain) + raw(p)
+            details = reference_path(p) + table(("Source", "Reference field", "Target"), chain) + raw(p)
             rows.append(tr(e(pretty(p["direction"])), e(p["edges"][0]["device"]), e(persona_label(p["persona"])),
                            e(pretty(p["view"])), e(module_label(p["module"])), e(p["identity"]),
                            str(p["depth"]), inspect("Reference chain", details)))
@@ -60,4 +66,47 @@ def impact_view(workspace, query):
         headers = ("Scope", "Function", "View", "Source", "Target", "Result", "")
         body += '<section><h2>Direct references</h2>' + table(headers, reference_rows(direct), search=True) + '</section>'
         body += '<section><h2>Unresolved target identities in this module</h2>' + table(headers, reference_rows(result["unresolved_target_observations"]), search=True) + '<p class="note">These references may point elsewhere; do not assign them to the selected identity without more evidence.</p></section>'
-    return page("Dependency impact", body, workspace.nav(name))
+    return page("Dependency impact", body, workspace.nav(name), extra_css=IMPACT_CSS)
+
+
+def direction_panel(root, snapshot, module, identity, persona, scope, counts, selected, truncated):
+    params = {"snapshot": snapshot, "module": module, "identity": identity, "persona": persona, "scope": scope}
+    def tile(direction, title, description, count):
+        href = url(root, "impact", **params, direction=direction)
+        return (f'<a class="impact-direction" href="{href}"' + (' aria-current="true"' if direction == selected else "") + '>'
+                f'<strong>{count}</strong><span>{e(title)}</span><small>{e(description)}</small></a>')
+    return ('<section><h2>Reference direction</h2><div class="impact-flow">'
+            + tile("consumers", "Consumers", "Objects referring to this profile, directly or through a resolved chain", counts["consumers"])
+            + '<div class="impact-focus"><small>Selected profile</small><strong>' + e(identity) + '</strong><span>' + e(module_label(module)) + '</span></div>'
+            + tile("dependencies", "Dependencies", "Objects this profile refers to, directly or through a resolved chain", counts["dependencies"])
+            + '</div><p><a href="' + url(root, "impact", **params) + '">Show both directions</a></p>'
+            + '<p class="note">Counts represent reachable paths per captured context, not unique devices or complete impact.'
+            + (' Path limit reached; narrow the scope for more detail.' if truncated else '') + '</p></section>')
+
+
+def reference_path(path):
+    edges = path["edges"]
+    if not edges:
+        return ""
+    # Traversal order for reverse paths is not necessarily edge direction.
+    # Display each edge separately, retaining its actual source and target.
+    return '<ol class="impact-path">' + "".join(
+        '<li><strong>' + e(module_label(edge["source_module"]) + " / " + edge["source"]) + '</strong>'
+        '<small>references ' + e(".".join(map(str, edge["path"]))) + '</small><strong>'
+        + e(module_label(edge["target_module"]) + " / " + str(edge["target"])) + '</strong></li>'
+        for edge in edges) + '</ol>'
+
+
+IMPACT_CSS = """
+.impact-flow { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr); gap:12px; }
+.impact-direction,.impact-focus { display:flex; flex-direction:column; gap:6px; border:1px solid var(--line); border-radius:9px; padding:15px; color:var(--text); overflow-wrap:anywhere; }
+.impact-direction { text-decoration:none; }
+.impact-direction:hover,.impact-direction[aria-current=true] { border-color:var(--accent); background:var(--soft); text-decoration:none; }
+.impact-direction strong { font-size:26px; }
+.impact-focus { background:var(--bg); justify-content:center; text-align:center; }
+.impact-flow small { color:var(--muted); }
+.impact-path { padding-left:22px; }
+.impact-path li { margin:8px 0; }
+.impact-path small { display:block; color:var(--muted); margin:3px 0; }
+@media(max-width:720px) { .impact-flow { grid-template-columns:1fr; } }
+"""
