@@ -715,6 +715,31 @@ class Tests(unittest.TestCase):
         self.assertEqual(set(result["profiles"]["CAMPUS_AP"]["12"]["portals"]["shared"]), {"effective"})
         self.assertFalse(result["safe_to_apply"])
 
+    def test_supplemental_collection_reuses_exact_successful_reads(self):
+        from central_tool import inspect_unadapted_profiles
+        class Client:
+            def __init__(self):
+                self.calls = []
+            def get(self, path, **params):
+                self.calls.append((path, params))
+                return {}
+        client = Client()
+        raw = {"dns": [{"name": "example"}]}
+        view = {"status": "list_parsed", "raw": raw, "count_confirmed": True}
+        result = inspect_unadapted_profiles(
+            client, {"unknown_adapter_modules": [], "survey_modules": ["dns"],
+                     "modules": {"dns": ["ACCESS_SWITCH"]}, "documented_catalog": {"modules": {}}},
+            {}, {}, scopes_by_persona={"ACCESS_SWITCH": [{"id": "1", "kind": "device"}]},
+            deep_catalog=True,
+            structured_results={"ACCESS_SWITCH": {"modules": {"dns": {"scope_results": [
+                {"scope": "1", "effective_view": view}]}}}},
+            structured_library={"modules": {"dns": view}})
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(client.calls[0][1]["effective"], "false")
+        self.assertTrue(result["dns"]["library"]["reused_exact_collection"])
+        self.assertTrue(result["dns"]["source_views"][0]["effective"]["reused_exact_collection"])
+        self.assertEqual(result["dns"]["source_views"][0]["effective"]["raw"], raw)
+
     def test_adaptive_keyed_details_keep_scope_data_and_expand_on_disagreement(self):
         from central_tool import capture_keyed_profile_details
         profile = {"name": "dns", "enable": True, "@": {
