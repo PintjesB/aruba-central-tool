@@ -97,3 +97,26 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(report["specialized_reads"]["portal-assets"]["images"], 1)
         self.assertTrue(report["specialized_reads"]["portal-assets"]["count_confirmed"])
         self.assertNotIn(private, json.dumps(report))
+
+
+    def test_pagination_and_keyed_comparison_counts_are_anonymous(self):
+        private = "PRIVATE-SCOPE-AND-VALUE"
+        bundle = {"schema": 1, "kind": "configuration_audit",
+                  "unadapted_profiles": {"dns": {"library": {
+                      "pagination_status": "schema_changed",
+                      "raw_pages": [{"profiles": [{"name": private}]}, {}]}}},
+                  "library": {"assignments": {"scope_reads": {"ACCESS_SWITCH": {
+                      private: {"pagination_status": private, "raw_pages": []}}}}},
+                  "keyed_profile_details": {"profiles": {"ACCESS_SWITCH": {private: {
+                      "dns": {private: {"effective": {"status": "identity_observed",
+                                  "differences": [{"kind": "missing_local", "path": private, "value": private}]}}}
+                  }}}}}
+        report = diagnostics(bundle)
+        rows = {row["source"]: row for row in report["pagination_evidence"]}
+        self.assertEqual(rows["raw_library"]["reason"], "schema_changed")
+        self.assertEqual(rows["raw_library"]["pages"], 2)
+        self.assertEqual(rows["raw_library"]["last_page_empty_object"], 1)
+        self.assertEqual(rows["scoped"]["reason"], "other")
+        comparisons = {row["comparison"]: row["reads"] for row in report["keyed_comparison_counts"]}
+        self.assertEqual(comparisons, {"additional_fields_in_detail": 1, "different": 1})
+        self.assertNotIn(private, json.dumps(report))
