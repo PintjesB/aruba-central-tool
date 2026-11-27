@@ -264,6 +264,20 @@ def diagnostics(bundle):
         if name == "portal-assets":
             specialized[name].update(status=safe_status(entry.get("status", "not_collected")),
                                      images=len(entry.get("images", [])), count_confirmed=entry.get("count_confirmed") is True)
+    timing = bundle.get("collection_timing") or {}
+    # Only known phase names are exported. Never retain progress descriptions,
+    # which may contain a device function or an observed identifier.
+    phase_names = {"Connection", "Discovery", "Configuration scopes", "Library",
+                   "Additional profile types", "NAC registrations", "Profile details",
+                   "Profile detail expansion", "VLAN details", "Configuration health",
+                   "Scope hierarchy", "Individual assignments", "NAC portal assets",
+                   "Saving snapshot"}
+    def seconds(value):
+        return round(value, 1) if type(value) in (int, float) and 0 <= value <= 864000 else None
+    phase_timing = [{"phase": row["phase"] if row.get("phase") in phase_names else "other",
+                     "done": count(row.get("done")), "total": count(row.get("total")),
+                     "seconds": seconds(row.get("seconds"))}
+                    for row in timing.get("phases", []) if isinstance(row, dict)]
     strategy = bundle.get("collection_strategy")
     details = bundle.get("keyed_profile_details") or {}
     detail_strategy = details.get("detail_strategy")
@@ -273,6 +287,8 @@ def diagnostics(bundle):
             "strategy": strategy if strategy in ("standard", "deep", "targeted") else "unknown",
             "detail_strategy": detail_strategy if detail_strategy in ("adaptive", "exhaustive") else "unknown",
             "logical_gets": sum(row["attempted"] for row in operations),
+            "elapsed_before_save_seconds": seconds(timing.get("elapsed_before_save_seconds")),
+            "phases": phase_timing,
             "individual_reads": sum(keyed.values()),
             "collection_only": sum(keyed_skipped.values()),
             "collection_only_by_module": [{"module": m, "view": v, "observations": n}

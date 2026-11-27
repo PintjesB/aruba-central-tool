@@ -205,6 +205,29 @@ class WorkspaceTests(unittest.TestCase):
             self.assertIsNone(workspace.status()["snapshot"])
             self.assertEqual(audit_files(Path(directory)), [])
 
+    def test_phase_timing_uses_current_phase_not_total_elapsed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            workspace.state = "running"
+            workspace.started = 100
+            with patch("config_app.time.monotonic", return_value=160):
+                workspace.update_progress("Discovery", 0, 0, "Inventory")
+            with patch("config_app.time.monotonic", return_value=200):
+                workspace.update_progress("Profile details", 0, 100, "Details")
+            with patch("config_app.time.monotonic", return_value=220):
+                workspace.update_progress("Profile details", 40, 100, "Details")
+                state = workspace.status()
+            self.assertEqual(state["elapsed"], 120)
+            self.assertEqual(state["phase_elapsed"], 20)
+            self.assertEqual(state["phase_items_per_second"], 2)
+            self.assertEqual(state["phase_eta_seconds"], 30)
+            self.assertEqual(state["phase_history"], [
+                {"phase": "Discovery", "done": 0, "total": 0, "seconds": 40}])
+            with patch("config_app.time.monotonic", return_value=230):
+                workspace.update_progress("Profile detail expansion", 0, 20, "Expansion")
+                self.assertIsNone(workspace.status()["phase_eta_seconds"])
+                self.assertEqual(workspace.status()["phase_elapsed"], 0)
+
     def test_refresh_single_flight_and_saved_capture(self):
         with tempfile.TemporaryDirectory() as directory:
             release = threading.Event()

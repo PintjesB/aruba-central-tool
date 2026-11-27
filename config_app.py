@@ -189,11 +189,24 @@ class Workspace:
         self.done = 0
         self.total = 0
         self.started = None
+        self.phase_started = None
+        self.phase_start_count = 0
+        self.phase_history = []
         self.finished = None
         self.snapshot = None
 
     def update_progress(self, phase, done, total, detail):
         with self.lock:
+            now = time.monotonic()
+            if phase != self.phase or done < self.done or (self.total != total and self.total > 0):
+                if self.phase_started is not None:
+                    self.phase_history.append({"phase": self.phase, "done": self.done,
+                                               "total": self.total, "seconds": round(now - self.phase_started, 1)})
+                self.phase_started = now
+                self.phase_start_count = done
+            elif self.phase_started is None:
+                self.phase_started = now
+                self.phase_start_count = done
             self.phase = phase
             self.done = done
             self.total = total
@@ -201,8 +214,16 @@ class Workspace:
 
     def status(self):
         with self.lock:
-            elapsed = (self.finished or time.monotonic()) - self.started if self.started is not None else 0
-            return {"state": "failed" if self.state.startswith("failed") else self.state,
+            now = self.finished if self.finished is not None else time.monotonic()
+            elapsed = now - self.started if self.started is not None else 0
+            phase_elapsed = now - self.phase_started if self.phase_started is not None else 0
+            completed = max(0, self.done - self.phase_start_count)
+            rate = completed / phase_elapsed if phase_elapsed > 0 and completed > 0 else None
+            eta = round((self.total - self.done) / rate) if (self.state == "running" and rate
+                    and completed >= 10 and phase_elapsed >= 10 and self.total > self.done) else None
+            return {"phase_elapsed": int(phase_elapsed), "phase_items_per_second": round(rate, 2) if rate else None,
+                    "phase_eta_seconds": eta, "phase_history": list(self.phase_history),
+                    "state": "failed" if self.state.startswith("failed") else self.state,
                     "message": self.state, "phase": self.phase, "detail": self.detail,
                     "done": self.done, "total": self.total, "elapsed": int(elapsed),
                     "snapshot": self.snapshot}
@@ -217,6 +238,9 @@ class Workspace:
             self.detail = "Starting read-only audit"
             self.done = self.total = 0
             self.started = time.monotonic()
+            self.phase_started = self.started
+            self.phase_start_count = 0
+            self.phase_history = []
             self.finished = None
             self.snapshot = None
         def run():
@@ -229,6 +253,10 @@ class Workspace:
                 target = self.directory / f"config-audit-{stamp}.json"
                 temporary = target.with_suffix(".partial")
                 try:
+                    with self.lock:
+                        bundle["collection_timing"] = {
+                            "elapsed_before_save_seconds": round(time.monotonic() - self.started, 1),
+                            "phases": list(self.phase_history)}
                     write_private(temporary, bundle)
                     os.replace(temporary, target)
                 finally:
@@ -252,6 +280,11 @@ class Workspace:
             with self.lock:
                 self.state = state
                 self.finished = time.monotonic()
+                if self.phase_started is not None:
+                    self.phase_history.append({"phase": self.phase, "done": self.done, "total": self.total,
+                                               "seconds": round(self.finished - self.phase_started, 1)})
+                self.phase_started = self.finished
+                self.phase_start_count = 0
                 self.snapshot = snapshot
                 self.phase = "Complete" if state == "complete" else "Failed"
                 self.detail = "Snapshot saved" if state == "complete" else state
@@ -306,7 +339,8 @@ class Workspace:
             f'<progress id="audit-progress" max="{max(1, status["total"])}"'
             + (f' value="{status["done"]}"' if status["total"] else "")
             + ("" if state == "running" else " hidden")
-            + f'></progress><p id="audit-count">{status["done"]}/{status["total"]} · {status["elapsed"]}s</p>'
+            + f'></progress><p id="audit-count">{status["done"]}/{status["total"]} · {status["elapsed"]}s total elapsed</p>'
+            + '<p id="audit-rate" class="muted"></p><details id="audit-history"><summary>Completed phases</summary><ul id="audit-phases"></ul></details>'
             + snapshot_link + '</div>')
         script = """
 <script>
@@ -315,6 +349,12 @@ const title=document.getElementById('audit-title');
 const detail=document.getElementById('audit-detail');
 const bar=document.getElementById('audit-progress');
 const count=document.getElementById('audit-count');
+const rate=document.getElementById('audit-rate');
+const history=document.getElementById('audit-phases');
+function duration(seconds){
+  const s=Math.max(0,Math.round(seconds));
+  return (s>=3600?Math.floor(s/3600)+'h ':'')+(s>=60?Math.floor((s%3600)/60)+'m ':'')+(s%60)+'s';
+}
 for(const form of document.querySelectorAll('form[method=post]')){
   form.addEventListener('submit',()=>{
     title.textContent='Connecting to Central…';
@@ -335,7 +375,13 @@ async function poll(){
     bar.hidden=false;
     if(state.total>0){bar.max=state.total;bar.value=state.done;}
     else{bar.removeAttribute('value');}
-    count.textContent=(state.total>0?state.done+'/'+state.total+' · ':'')+state.elapsed+'s elapsed';
+    count.textContent=(state.total>0?state.done.toLocaleString()+'/'+state.total.toLocaleString()+' · '+(100*state.done/state.total).toFixed(1)+'% · ':'')+duration(state.elapsed)+' total elapsed';
+    rate.textContent=duration(state.phase_elapsed)+' in this phase'+
+      (state.phase_items_per_second!==null?' · '+state.phase_items_per_second.toFixed(2)+' items/s':'')+
+      (state.phase_eta_seconds!==null?' · approximately '+duration(state.phase_eta_seconds)+' remaining in this phase':'');
+    history.replaceChildren(...state.phase_history.map(p=>{
+      const li=document.createElement('li');li.textContent=p.phase+' · '+duration(p.seconds)+(p.total?' · '+p.done+'/'+p.total:'');return li;
+    }));
   } catch(error) {
     detail.textContent='Unable to reach the local status endpoint. Retrying…';
   }
