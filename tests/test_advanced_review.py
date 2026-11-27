@@ -41,6 +41,23 @@ class AdvancedTests(unittest.TestCase):
         self.assertFalse(data["reference_graph_complete"])
         self.assertFalse(data["safe_to_apply"])
 
+    def test_port_library_index_keeps_exact_fields_and_sorted_matches(self):
+        port = {"switchport": {"access-vlan": 10}, "routing": False}
+        scopes = [{"id": "1", "kind": "device", "name": "Switch"}]
+        bundle = {"results": {"ACCESS_SWITCH": {"scopes": scopes, "modules": {
+            "ethernet-interfaces": {"scope_results": [{"scope": "1",
+                "effective_view": view({"1": {"name": "1", **port},
+                                        "2": {"name": "2", **port}})}]}}}},
+            "library": {"modules": {"sw-port-profiles": view({
+                "z": {"profile-name": "z", "description": "A description", **port},
+                "a": {"profile-name": "a", **port},
+                "extra": {"profile-name": "extra", "unrecognized-setting": True, **port},
+                "different": {"profile-name": "different", "routing": True,
+                              "switchport": {"access-vlan": 10}}})}}}
+        groups = advanced_analysis(bundle)["port_groups"]
+        self.assertEqual(len(groups), 1)
+        self.assertEqual([m["identity"] for m in groups[0]["matching_library_profiles"]], ["a", "z"])
+
     def test_group_shadows_site_and_global_when_membership_and_source_are_observed(self):
         scopes = [{"id": "1", "kind": "global", "name": "Global"},
                   {"id": "2", "kind": "site", "name": "Site", "metadata": {"id": 20}},
