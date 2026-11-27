@@ -1,6 +1,6 @@
 """Browser workflow for comparing manual remediation with a newer capture."""
 from .workspace_ui import e, page, intro, metrics, badge, table, tr, inspect, raw, module_label, pretty
-from .workspace_views import load, select
+from .workspace_views import load, select, url
 from .remediation_review import comparable, override_candidates, duplicate_candidates, verify_override, verify_library_migration
 from .history_view import private_export
 
@@ -52,8 +52,8 @@ def remediation_view(workspace, query):
         body += metrics([("Observed goal matches", met, "Captured profile evidence only"),
                          ("Other / unresolved recipients", len(rows)-met, "Review details"),
                          ("Prior candidate recipients", len(rows), "Not complete deployment coverage")])
-        body += '<section><h2>Before and after evidence</h2>' + table(("Device", "Scope", "Result", ""), [
-            tr(e(row["device"]), e(row["scope"]), badge(pretty(row["status"])), inspect("Before and after evidence", raw(row), "Review")) for row in rows], search=True) + '</section>'
+        from .remediation_presentation import outcome_table
+        body += outcome_table(result, root, name, previous)
         if result["workflow"] == "library_migration":
             body += '<section><h2>Remaining migration observations</h2>'
             body += '<p>Retained Library body matches prior capture: ' + e(str(result["retained_library_matches"])) + '</p>'
