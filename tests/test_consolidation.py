@@ -99,6 +99,16 @@ class ConsolidationTests(unittest.TestCase):
         finding = next(f for f in profile_recommendations(bundle) if f["identity"] == "10")
         self.assertTrue(finding["preview_selectable"])
         self.assertEqual(finding["fallbacks"][0]["source"]["scope"], "6")
+        bundle["keyed_profile_details"] = {"profiles": {"ACCESS_SWITCH": {"6": {
+            "layer2-vlan": {"10": {"effective": {"status": "identity_observed",
+                "profile": {"vlan": 10, "name": "Shared", "enable": False}}}}
+        }}}}
+        finding = next(f for f in profile_recommendations(bundle) if f["identity"] == "10")
+        self.assertFalse(finding["preview_selectable"])
+        self.assertEqual(finding["fallbacks"][0]["status"], "individual_evidence_conflict")
+        self.assertEqual(finding["fallbacks"][0]["individual_conflicts"][0]["scope"], "6")
+        self.assertFalse(finding["safe_to_apply"])
+        del bundle["keyed_profile_details"]
         group["profiles"]["10"]["name"] = "Different"
         finding = next(f for f in profile_recommendations(bundle) if f["identity"] == "10")
         self.assertFalse(finding["preview_selectable"])
