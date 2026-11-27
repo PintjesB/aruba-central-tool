@@ -247,8 +247,9 @@ def advanced_analysis(bundle):
         for name, profile in sorted(port_library["profiles"].items()):
             content = {k: v for k, v in profile_body(profile).items() if k not in ("profile-name", "description")}
             port_library_index[canonical(content)].append(name)
+    persona_views = {persona: effective_views(entry) for persona, entry in bundle["results"].items()}
     for persona, entry in sorted(bundle["results"].items()):
-        views = effective_views(entry)
+        views = persona_views[persona]
         members = scope_memberships(entry["scopes"])
         names = {s["id"]: s.get("name") or s["id"] for s in entry["scopes"]}
         scope_kinds = {s["kind"] for s in entry["scopes"]}
@@ -418,8 +419,12 @@ def advanced_analysis(bundle):
                     "source_scope_kind": kind, "source_view": "library" if kind == "library" else "saved", "source_module": module, "source": identity,
                     "target_module": target, "target": target_id, "path": list(path), "status": state})
     for persona, entry in sorted(bundle["results"].items()):
-        views = effective_views(entry)
+        views = persona_views[persona]
         scopes = {s["id"]: s for s in entry["scopes"]}
+        target_views_by_scope = {}
+        for module, by_scope in views.items():
+            for sid, view in by_scope.items():
+                target_views_by_scope.setdefault(sid, {})[module] = view
         for module, data in sorted(entry["modules"].items()):
             for scope in data["scope_results"]:
                 sid = scope["scope"]
@@ -428,7 +433,7 @@ def advanced_analysis(bundle):
                 if not meta or local.get("status") != "list_parsed":
                     continue
                 definition_refs(persona, sid, meta.get("name") or sid, meta["kind"], module,
-                                local["profiles"], {m: v.get(sid, {}) for m, v in views.items()})
+                                local["profiles"], target_views_by_scope.get(sid, {}))
     for module, view in sorted(library_modules.items()):
         if view.get("status") == "list_parsed":
             definition_refs("Library", "Library", "Library", "library", module, view["profiles"], library_modules)
@@ -447,7 +452,7 @@ def advanced_analysis(bundle):
     for persona, scopes in sorted(details.items()):
         entry = bundle["results"].get(persona, {})
         scope_meta = {str(scope["id"]): scope for scope in entry.get("scopes", [])}
-        views = effective_views(entry) if entry else {}
+        views = persona_views.get(persona, {})
         for sid, modules in sorted(scopes.items()):
             meta = scope_meta.get(str(sid))
             if persona == "Library" and sid == "":
