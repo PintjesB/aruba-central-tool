@@ -51,6 +51,67 @@ def observed_read(read):
         return {"status": "read_failed"}
 
 
+def assignment_context(client, module, scopes, library, sample):
+    """Read exact documented module assignments, then sample their actual scopes.
+
+    No absence claim follows from an empty assignment response. Distinguish
+    directly observed matching definitions from unknown effective visibility.
+    """
+    from central_tool import profile_inventory_view, canonical, profile_body
+    result = observed_read(lambda: profile_inventory_view(
+        client, "config-assignments", "config-assignment", **{"profile-type": module}))
+    records = result.get("rows", [])
+    identities = set()
+    contexts = {}
+    unknown = 0
+    for row in records:
+        if (not isinstance(row, dict) or row.get("profile-type") != module
+                or type(row.get("profile-instance")) not in (str, int)
+                or type(row.get("scope-id")) not in (str, int)
+                or not isinstance(row.get("device-function"), str)):
+            unknown += 1
+            continue
+        identity = str(row["profile-instance"])
+        persona, sid = row["device-function"], str(row["scope-id"])
+        identities.add((identity, persona, sid))
+        scope = next((s for s in scopes.get(persona, {}).get("scopes", [])
+                      if str(s["id"]) == sid), None)
+        if scope:
+            contexts.setdefault((persona, sid, scope["kind"]), set()).add(identity)
+    expected = library.get("profiles", {}) if library.get("status") == "list_parsed" else {}
+    visibility = Counter()
+    for (persona, sid, kind), assigned in sorted(contexts.items())[:sample * 2]:
+        params = {"view-type": "LOCAL", "scope-id": sid, "device-function": persona, "detailed": "true"}
+        identity_key = CONFIG_MODULES[module][0]
+        for side, filters in (
+                ("committed_shared", {"effective": "false", "object-type": "SHARED"}),
+                ("effective_any", {"effective": "true"}),
+                ("effective_shared", {"effective": "true", "object-type": "SHARED"})):
+            view = observed_read(lambda: read_module_view(client, module, identity_key, {**params, **filters}))
+            profiles = view.get("profiles", {}) if view.get("status") == "list_parsed" else {}
+            for identity in assigned:
+                actual = profiles.get(identity)
+                if actual is None:
+                    outcome = "count_confirmed_absence" if view.get("status") == "list_parsed" and view.get("count_confirmed") else "visibility_unverified"
+                elif identity not in expected:
+                    outcome = "library_definition_unverified"
+                elif canonical(profile_body(actual)) != canonical(profile_body(expected[identity])):
+                    outcome = "different_body"
+                else:
+                    ann = actual.get("@")
+                    outcome = "matching_shared" if isinstance(ann, dict) and ann.get("aruba-annotation:object_type") == "SHARED" else "matching_source_unverified"
+                visibility[(persona, kind, side, safe_status(view.get("status")), outcome)] += 1
+    return {"module": module, "assignment_read": safe_status(result.get("status")),
+            "assignment_count_confirmed": result.get("collection_count_verified") is True and not unknown,
+            "observed_assignments": len(identities), "invalid_or_unrelated_rows": unknown,
+            "library_profiles_with_observed_assignment": len({i for i, _, _ in identities} & set(expected)),
+            "library_profiles_without_observed_assignment": len(set(expected) - {i for i, _, _ in identities}),
+            "known_assignment_contexts": len(contexts), "sampled_assignment_contexts": min(len(contexts), sample * 2),
+            "visibility": [{"persona": p, "scope_kind": k, "view": v, "read_status": s, "observation": o, "profiles": n}
+                           for (p, k, v, s, o), n in sorted(visibility.items())],
+            "complete": False}
+
+
 def probe(client, previous, modules, sample=2):
     if type(sample) is not int or not 1 <= sample <= 4:
         raise ValueError("Sample must be between 1 and 4")
@@ -59,7 +120,7 @@ def probe(client, previous, modules, sample=2):
     modules = tuple(dict.fromkeys(modules))
     scopes = qualified_scopes(client, previous)
     contracts = keyed_profile_contracts()
-    collections, keyed = [], Counter()
+    collections, keyed, assignments = [], Counter(), []
     for module in modules:
         identity, functions, device_only = CONFIG_MODULES[module]
         if not device_only:
@@ -67,6 +128,12 @@ def probe(client, previous, modules, sample=2):
                                                           {"view-type": "LIBRARY", "detailed": "true"}))
             collections.append({"module": module, "persona": "Library", "scope_kind": "library",
                                 "view": "library", **view_summary(view)})
+            if contracts.get(module) == identity and view.get("status") == "list_parsed":
+                for key, profile in sorted(view["profiles"].items())[:sample]:
+                    result = observed_read(lambda: keyed_profile_read(client, module, identity, key,
+                                           {"view-type": "LIBRARY", "detailed": "true"}, profile))
+                    keyed[(module, "Library", "library", safe_status(result.get("status")), result.get("http_error"))] += 1
+            assignments.append(assignment_context(client, module, scopes, view, sample))
         for persona, entry in scopes.items():
             if persona not in functions:
                 continue
@@ -87,7 +154,7 @@ def probe(client, previous, modules, sample=2):
                         keyed[(module, persona, side, safe_status(result.get("status")),
                                result.get("http_error"))] += 1
     return {"schema": 1, "kind": "anonymous_live_probe", "sample_limit": sample,
-            "collections": collections,
+            "collections": collections, "assignments": assignments,
             "keyed": [{"module": m, "persona": p, "view": v, "status": s, "http_error": h, "reads": n}
                       for (m, p, v, s, h), n in sorted(keyed.items(), key=lambda item: str(item[0]))],
             "complete": False, "safe_to_apply": False}
