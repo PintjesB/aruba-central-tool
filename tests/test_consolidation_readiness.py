@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+import shutil
 from pathlib import Path
 
 from aruba_central.config_app import Workspace
@@ -29,7 +30,7 @@ class ConsolidationReadinessTests(unittest.TestCase):
     @unittest.skipUnless(sync_playwright, "Browser test dependency unavailable")
     def test_preview_filter_keeps_hidden_selection_visible(self):
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
+            browser = playwright.chromium.launch(executable_path=shutil.which("google-chrome") or shutil.which("chromium"), args=["--no-sandbox"])
             try:
                 tab = browser.new_page()
                 tab.set_content(self.html())
