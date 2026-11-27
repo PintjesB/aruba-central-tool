@@ -21,6 +21,15 @@ def benchmark(directory, snapshot, *, repeat=3):
     """
     if type(repeat) is not int or not 1 <= repeat <= 5:
         raise ValueError("Repeat must be between 1 and 5")
+    path = next((p for p in audit_files(Path(directory)) if p.name == snapshot), None)
+    if path is None:
+        raise ValueError("Unknown snapshot")
+    def fingerprint():
+        if path.is_symlink():
+            raise ValueError("Snapshot changed during benchmark")
+        stat = path.stat()
+        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    initial = fingerprint()
     samples = {}
     counts = None
     for _ in range(repeat):
@@ -60,7 +69,7 @@ def benchmark(directory, snapshot, *, repeat=3):
         if counts is not None and counts != trial_counts:
             raise ValueError("Aggregate results changed during benchmark")
         counts = trial_counts
-        if workspace.reviewed_snapshot(snapshot) is not bundle:
+        if fingerprint() != initial or workspace.reviewed_snapshot(snapshot) is not bundle:
             raise ValueError("Snapshot changed during benchmark")
         # Drop references before the next trial loads another large snapshot.
         del workspace, bundle, overview, findings, engineering, assignments
