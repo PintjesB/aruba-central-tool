@@ -1606,6 +1606,36 @@ class Tests(unittest.TestCase):
                           "collection_last_modified": 1, "keyed_responses": 1,
                           "keyed_weak_etag": 1})
 
+    def test_transient_get_errors_retry_but_tls_and_post_do_not(self):
+        from io import BytesIO
+        from urllib.error import URLError
+        from urllib.request import Request
+        from unittest.mock import Mock, patch
+        import ssl
+        client = Central(EU_REGIONS[0], token="test")
+        client._http.opener = Mock()
+        request = Request(client.base + "/network-config/v1alpha1/dns")
+        with patch.object(client, "_wait_rate_limit"), patch("central_tool.time.sleep"):
+            client._http.opener.open.side_effect = [URLError(TimeoutError()), ConnectionResetError(),
+                                                       BytesIO(b'{"items":[]}')]
+            self.assertEqual(client._request(request, "dns"), {"items": []})
+            self.assertEqual(client.get_transport_metrics()["http_get_transient_errors"], 2)
+            self.assertEqual(client.get_transport_metrics()["http_get_retries"], 2)
+            client._http.opener.open.reset_mock()
+            client._http.opener.open.side_effect = URLError(ssl.SSLCertVerificationError())
+            with self.assertRaises(URLError):
+                client._request(request, "dns")
+            self.assertEqual(client._http.opener.open.call_count, 1)
+            client._http.opener.open.reset_mock()
+            client._http.opener.open.side_effect = TimeoutError()
+            with self.assertRaises(TimeoutError):
+                client._request(Request(request.full_url, method="POST"), "post")
+            self.assertEqual(client._http.opener.open.call_count, 1)
+            client._http.opener.open.reset_mock()
+            with self.assertRaisesRegex(RuntimeError, "retry budget exhausted"):
+                client._request(request, "dns")
+            self.assertEqual(client._http.opener.open.call_count, 4)
+
     def test_repeated_custom_api_500s_reduce_retries_without_skipping_gets(self):
         from io import BytesIO
         from urllib.error import HTTPError

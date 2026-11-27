@@ -11,7 +11,9 @@ from collections import Counter, defaultdict
 from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
+from http.client import IncompleteRead, RemoteDisconnected
+import socket
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -122,6 +124,12 @@ class Central:
                     return
             time.sleep(delay)
 
+    @staticmethod
+    def _transient_get_error(exc):
+        cause = exc.reason if isinstance(exc, URLError) else exc
+        return (isinstance(cause, (TimeoutError, ConnectionError, IncompleteRead, RemoteDisconnected))
+                or isinstance(cause, socket.gaierror) and cause.errno == socket.EAI_AGAIN)
+
     def _request(self, request, label):
         if not hasattr(self._http, "opener"):
             self._http.opener = build_opener(NoRedirect())
@@ -179,6 +187,14 @@ class Central:
                         self._custom_api_terminal_500s = (min(3, self._custom_api_terminal_500s + 1)
                                                          if exc.code == 500 else 0)
                 raise APIError(label, exc.code) from None
+            except (URLError, TimeoutError, ConnectionError, IncompleteRead) as exc:
+                if not is_get or not self._transient_get_error(exc):
+                    raise
+                with self._get_metrics_lock:
+                    self._get_metrics["http_get_transient_errors"] += 1
+                if attempt == 3:
+                    raise RuntimeError(f"{label}: transient transport retry budget exhausted") from None
+                time.sleep(2 ** attempt)
 
     def _token(self):
         with self._token_lock:
@@ -3776,7 +3792,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
         bundle["http_get_transport"] = {key: after.get(key, 0) - transport_before.get(key, 0)
                                        for key in ("http_get_attempts", "http_get_retries",
                                                    "http_get_429", "http_get_5xx",
-                                                   "custom_500_retry_sequences_suppressed")}
+                                                   "custom_500_retry_sequences_suppressed", "http_get_transient_errors")}
         validators_after = transport.get_validator_metrics()
         bundle["http_config_validators"] = {
             key: validators_after.get(key, 0) - validators_before.get(key, 0)
