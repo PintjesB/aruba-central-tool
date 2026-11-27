@@ -1,5 +1,5 @@
 import unittest
-from advanced_review import advanced_analysis
+from aruba_central.advanced_review import advanced_analysis
 
 
 def view(profiles):
@@ -64,7 +64,7 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(advanced_analysis(data)["shadowed"], [])
 
     def test_library_usage_separates_names_assignments_and_consumers(self):
-        from advanced_review import library_usage, preferred_duplicate
+        from aruba_central.advanced_review import library_usage, preferred_duplicate
         shared = {"aruba-annotation:object_type": "SHARED", "aruba-annotation:inherited": True}
         local = {"aruba-annotation:object_type": "LOCAL"}
         profiles = {"a": {"profile-name": "a", "enable": True},
@@ -120,7 +120,7 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(len(references), 6)
         self.assertEqual({r["source_scope_kind"] for r in references}, {"global", "library"})
         self.assertTrue(all(r["status"] == "definition_observed" for r in references))
-        from advanced_review import library_usage
+        from aruba_central.advanced_review import library_usage
         usage = library_usage(data, "roles", ["employee"], references)["employee"]
         self.assertEqual(usage["reference_count"], 2)
         self.assertEqual(usage["reference_devices"], 0)
@@ -128,7 +128,7 @@ class AdvancedTests(unittest.TestCase):
 
 
     def test_duplicate_migration_preview_separates_saved_edits_from_effective_impact(self):
-        from advanced_review import duplicate_migration_preview
+        from aruba_central.advanced_review import duplicate_migration_preview
         base_ref = {"persona": "ACCESS_SWITCH", "scope": "2", "device": "Switch",
                     "source_module": "ethernet-interfaces", "source": "1/1/1",
                     "target_module": "sw-port-profiles", "target": "old",
@@ -152,7 +152,7 @@ class AdvancedTests(unittest.TestCase):
 
 
     def test_migration_recipients_check_retained_profile_visibility(self):
-        from advanced_review import library_usage, duplicate_migration_preview
+        from aruba_central.advanced_review import library_usage, duplicate_migration_preview
         persona = "ACCESS_SWITCH"
         profiles = {"keep": {"profile-name": "keep", "enable": True},
                     "old": {"profile-name": "old", "enable": True}}
@@ -184,7 +184,7 @@ class AdvancedTests(unittest.TestCase):
 
 
     def test_documented_port_security_dependencies(self):
-        from advanced_review import explicit_references
+        from aruba_central.advanced_review import explicit_references
         body = {"profile-name": "Access", "aaa-profile": "dot1x", "fault-monitor-profile": "link",
                 "macsec-policy": "secure", "mka-policy": "keys", "nd-snooping-profile": "ipv6",
                 "dfp-profile": "fingerprint"}
@@ -198,7 +198,7 @@ class AdvancedTests(unittest.TestCase):
 
 
     def test_aaa_references_preserve_list_members_and_unresolved_values(self):
-        from advanced_review import explicit_references
+        from aruba_central.advanced_review import explicit_references
         body = {"authentication": {"dpp-netaccess-default-role": "guest",
                                   "dpp-netaccess-server-group": "radgrp",
                                   "rfc3576-server-list": ["coa-a", "coa-b", None]},
@@ -218,7 +218,7 @@ class AdvancedTests(unittest.TestCase):
 
 
     def test_duplicate_groups_preserve_separate_usage_after_indexing(self):
-        from advanced_review import library_usage
+        from aruba_central.advanced_review import library_usage
         profiles = {name: {"profile-name": name, "enable": value}
                     for name, value in (("a", True), ("b", True), ("c", False), ("d", False))}
         rows = [{"profile-type": "sw-port-profiles", "profile-instance": name,
@@ -236,7 +236,7 @@ class AdvancedTests(unittest.TestCase):
 
 
     def test_policy_named_objects_are_context_specific_dependencies(self):
-        from advanced_review import explicit_references
+        from aruba_central.advanced_review import explicit_references
         body = {"security-policy": {"policy-rule": [
             {"condition": {"services": {"net-service": "dns-service"},
                            "transport-fields": {"destination-port-net-group": "ports"},
@@ -256,7 +256,7 @@ class AdvancedTests(unittest.TestCase):
 
 
     def test_network_group_exclusion_counts_as_library_usage(self):
-        from advanced_review import explicit_references, library_usage
+        from aruba_central.advanced_review import explicit_references, library_usage
         body = {"name": "parent", "exclude": "child", "items": [{"exclude": "unrelated"}]}
         self.assertEqual(list(explicit_references(body, module="net-groups")),
                          [("net-groups", "child", ("exclude",))])
@@ -275,7 +275,7 @@ class AdvancedTests(unittest.TestCase):
 
 
     def test_server_membership_and_individual_dependencies_preserve_conflicts(self):
-        from advanced_review import explicit_references, library_usage, preferred_duplicate
+        from aruba_central.advanced_review import explicit_references, library_usage, preferred_duplicate
         group = {"name": "group", "servers": [{"server-name": "a", "position": 1}]}
         self.assertEqual(list(explicit_references(group, module="server-groups")),
                          [("auth-servers", "a", ("servers", 0, "server-name"))])

@@ -1,6 +1,6 @@
 import json
 import unittest
-from coverage_diagnostics import diagnostics
+from aruba_central.coverage_diagnostics import diagnostics
 
 
 class DiagnosticsTests(unittest.TestCase):
@@ -180,7 +180,7 @@ class DiagnosticsTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from unittest.mock import patch
-        from coverage_diagnostics import main
+        from aruba_central.coverage_diagnostics import main
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             snapshot = root / "config-audit-test.json"

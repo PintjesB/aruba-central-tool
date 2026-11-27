@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from central_tool import capture_keyed_profile_details, inspect_unadapted_profiles
-from nac_authorization import capture_nac_configuration, nac_collection
+from aruba_central.central_tool import capture_keyed_profile_details, inspect_unadapted_profiles
+from aruba_central.nac_authorization import capture_nac_configuration, nac_collection
 
 
 class NACCollectionContractTests(unittest.TestCase):
@@ -26,8 +26,8 @@ class NACCollectionContractTests(unittest.TestCase):
         client = Mock()
         policy = {"policy-id": "p"}
         auth = {"auth-profile-id": "a"}
-        with patch("central_tool.keyed_profile_contracts", return_value={}), patch(
-            "central_tool.keyed_profile_read", return_value={"status": "identity_observed"}
+        with patch("aruba_central.central_tool.keyed_profile_contracts", return_value={}), patch(
+            "aruba_central.central_tool.keyed_profile_read", return_value={"status": "identity_observed"}
         ) as read:
             result = capture_keyed_profile_details(
                 client, {}, {"modules": {"auth-profiles": {
@@ -52,7 +52,7 @@ class NACCollectionContractTests(unittest.TestCase):
             self.assertFalse(qualifies({"status": "read_failed"}))
             return read()
         checkpoint.observe.side_effect = observe
-        with patch("central_tool.read_module_view", return_value={"status": "list_parsed", "count_confirmed": True}) as read:
+        with patch("aruba_central.central_tool.read_module_view", return_value={"status": "list_parsed", "count_confirmed": True}) as read:
             result = capture_nac_configuration(client, checkpoint=checkpoint)
         self.assertEqual(len(result), 3)
         self.assertEqual(checkpoint.observe.call_count, 3)

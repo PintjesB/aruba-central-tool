@@ -2,7 +2,7 @@ import copy
 import unittest
 from unittest.mock import Mock, patch
 
-from vlan_change import (prepare, execute, transition, inverse, perform, direct_state,
+from aruba_central.vlan_change import (prepare, execute, transition, inverse, perform, direct_state,
                          device_state, writable, digest)
 
 BODY = {"vlan": 100, "name": "Example", "enable": True}
@@ -77,7 +77,7 @@ class VlanChangeTests(unittest.TestCase):
                 plan = prepare(initial, mode, ["4", "3"], None if mode == "remove" else "2")
                 sim = Simulator(initial)
                 journal = Mock()
-                with patch("vlan_change.perform", side_effect=sim.write):
+                with patch("aruba_central.vlan_change.perform", side_effect=sim.write):
                     result = execute(Mock(), plan, journal, reader=sim.read, pause=lambda _: None)
                 self.assertEqual(result, "verified_complete")
                 self.assertEqual(sim.calls, expected)
@@ -90,7 +90,7 @@ class VlanChangeTests(unittest.TestCase):
         plan = prepare(initial, "remove", ["3", "4"])
         sim = Simulator(initial)
         sim.state["operational"]["3"]["name"] = "Changed"
-        with patch("vlan_change.perform") as write:
+        with patch("aruba_central.vlan_change.perform") as write:
             with self.assertRaises(ValueError):
                 execute(Mock(), plan, Mock(), reader=sim.read)
             write.assert_not_called()
@@ -110,7 +110,7 @@ class VlanChangeTests(unittest.TestCase):
         initial = state("library")
         plan = prepare(initial, "library", ["3", "4"], "2")
         sim = Simulator(initial, fail_verification=True)
-        with patch("vlan_change.perform", side_effect=sim.write):
+        with patch("aruba_central.vlan_change.perform", side_effect=sim.write):
             result = execute(Mock(), plan, Mock(), reader=sim.read, attempts=1)
         self.assertEqual(result, "restored")
         self.assertEqual(sim.calls, ["create_shared", "assign", "delete_local",
@@ -122,7 +122,7 @@ class VlanChangeTests(unittest.TestCase):
         initial = state("remove")
         plan = prepare(initial, "remove", ["3", "4"])
         sim = Simulator(initial)
-        with patch("vlan_change.perform", side_effect=TimeoutError) as write:
+        with patch("aruba_central.vlan_change.perform", side_effect=TimeoutError) as write:
             result = execute(Mock(), plan, Mock(), reader=sim.read)
         self.assertEqual(result, "manual_recovery_required")
         write.assert_called_once()

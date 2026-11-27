@@ -2,8 +2,8 @@ import json
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from api_coverage import ReadCoverage
-from central_tool import APIError
+from aruba_central.api_coverage import ReadCoverage
+from aruba_central.central_tool import APIError
 
 
 class Client:
@@ -88,7 +88,7 @@ class CoverageTests(unittest.TestCase):
     def test_endpoint_duration_aggregates_success_and_failure(self):
         from unittest.mock import patch
         tracked = ReadCoverage(Client(), catalog())
-        with patch("api_coverage.time.monotonic", side_effect=[1, 1.25, 2, 2.5]):
+        with patch("aruba_central.api_coverage.time.monotonic", side_effect=[1, 1.25, 2, 2.5]):
             tracked.get("/api/profiles")
             with self.assertRaises(APIError):
                 tracked.get("/api/profiles", fail=True)

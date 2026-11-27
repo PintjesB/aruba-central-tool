@@ -1,5 +1,5 @@
 import unittest
-from source_review import source_trace
+from aruba_central.source_review import source_trace
 from test_inheritance_review import fixture
 
 

@@ -1,6 +1,6 @@
 import unittest
-from central_tool import APIError
-from nac_assets import capture_portal_assets
+from aruba_central.central_tool import APIError
+from aruba_central.nac_assets import capture_portal_assets
 
 
 class PortalAssetTests(unittest.TestCase):

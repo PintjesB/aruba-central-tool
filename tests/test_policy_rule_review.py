@@ -1,5 +1,5 @@
 import unittest
-from policy_rule_review import rule_review, policy_rule_groups
+from aruba_central.policy_rule_review import rule_review, policy_rule_groups
 
 
 def rule(position, source="guest", destination=None, action="ACTION_ALLOW", **extra):

@@ -1,5 +1,5 @@
 import unittest
-from library_visibility import visibility_summary
+from aruba_central.library_visibility import visibility_summary
 
 
 class LibraryVisibilityTests(unittest.TestCase):

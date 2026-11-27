@@ -1,7 +1,7 @@
 import unittest
 import copy
-from consolidation import profile_recommendations
-from central_tool import review_module_scope
+from aruba_central.consolidation import profile_recommendations
+from aruba_central.central_tool import review_module_scope
 
 
 def fixture():
@@ -46,7 +46,7 @@ class ConsolidationTests(unittest.TestCase):
         import tempfile
         import json
         from pathlib import Path
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         data = fixture()
         scope = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"][-1]
         scope["local_view"] = {"status": "empty_object", "profiles": {}}
@@ -115,7 +115,7 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(finding["target"], "Retain: nearer scope differs")
 
     def test_scope_impact_uses_exact_membership_and_keeps_unknown_devices(self):
-        from consolidation import scope_memberships, placement_evidence
+        from aruba_central.consolidation import scope_memberships, placement_evidence
         bundle = fixture()
         entry = bundle["results"]["ACCESS_SWITCH"]
         scopes = entry["scopes"]
@@ -140,7 +140,7 @@ class ConsolidationTests(unittest.TestCase):
         self.assertTrue(all(not p["safe_to_apply"] for p in options.values()))
 
     def test_ambiguous_scope_alias_does_not_infer_membership(self):
-        from consolidation import scope_memberships
+        from aruba_central.consolidation import scope_memberships
         scopes = [
             {"id": "1", "kind": "global"},
             {"id": "2", "kind": "site", "metadata": {"id": 20}},
@@ -158,7 +158,7 @@ class ConsolidationTests(unittest.TestCase):
         import tempfile
         import json
         from pathlib import Path
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         with tempfile.TemporaryDirectory() as directory:
             name = "config-audit-example.json"
             (Path(directory) / name).write_text(json.dumps(fixture()))
@@ -176,7 +176,7 @@ class ConsolidationTests(unittest.TestCase):
         import tempfile
         import json
         from pathlib import Path
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         from html.parser import HTMLParser
 
         class Inspector(HTMLParser):
@@ -245,7 +245,7 @@ class ConsolidationTests(unittest.TestCase):
             self.assertIn("Local instances", html)
 
     def test_explanations_separate_opportunities_and_optional_housekeeping(self):
-        from workspace_views import ACTION_GUIDE, OPPORTUNITIES, vlan_explanation
+        from aruba_central.workspace_views import ACTION_GUIDE, OPPORTUNITIES, vlan_explanation
         self.assertEqual(set(OPPORTUNITIES), {"remove_override", "promote_local", "reuse_library"})
         self.assertIn("does not prove", ACTION_GUIDE["unassigned_library"][1])
         self.assertIn("Keeping it local", ACTION_GUIDE["create_library"][1])
@@ -258,7 +258,7 @@ class ConsolidationTests(unittest.TestCase):
         import tempfile
         import json
         from pathlib import Path
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         with tempfile.TemporaryDirectory() as directory:
             name = "config-audit-example.json"
             (Path(directory) / name).write_text(json.dumps(fixture()))
@@ -275,8 +275,8 @@ class ConsolidationTests(unittest.TestCase):
             self.assertNotIn(">Default differences<", html)
 
     def test_device_override_comparison_and_deep_links(self):
-        from override_view import device_override_rows
-        from config_app import Workspace
+        from aruba_central.override_view import device_override_rows
+        from aruba_central.config_app import Workspace
         from pathlib import Path
         import tempfile
         import json
@@ -285,7 +285,7 @@ class ConsolidationTests(unittest.TestCase):
         local = entry["modules"]["layer2-vlan"]["scope_results"][2]
         local["effective_view"]["profiles"]["10"]["@"] = {
             "aruba-annotation:object_type": "LOCAL", "aruba-annotation:inherited": False}
-        from central_tool import refresh_configuration_review
+        from aruba_central.central_tool import refresh_configuration_review
         refresh_configuration_review(data)
         # Fixture views contain already-parsed reviews, not raw API responses.
         next(r for r in local["review"]["profiles"] if r["identity"] == "10")["annotations"] = {
@@ -328,7 +328,7 @@ class ConsolidationTests(unittest.TestCase):
             self.assertIn("Compare overrides", w.scopes({"snapshot": name}))
 
     def test_vlan_comparison_displays_effective_values_not_assumed_defaults(self):
-        from workspace_views import vlan_explanation
+        from aruba_central.workspace_views import vlan_explanation
         html = vlan_explanation({"vlan": 1}, {"vlan": 1, "enable": True, "name": "DEFAULT_VLAN_1"},
                                 {"vlan": 1, "enable": False, "name": "Effective name"})
         self.assertIn("Saved locally", html)
@@ -340,7 +340,7 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("not a live switch CLI", html)
 
     def test_vlan_comparison_exposes_effective_only_and_matching_fields(self):
-        from workspace_views import vlan_explanation
+        from aruba_central.workspace_views import vlan_explanation
         html = vlan_explanation({"vlan": 10, "name": "Same"},
                                 {"vlan": 10, "name": "Same"},
                                 {"vlan": 10, "name": "Same", "voice-enable": True})
@@ -350,7 +350,7 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("Not returned", html)
 
     def test_vlan_comparison_marks_settings_omitted_by_all_sources_unavailable(self):
-        from workspace_views import vlan_explanation
+        from aruba_central.workspace_views import vlan_explanation
         html = vlan_explanation({"vlan": 10}, {"vlan": 10}, {"vlan": 10})
         for label in ("IGMP snooping", "MLD snooping", "Voice VLAN",
                       "DHCPv4 snooping", "DHCPv6 snooping"):
@@ -367,7 +367,7 @@ class ConsolidationTests(unittest.TestCase):
         self.assertNotIn(">Unavailable<", row)
 
     def test_protected_vlan_is_included_in_missing_field_diagnostics(self):
-        from central_tool import refresh_configuration_review, vlan_evidence_summary
+        from aruba_central.central_tool import refresh_configuration_review, vlan_evidence_summary
         data = fixture()
         views = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]
         views[0]["effective_view"]["profiles"]["1"] = {"vlan": 1, "name": "Default", "enable": True}
@@ -380,8 +380,8 @@ class ConsolidationTests(unittest.TestCase):
         self.assertGreaterEqual(summary["remaining_fields"]["enable"], 1)
 
     def test_operational_vlan_context_does_not_infer_configured_enable(self):
-        from central_tool import configuration_operational_vlan
-        from workspace_views import operational_vlan_context
+        from aruba_central.central_tool import configuration_operational_vlan
+        from aruba_central.workspace_views import operational_vlan_context
         data = {"operational_vlans": {"ACCESS_SWITCH": {"1": {
             "status": "response_received", "captured_at": "test",
             "payload": {"vlans": [{"id": 1, "name": "DEFAULT_VLAN_1", "status": "Up",
@@ -403,9 +403,9 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(configuration_operational_vlan(data, "ACCESS_SWITCH", "1", "1")["status"], "identity_unresolved")
 
     def test_vlan_one_is_protected_and_missing_fields_not_actual_difference(self):
-        from central_tool import refresh_configuration_review
-        from override_view import device_override_rows
-        from workspace_views import vlan_instance_context
+        from aruba_central.central_tool import refresh_configuration_review
+        from aruba_central.override_view import device_override_rows
+        from aruba_central.workspace_views import vlan_instance_context
         data = fixture()
         views = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]
         views[0]["effective_view"]["profiles"]["1"] = {"vlan": 1, "name": "DEFAULT_VLAN_1", "enable": True}
@@ -434,7 +434,7 @@ class ConsolidationTests(unittest.TestCase):
         import tempfile
         import json
         from pathlib import Path
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         data = fixture()
         body = {"profiles": [{"arbitrary-field": "<script>example</script>", "enabled": False}]}
         read = {"status": "response_received", "raw": body}
@@ -460,9 +460,9 @@ class ConsolidationTests(unittest.TestCase):
             self.assertIn("Additional scoped configuration", coverage)
 
     def test_partial_vlan_matches_are_review_candidates_not_verified_removals(self):
-        from central_tool import refresh_configuration_review
-        from override_view import device_override_rows
-        from workspace_views import vlan_explanation
+        from aruba_central.central_tool import refresh_configuration_review
+        from aruba_central.override_view import device_override_rows
+        from aruba_central.workspace_views import vlan_explanation
         data = fixture()
         views = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]
         reference = {"vlan": 70, "name": "VOICE", "enable": True,
@@ -494,7 +494,7 @@ class ConsolidationTests(unittest.TestCase):
         import tempfile
         import json
         from pathlib import Path
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         with tempfile.TemporaryDirectory() as directory:
             name = "config-audit-example.json"
             (Path(directory) / name).write_text(json.dumps(data))
@@ -516,9 +516,9 @@ class ConsolidationTests(unittest.TestCase):
         self.assertFalse(f["review_candidate"])
 
     def test_recovered_vlan_fields_change_comparison_not_saved_body(self):
-        from central_tool import refresh_configuration_review, vlan_comparison_evidence
-        from override_view import device_override_rows
-        from workspace_views import vlan_explanation
+        from aruba_central.central_tool import refresh_configuration_review, vlan_comparison_evidence
+        from aruba_central.override_view import device_override_rows
+        from aruba_central.workspace_views import vlan_explanation
         data = fixture()
         views = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]
         views[0]["effective_view"]["profiles"]["70"] = {"vlan": 70, "name": "Example", "enable": True}
@@ -546,8 +546,8 @@ class ConsolidationTests(unittest.TestCase):
         self.assertFalse(f["candidate"])
 
     def test_empty_multicast_interfaces_do_not_complete_vlan_comparison(self):
-        from central_tool import vlan_comparison_evidence
-        from workspace_views import vlan_explanation
+        from aruba_central.central_tool import vlan_comparison_evidence
+        from aruba_central.workspace_views import vlan_explanation
         row = {"identity": "10", "local": {"vlan": 10}, "effective": {"vlan": 10},
                "global_reference": {"vlan": 10, "igmp": {"snooping": False},
                                     "mld": {"snooping": True}}}
@@ -566,7 +566,7 @@ class ConsolidationTests(unittest.TestCase):
         self.assertFalse(evidence["safe_to_apply"])
 
     def test_monitoring_voice_uses_explicit_state_only(self):
-        from central_tool import vlan_comparison_evidence
+        from aruba_central.central_tool import vlan_comparison_evidence
         row = {"identity": "10", "local": {"vlan": 10}, "effective": {"vlan": 10},
                "global_reference": {"vlan": 10, "voice-enable": False}}
         record = {"id": 10, "voice": "Disabled"}
@@ -583,7 +583,7 @@ class ConsolidationTests(unittest.TestCase):
             self.assertNotIn("voice-enable", evidence["comparison"])
 
     def test_feature_evidence_completes_nested_vlan_comparison(self):
-        from central_tool import vlan_comparison_evidence
+        from aruba_central.central_tool import vlan_comparison_evidence
         row = {"identity": "10", "local": {"vlan": 10}, "effective": {"vlan": 10},
                "global_reference": {"vlan": 10, "igmp": {"snooping": True},
                                     "dhcpv4-snooping": {"enable": False}, "voice-enable": False}}
@@ -601,7 +601,7 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(evidence["differences"][0]["kind"], "missing_local")
 
     def test_vlan_summary_reports_counts_without_tenant_values(self):
-        from central_tool import vlan_evidence_summary, refresh_configuration_review
+        from aruba_central.central_tool import vlan_evidence_summary, refresh_configuration_review
         import json
         data = fixture()
         views = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]
@@ -622,7 +622,7 @@ class ConsolidationTests(unittest.TestCase):
 
 
     def test_collection_gap_rows_distinguish_empty_failed_and_skipped_evidence(self):
-        from workspace_views import collection_gap_rows
+        from aruba_central.workspace_views import collection_gap_rows
         bundle = {"results": {"ACCESS_SWITCH": {"modules": {"dns": {"scope_results": [
             {"local_view": {"status": "empty_object"},
              "effective_view": {"status": "list_parsed", "count_confirmed": True}},

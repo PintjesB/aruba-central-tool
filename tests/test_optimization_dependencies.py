@@ -1,5 +1,5 @@
 import unittest
-from optimization_dependencies import attach_dependency_review
+from aruba_central.optimization_dependencies import attach_dependency_review
 
 
 class OptimizationDependencyTests(unittest.TestCase):

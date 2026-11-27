@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch
-from nac_authorization import capture_nac_configuration, enforcement_attributes, policy_review
+from aruba_central.nac_authorization import capture_nac_configuration, enforcement_attributes, policy_review
 
 
 def captured(profiles, confirmed=True):
@@ -13,7 +13,7 @@ def radius(*pairs):
 
 class NACAuthorizationTests(unittest.TestCase):
     def test_default_queries_for_tenant_resources(self):
-        with patch("central_tool.read_module_view", return_value=captured({})) as reader:
+        with patch("aruba_central.central_tool.read_module_view", return_value=captured({})) as reader:
             result = capture_nac_configuration(object())
         self.assertEqual(set(result), {"static-tag", "authz-policies", "identity-stores"})
         self.assertTrue(all(call.args[-1] == {} for call in reader.call_args_list))

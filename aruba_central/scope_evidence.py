@@ -1,0 +1,181 @@
+"""Additional read-only hierarchy and assignment observations.
+
+https://arubanetworking.hpe.com/techdocs/hpe-central/content/automation/api-change-log-in-february-2026.html
+Only discovered scope IDs and observed assignment selectors are queried.
+"""
+import re
+from collections import Counter
+from urllib.parse import quote
+from .central_tool import ALPHA, CONFIG, APIError, audit_progress, ordered_parallel, canonical
+
+SCOPE_TYPES = {"global": "org", "collection": "site-collection", "site": "site",
+               "group": "device-groups", "device": "device"}
+ASSIGNMENT_KEYS = ("scope-id", "device-function", "profile-type", "profile-instance")
+
+
+def evidence_read(client, path, **params):
+    try:
+        raw = client.get(path, **params)
+    except APIError as exc:
+        if exc.status in (401, 429):
+            raise
+        return {"status": "request_rejected", "http_error": exc.status}
+    except (RuntimeError, OSError, ValueError):
+        return {"status": "read_failed"}
+    return {"status": "response_received" if raw else "empty_response", "raw": raw}
+
+
+def hierarchy_capture(client, scopes_by_persona, workers=1, progress=None):
+    tasks = sorted({(str(scope["id"]), scope["kind"])
+                    for scopes in scopes_by_persona.values() for scope in scopes
+                    if scope.get("kind") in SCOPE_TYPES and str(scope["id"]).isdigit()})
+    def read(task):
+        sid, kind = task
+        scope_type = SCOPE_TYPES[kind]
+        result = evidence_read(client, CONFIG + "/hierarchy", id=sid, type=scope_type)
+        record = {"scope": sid, "kind": kind, "scope_type": scope_type,
+                  "endpoint_version": "v1", **result}
+        # The pinned vendor catalog also documents the deprecated alpha
+        # endpoint with different parameter names. Only try it after a
+        # request-contract rejection; never bypass a permission failure.
+        if result.get("http_error") in (400, 404, 405, 422):
+            alternate = evidence_read(client, ALPHA + "/hierarchy",
+                                      **{"scope-id": sid, "scope-type": scope_type})
+            record["alternate_read"] = alternate
+            if alternate["status"] == "response_received":
+                record = {**record, **alternate, "endpoint_version": "v1alpha1",
+                          "primary_read": result}
+                record.pop("http_error", None)
+        return record
+    records = ordered_parallel(tasks, read, workers, completed=lambda done, total:
+        audit_progress(progress, "Scope hierarchy", done, total, "Reading discovered scope relationships"))
+    return {"records": records, "outcomes": dict(Counter(r["status"] for r in records)),
+            "complete": False, "safe_to_apply": False}
+
+
+def assignment_identity(row):
+    if not isinstance(row, dict):
+        return None
+    values = [row.get(key) for key in ASSIGNMENT_KEYS]
+    if any(type(value) not in (str, int) or not str(value).strip() for value in values):
+        return None
+    return tuple(str(value) for value in values)
+
+
+def assignment_selector_rejection(row):
+    """Return a bounded reason, never a private selector value."""
+    if not isinstance(row, dict):
+        return "invalid_record"
+    for key in ASSIGNMENT_KEYS:
+        value = row.get(key)
+        if type(value) not in (str, int) or not str(value).strip():
+            return "missing_or_invalid_" + key
+    sid, persona, module, instance = assignment_identity(row)
+    if not re.fullmatch(r"[0-9]+", sid):
+        return "invalid_scope_id"
+    # Assignment inventory can contain device functions outside the
+    # network-device inventory adapter. Read only exact observed safe
+    # enum-like selectors; never normalize or guess a different persona.
+    # This does not expand persona support for device configuration or writes.
+    if (not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", persona)
+            or persona in {"UNKNOWN", "OTHER", "NONE", "NULL"}):
+        return "unsupported_persona"
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,127}", module):
+        return "invalid_module"
+    if len(instance) > 512:
+        return "instance_too_long"
+    if instance in (".", "..") or any(c in instance for c in ("\\", "%")):
+        return "unsafe_instance"
+    if any(ord(c) < 32 or ord(c) == 127 for c in instance):
+        return "control_character"
+    if "/" in instance and not (module == "ethernet-interfaces" and
+            re.fullmatch(r"[0-9]{1,4}/[0-9]{1,4}/[0-9]{1,4}", instance)):
+        return "unqualified_slash_instance"
+    return None
+
+
+def valid_assignment_selector(identity):
+    return identity is not None and assignment_selector_rejection(
+        dict(zip(ASSIGNMENT_KEYS, identity))) is None
+
+
+def legacy_assignment_status(raw, identity):
+    """Validate the observed scope-map representation of a keyed assignment.
+
+    The resource string is module/instance (split only once, since an
+    Ethernet interface name itself contains slashes). Bare resources do
+    not independently establish a named profile instance.
+    """
+    if not isinstance(raw, dict) or type(raw.get("scope-id")) not in (int, str):
+        return "schema_unresolved"
+    sid, persona, module, instance = identity
+    if str(raw["scope-id"]) != sid or any(
+            key in raw and str(raw[key]) != expected
+            for key, expected in zip(ASSIGNMENT_KEYS[1:], identity[1:])):
+        return "identity_unresolved"
+    if "persona" in raw and raw["persona"] != persona:
+        return "identity_unresolved"
+    if "resource" in raw:
+        resource = raw["resource"]
+        if not isinstance(resource, str):
+            return "identity_unresolved"
+        if resource not in (module, module + "/" + instance):
+            return "identity_unresolved"
+        if resource == module + "/" + instance and raw.get("persona") == persona:
+            return "identity_observed"
+    return "scope_only_observed"
+
+
+def keyed_assignment_capture(client, assignments, workers=1, progress=None):
+    tasks = {}
+    invalid = Counter()
+    for row in assignments.get("rows", []):
+        reason = assignment_selector_rejection(row)
+        if reason:
+            invalid[reason] += 1
+            continue
+        identity = assignment_identity(row)
+        tasks.setdefault(identity, row)
+    def read(identity):
+        path = ALPHA + "/config-assignments/" + "/".join(quote(v, safe="") for v in identity)
+        # Live evidence: 209 bare keyed requests matched their full
+        # assignment identities. Four sampled requests with explicit LOCAL
+        # selectors returned empty objects. Use the proven path-only contract.
+        result = evidence_read(client, path)
+        raw = result.get("raw")
+        if result["status"] == "response_received":
+            rows = None
+            if isinstance(raw, dict):
+                if all(key in raw for key in ASSIGNMENT_KEYS):
+                    rows = [raw]
+                elif set(raw) <= {"metadata", "config-assignment"}:
+                    value = raw.get("config-assignment")
+                    rows = value if isinstance(value, list) else [value] if isinstance(value, dict) else None
+            if rows is None:
+                result["status"] = legacy_assignment_status(raw, identity)
+                if result["status"] == "identity_observed":
+                    result["identity_format"] = "scope_map_resource"
+                    # Different response representations are not directly
+                    # comparable as full bodies.
+                elif result["status"] == "scope_only_observed":
+                    result["missing_identity_fields"] = [key for key in ASSIGNMENT_KEYS if key not in raw]
+            elif len(rows) != 1 or assignment_identity(rows[0]) != identity:
+                result["status"] = "identity_unresolved"
+            else:
+                metadata = raw.get("metadata", {})
+                counts = metadata.get("count_objects_in_module", {}) if isinstance(metadata, dict) else None
+                if (not isinstance(counts, dict)
+                        or any(type(value) is not int or value != 1 for value in
+                               (metadata.get("count", 1), metadata.get("total", 1), counts.get("ANY", 1)))):
+                    result["status"] = "count_mismatch"
+                else:
+                    result["status"] = "identity_observed"
+                    result["body_matches_inventory"] = canonical(rows[0]) == canonical(tasks[identity])
+        return {"selector": dict(zip(ASSIGNMENT_KEYS, identity)), **result}
+    records = ordered_parallel(sorted(tasks), read, workers, completed=lambda done, total:
+        audit_progress(progress, "Individual assignments", done, total, "Reading observed assignment identities"))
+    outcomes = Counter(r["status"] for r in records)
+    if invalid:
+        outcomes["invalid_selector"] += sum(invalid.values())
+    return {"records": records, "outcomes": dict(outcomes), "selector_rejections": dict(invalid),
+            "complete": False, "safe_to_apply": False}

@@ -3,8 +3,8 @@ import unittest
 import shutil
 import importlib.util
 
-from workspace_ui import page, table, tr, inspect, raw, setting_value, diff_table
-from workspace_views import vlan_explanation
+from aruba_central.workspace_ui import page, table, tr, inspect, raw, setting_value, diff_table
+from aruba_central.workspace_views import vlan_explanation
 
 
 class SettingDisplayTests(unittest.TestCase):
@@ -80,9 +80,9 @@ class BrowserLayoutTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from playwright.sync_api import sync_playwright
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         from test_consolidation import fixture
-        from workspace_views import port_group_label
+        from aruba_central.workspace_views import port_group_label
         data = fixture()
         entry = data["results"]["ACCESS_SWITCH"]
         settings = {"switchport": {"access-vlan": 10}, "routing": False}
@@ -108,7 +108,7 @@ class BrowserLayoutTests(unittest.TestCase):
             try:
                 view = browser.new_page(viewport={"width": 1280, "height": 800})
                 from unittest.mock import patch
-                with patch("advanced_review.duplicate_migration_preview", side_effect=AssertionError("Unselected migration detail must not be generated")):
+                with patch("aruba_central.advanced_review.duplicate_migration_preview", side_effect=AssertionError("Unselected migration detail must not be generated")):
                     view.set_content(workspace.advanced({"snapshot": name, "workflow": "ports"}))
                 self.assertEqual(view.locator("section[data-panel]").count(), 1)
                 self.assertEqual(view.locator("section[data-panel]").get_attribute("data-panel"), "ports")
@@ -138,7 +138,7 @@ class BrowserLayoutTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from playwright.sync_api import sync_playwright
-        from config_app import Workspace
+        from aruba_central.config_app import Workspace
         from test_consolidation import fixture
 
         data = fixture()

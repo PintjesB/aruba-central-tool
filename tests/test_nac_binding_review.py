@@ -1,5 +1,5 @@
 import unittest
-from nac_binding_review import tag_condition_observations, vlan_identity, nac_bindings
+from aruba_central.nac_binding_review import tag_condition_observations, vlan_identity, nac_bindings
 
 
 class NACBindingTests(unittest.TestCase):
