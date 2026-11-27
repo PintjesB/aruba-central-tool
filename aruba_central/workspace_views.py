@@ -252,17 +252,24 @@ def advisor_view(workspace, query):
     if empty:
         return empty
     root, name, bundle, picker = loaded
-    from .bulk_review import source_recipient_evidence
+    from .bulk_review import source_recipient_evidence, source_recipient_index
     findings = profile_recommendations(bundle)
-    for finding in findings:
-        entry = bundle["results"].get(finding["persona"])
-        finding["recipient_evidence"] = source_recipient_evidence(entry, finding["sources"]) if entry else {"known": [], "unknown": []}
     # Exact deep links from the device override inspector preserve the full group.
     scope_filter, identity_filter = query.get("scope"), query.get("identity")
     if scope_filter and identity_filter:
         findings = [f for f in findings if f["action"] == "remove_override"
                     and f["persona"] == query.get("persona") and f["module"] == query.get("module")
                     and f["identity"] == identity_filter and any(s["scope"] == scope_filter for s in f["sources"])]
+    recipient_indexes = {}
+    for finding in findings:
+        persona = finding["persona"]
+        entry = bundle["results"].get(persona)
+        if entry:
+            if persona not in recipient_indexes:
+                recipient_indexes[persona] = source_recipient_index(entry)
+            finding["recipient_evidence"] = source_recipient_evidence(entry, finding["sources"], index=recipient_indexes[persona])
+        else:
+            finding["recipient_evidence"] = {"known": [], "unknown": []}
     from .optimization_dependencies import attach_dependency_review
     attach_dependency_review(findings, workspace.advanced_snapshot(bundle)["references"])
     short = {key: value[0] for key, value in ACTION_GUIDE.items()}
