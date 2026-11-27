@@ -2278,11 +2278,11 @@ def read_vlan_instance(client, persona, scope, vid, effective):
             "annotations": annotation}
 
 
-def keyed_profile_contracts():
-    """Only exact documented single-key GET paths matching explicit adapters."""
+def keyed_profile_contracts(*, include_raw=False):
+    """Exact documented single-key GET paths; raw modules need a unique key."""
     catalog = json.loads(Path(__file__).with_name("central_api_catalog.json").read_text(encoding="utf-8"))
     required = {"view-type", "object-type", "scope-id", "device-function", "effective", "detailed"}
-    supported = {}
+    candidates = defaultdict(set)
     for request in catalog["get_requests"]:
         match = re.fullmatch(r"/network-config/v1alpha1/([a-z][a-z0-9-]*)/:([a-z][a-z0-9-]*)",
                              request["path"])
@@ -2290,11 +2290,13 @@ def keyed_profile_contracts():
             continue
         module, key = match.groups()
         # Existing VLAN and special NAC adapters have separate query semantics.
-        if module in ("layer2-vlan", "auth-profiles") or module not in CONFIG_MODULES:
+        if module in ("layer2-vlan", "auth-profiles"):
             continue
-        if key == CONFIG_MODULES[module][0]:
-            supported[module] = key
-    return supported
+        if module in CONFIG_MODULES and key == CONFIG_MODULES[module][0]:
+            candidates[module].add(key)
+        elif include_raw and module not in CONFIG_MODULES:
+            candidates[module].add(key)
+    return {module: next(iter(keys)) for module, keys in candidates.items() if len(keys) == 1}
 
 
 def keyed_profile_read(client, module, identity_key, identity, params, collection_profile):
@@ -2345,7 +2347,7 @@ def keyed_profile_read(client, module, identity_key, identity, params, collectio
                            if isinstance(collection_profile, dict) else None}
 
 
-def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKERS, progress=None, *, checkpoint=None, nac_configuration=None):
+def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKERS, progress=None, *, checkpoint=None, nac_configuration=None, unadapted=None):
     """Deep survey of observed Library, local and effective profile identities.
 
     Effective reads are paired with local identities and include inherited-only
@@ -2381,6 +2383,45 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
                 for identity in sorted(saved.keys() | applied.keys()):
                     tasks.append((persona, sid, module, identity, "effective", applied.get(identity)))
 
+    # Raw surveys may contain profiles absent from the persona-filtered adapter.
+    # Use only exact documented single keys, positive records and known contexts.
+    raw_contracts = keyed_profile_contracts(include_raw=True)
+    existing = {task[:5] for task in tasks}
+    supplemental_count = 0
+    def add(persona, sid, module, identity, kind, profile):
+        nonlocal supplemental_count
+        selector = (persona, sid, module, identity, kind)
+        if selector not in existing:
+            tasks.append((*selector, profile))
+            existing.add(selector)
+            supplemental_count += 1
+    def parsed_profiles(read, identity_key):
+        if read.get("status") != "response_received":
+            return {}
+        parsed = module_view(read.get("raw"), identity_key)
+        return parsed["profiles"] if parsed["status"] == "list_parsed" else {}
+    for module, entry in sorted((unadapted or {}).items()):
+        if module not in raw_contracts or module in tenant_contracts:
+            continue
+        key = raw_contracts[module]
+        contracts[module] = key
+        for identity, profile in sorted(parsed_profiles(entry.get("library", {}), key).items()):
+            add("Library", "", module, identity, "library", profile)
+        for view in entry.get("source_views", []):
+            persona, sid = view.get("persona"), str(view.get("scope", ""))
+            if persona not in NETWORK_PERSONAS or not sid.isdigit():
+                continue
+            for identity, profile in sorted(parsed_profiles(view.get("effective", {}), key).items()):
+                add(persona, sid, module, identity, "effective", profile)
+            for identity, profile in sorted(parsed_profiles(view.get("committed", {}), key).items()):
+                annotation = profile.get("@")
+                if (isinstance(annotation, dict)
+                        and annotation.get("aruba-annotation:object_type") == "LOCAL"
+                        and annotation.get("aruba-annotation:inherited") is False
+                        and annotation.get("aruba-annotation:device_function", persona) == persona):
+                    add(persona, sid, module, identity, "local", profile)
+                    add(persona, sid, module, identity, "effective", None)
+
     def collect(task):
         persona, sid, module, identity, kind, profile = task
         params = {"view-type": "LIBRARY", "detailed": "true"} if kind == "library" else {
@@ -2405,6 +2446,7 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
         outcomes[evidence["status"]] += 1
     print("Keyed profile details: " + canonical(dict(outcomes)), flush=True)
     return {"supported_modules": sorted(contracts), "outcomes": dict(outcomes), "profiles": observations,
+            "supplemental_raw_reads": supplemental_count,
             "complete": False, "safe_to_apply": False}
 
 
@@ -3292,7 +3334,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     nac_registrations = read_mac_registrations(client, progress)
     print(f"NAC MAC registration coverage: {nac_registrations['status']}; observed={len(nac_registrations['rows'])}", flush=True)
     health = capture_configuration_health(client, records, workers, progress)
-    keyed_details = capture_keyed_profile_details(client, results, library, workers, progress, checkpoint=checkpoint, nac_configuration=nac_configuration) if deep_catalog else None
+    keyed_details = capture_keyed_profile_details(client, results, library, workers, progress, checkpoint=checkpoint, nac_configuration=nac_configuration, unadapted=unadapted) if deep_catalog else None
     from scope_evidence import hierarchy_capture, keyed_assignment_capture
     hierarchy_evidence = hierarchy_capture(client, scopes_by_persona, workers, progress) if deep_catalog else None
     assignment_details = keyed_assignment_capture(client, assignments, workers, progress) if deep_catalog else None

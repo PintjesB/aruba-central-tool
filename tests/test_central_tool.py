@@ -678,6 +678,40 @@ class Tests(unittest.TestCase):
         self.assertEqual(sum(call[1].get("effective") == "true" for call in fake.calls), 3)
         self.assertFalse(evidence["safe_to_apply"])
 
+    def test_keyed_reads_include_observed_raw_profiles_without_mixed_scope_guessing(self):
+        from central_tool import capture_keyed_profile_details, keyed_profile_contracts
+        self.assertEqual(keyed_profile_contracts(include_raw=True)["portals"], "portal-id")
+        self.assertNotIn("portals", keyed_profile_contracts())
+        self.assertNotIn("policy-groups", keyed_profile_contracts(include_raw=True))
+        profile = {"portal-id": "portal"}
+        local = {"portal-id": "local", "@": {"aruba-annotation:object_type": "LOCAL",
+                                              "aruba-annotation:inherited": False}}
+        shared = {"portal-id": "shared", "@": {"aruba-annotation:object_type": "SHARED",
+                                                "aruba-annotation:inherited": False}}
+        def view(*profiles):
+            return {"status": "response_received", "raw": {"profiles": list(profiles)}}
+        extra = {"portals": {"library": view(profile), "source_views": [
+            {"persona": "CAMPUS_AP", "scope": "12", "effective": view(profile, local, shared),
+             "committed": view(local, shared)},
+            {"persona": "ALL_DEVICE_FUNCTIONS", "scope": "13", "effective": view(profile)},
+        ]}}
+        class Client:
+            def __init__(self):
+                self.calls = []
+            def get(self, path, **params):
+                self.calls.append((path, params))
+                return {"portal-id": path.rsplit("/", 1)[-1]}
+        fake = Client()
+        result = capture_keyed_profile_details(fake, {}, {}, workers=1, unadapted=extra)
+        self.assertEqual(result["supplemental_raw_reads"], 5)
+        self.assertEqual(result["outcomes"], {"identity_observed": 5})
+        self.assertEqual(len(fake.calls), 5)
+        self.assertEqual(sum(p.get("object-type") == "LOCAL" for _, p in fake.calls), 1)
+        self.assertFalse(any(p.get("scope-id") == "13" for _, p in fake.calls))
+        self.assertEqual(set(result["profiles"]["CAMPUS_AP"]["12"]["portals"]["local"]), {"local", "effective"})
+        self.assertEqual(set(result["profiles"]["CAMPUS_AP"]["12"]["portals"]["shared"]), {"effective"})
+        self.assertFalse(result["safe_to_apply"])
+
     def test_keyed_profile_rejects_ambiguous_identity_and_unsafe_selectors(self):
         from central_tool import keyed_profile_read
         fake = Fake([{"profiles": [{"name": "different"}]}])
