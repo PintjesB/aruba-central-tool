@@ -56,6 +56,11 @@ class ScopeCheckpoint:
         self.reused = 0
         self.extra_reused = {}
         self.extra_saved = {}
+        # Fresh runs own an initially empty checkpoint. Avoid opening SQLite
+        # to look up keys that this run has not yet saved. Resumed runs still
+        # consult durable evidence for every requested key.
+        self._fresh_pairs = None if resume else set()
+        self._fresh_observations = None if resume else set()
         if self.path.is_symlink():
             raise ValueError("Checkpoint must not be a symlink")
         if self.path.exists():
@@ -106,6 +111,9 @@ class ScopeCheckpoint:
 
     def get(self, persona, module, scope):
         key = fingerprint([persona, module, str(scope)])
+        with self.lock:
+            if self._fresh_pairs is not None and key not in self._fresh_pairs:
+                return None
         with self.lock, self._connect() as db:
             record = db.execute("SELECT payload FROM pairs WHERE key = ?", (key,)).fetchone()
             row = json.loads(record[0]) if record else None
@@ -119,10 +127,14 @@ class ScopeCheckpoint:
             return
         key = fingerprint([persona, module, str(scope)])
         row = {"local": local, "effective": effective, "captured_at": self.now().isoformat()}
-        with self.lock, self._connect() as db:
-            cursor = db.execute("INSERT OR IGNORE INTO pairs VALUES (?, ?)",
-                                (key, json.dumps(row, allow_nan=False)))
-            self.pairs += cursor.rowcount
+        payload = json.dumps(row, allow_nan=False, separators=(",", ":"))
+        with self.lock:
+            with self._connect() as db:
+                cursor = db.execute("INSERT OR IGNORE INTO pairs VALUES (?, ?)", (key, payload))
+                inserted = cursor.rowcount
+            self.pairs += inserted
+            if self._fresh_pairs is not None:
+                self._fresh_pairs.add(key)
 
     def observe(self, phase, selector, read, qualified):
         """Resume one independently qualified configuration observation.
@@ -131,19 +143,26 @@ class ScopeCheckpoint:
         phase-specific qualification predicate. No unsuccessful read is reused.
         """
         key = fingerprint([phase, selector])
-        with self.lock, self._connect() as db:
-            record = db.execute("SELECT payload FROM observations WHERE key = ?", (key,)).fetchone()
-            if record:
-                payload = json.loads(record[0])["evidence"]
-                if qualified(payload):
-                    self.extra_reused[phase] = self.extra_reused.get(phase, 0) + 1
-                    return payload
+        with self.lock:
+            if self._fresh_observations is None or key in self._fresh_observations:
+                with self._connect() as db:
+                    record = db.execute("SELECT payload FROM observations WHERE key = ?", (key,)).fetchone()
+                if record:
+                    payload = json.loads(record[0])["evidence"]
+                    if qualified(payload):
+                        self.extra_reused[phase] = self.extra_reused.get(phase, 0) + 1
+                        return payload
         payload = read()
         if qualified(payload):
-            with self.lock, self._connect() as db:
-                cursor = db.execute("INSERT OR IGNORE INTO observations VALUES (?, ?, ?)",
-                                    (key, phase, json.dumps({"captured_at": self.now().isoformat(), "evidence": payload}, allow_nan=False)))
-                self.extra_saved[phase] = self.extra_saved.get(phase, 0) + cursor.rowcount
+            encoded = json.dumps({"captured_at": self.now().isoformat(), "evidence": payload},
+                                 allow_nan=False, separators=(",", ":"))
+            with self.lock:
+                with self._connect() as db:
+                    cursor = db.execute("INSERT OR IGNORE INTO observations VALUES (?, ?, ?)", (key, phase, encoded))
+                    inserted = cursor.rowcount
+                self.extra_saved[phase] = self.extra_saved.get(phase, 0) + inserted
+                if self._fresh_observations is not None:
+                    self._fresh_observations.add(key)
         return payload
 
     def evidence(self):
