@@ -34,17 +34,21 @@ NEXT_STEP = {
 }
 
 
-def device_override_rows(bundle, persona):
+def device_override_rows(bundle, persona, *, device="", module_filter=""):
     entry = bundle["results"][persona]
-    names = {s["id"]: s.get("name") or s["id"] for s in entry["scopes"]}
+    scope_by_id = {s["id"]: s for s in entry["scopes"]}
+    names = {sid: s.get("name") or sid for sid, s in scope_by_id.items()}
     membership = scope_memberships(entry["scopes"])
     kinds = {s["kind"] for s in entry["scopes"]}
     findings, incomplete = [], []
     for module, data in sorted(entry["modules"].items()):
-        if data.get("device_scope_only"):
+        if (module_filter and module != module_filter) or data.get("device_scope_only"):
             continue
         views = {s["scope"]: s for s in data["scope_results"]}
+        fallback_index = (membership, scope_by_id, views)
         for sid, member in membership.items():
+            if device and sid != device:
+                continue
             review = views.get(sid, {}).get("review", {})
             if not review.get("qualified"):
                 incomplete.append({"device": sid, "module": module})
@@ -139,7 +143,7 @@ def device_override_rows(bundle, persona):
                     removal = "verification_required"
                 else:
                     removal = "review_removal"
-                fallback = nearest_fallback(entry, module, sid, identity, local, row["effective"], row.get("annotations", {}))
+                fallback = nearest_fallback(entry, module, sid, identity, local, row["effective"], row.get("annotations", {}), index=fallback_index)
                 if fallback["status"] == "matching_fallback" and state in ("different", "no_global", "global_unknown"):
                     state = "nearest_match"
                 if fallback["status"] == "matching_settings_identity_changed":
@@ -179,9 +183,7 @@ def overrides_view(workspace, query):
     device, module, result = query.get("device", ""), query.get("module", ""), query.get("result", "cleanup")
     if (device and device not in dict(devices)) or (module and module not in modules) or (result and result not in RESULTS and result != "cleanup"):
         raise ValueError("Unknown comparison filter")
-    findings, incomplete = device_override_rows(bundle, persona)
-    scoped = [f for f in findings if (not device or f["device"] == device) and (not module or f["module"] == module)]
-    missing = [f for f in incomplete if (not device or f["device"] == device) and (not module or f["module"] == module)]
+    scoped, missing = device_override_rows(bundle, persona, device=device, module_filter=module)
     counts = Counter(f["result"] for f in scoped)
     filters = scope_filter_form(root, "overrides", name, bundle, persona, (
         ("device", "Device", device, device_options),
