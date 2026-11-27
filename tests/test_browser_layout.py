@@ -80,7 +80,10 @@ class BrowserLayoutTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from playwright.sync_api import sync_playwright
-        from aruba_central.config_app import Workspace
+        from aruba_central.config_app import Workspace, handler_for
+        from http.server import ThreadingHTTPServer
+        import threading
+        from urllib.parse import urlencode
         from test_consolidation import fixture
         from aruba_central.workspace_views import port_group_label
         data = fixture()
@@ -105,11 +108,15 @@ class BrowserLayoutTests(unittest.TestCase):
             workspace = Workspace(directory)
             executable = shutil.which("google-chrome") or shutil.which("chromium")
             browser = pw.chromium.launch(executable_path=executable, args=["--no-sandbox"])
+            server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(workspace))
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            root = f"http://127.0.0.1:{server.server_port}/{workspace.token}/advanced?"
             try:
                 view = browser.new_page(viewport={"width": 1280, "height": 800})
                 from unittest.mock import patch
                 with patch("aruba_central.advanced_review.duplicate_migration_preview", side_effect=AssertionError("Unselected migration detail must not be generated")):
-                    view.set_content(workspace.advanced({"snapshot": name, "workflow": "ports"}))
+                    self.assertEqual(view.goto(root + urlencode({"snapshot": name, "workflow": "ports"})).status, 200)
                 self.assertEqual(view.locator("section[data-panel]").count(), 1)
                 self.assertEqual(view.locator("section[data-panel]").get_attribute("data-panel"), "ports")
                 self.assertIn("Access VLAN 10", view.locator("section[data-panel]").inner_text())
@@ -119,7 +126,7 @@ class BrowserLayoutTests(unittest.TestCase):
                 self.assertEqual(view.locator("#workspace-inspector-body [data-port-target]").all_text_contents(), ["Access-B"] * 3)
                 self.assertIn("Port dependencies", view.locator("#workspace-inspector-body").inner_text())
                 view.locator("#workspace-close").click()
-                view.set_content(workspace.advanced({"snapshot": name, "workflow": "duplicates"}))
+                self.assertEqual(view.goto(root + urlencode({"snapshot": name, "workflow": "duplicates"})).status, 200)
                 self.assertEqual(view.locator("section[data-panel]").get_attribute("data-panel"), "duplicates")
                 self.assertIn("Access-A", view.locator("section[data-panel]").inner_text())
                 view.get_by_role("button", name="Plan consolidation").click()
@@ -130,6 +137,9 @@ class BrowserLayoutTests(unittest.TestCase):
                 self.assertNotIn("Access-A:", view.locator("[data-migration-summary]").inner_text())
             finally:
                 browser.close()
+                server.shutdown()
+                server.server_close()
+                thread.join()
 
 
     def test_workspace_navigation_filters_and_preview(self):
