@@ -1224,9 +1224,11 @@ def coverage_view(workspace, query):
                      ("Qualified modules", f"{counts['qualified']}/{len(records)}", "All requested scopes interpretable"),
                      ("Observed types without adapter", len(unknown), "Raw evidence only"),
                      ("Distinct Library collections", len(set(library.get("modules", {})) | set(additional)), "Structured and supplemental evidence deduplicated")])
+    from .coverage_navigation import coverage_navigation, gap_summary, COVERAGE_CSS
     transport = bundle.get("http_get_transport")
+    body += coverage_navigation(bundle, transport, additional)
     if isinstance(transport, dict):
-        body += '<section><h2>Collection request performance</h2>' + metrics([
+        body += '<section id="coverage-performance"><h2>Collection request performance</h2>' + metrics([
             ("HTTP GET attempts", transport.get("http_get_attempts", "Unavailable"), "Includes retries"),
             ("HTTP GET retries", transport.get("http_get_retries", "Unavailable"), "Additional transport attempts"),
             ("Rate-limit responses", transport.get("http_get_429", "Unavailable"), "HTTP 429"),
@@ -1234,9 +1236,16 @@ def coverage_view(workspace, query):
             ("Repeated retry sequences avoided", transport.get("custom_500_retry_sequences_suppressed", "Unavailable"), "Custom GET API only"),
         ]) + '<p class="note">Counts cover GET attempts during this audit, including failed attempts. Authentication and troubleshooting POST requests are excluded. A resumed audit counts only this run, not earlier checkpoint requests.</p></section>'
     gaps = collection_gap_rows(bundle)
-    body += '<section><h2>Collection gaps requiring review</h2><p>Failed requests, incomplete counts and unverified empty responses are not evidence of absent configuration. Counts below represent observations, not missing profiles. Reused identical responses are not counted twice.</p>'
+    reason = query.get("gap_reason", "")
+    reason_counts = Counter(g["reason"] for g in gaps)
+    if reason and reason not in reason_counts:
+        raise ValueError("Unknown collection gap reason")
+    body += '<section id="coverage-gaps"><h2>Collection gaps requiring review</h2><p>Failed requests, incomplete counts and unverified empty responses are not evidence of absent configuration. Counts below represent observations, not missing profiles. Reused identical responses are not counted twice.</p>'
+    body += gap_summary(root, name, gaps, reason)
     gap_rows = []
     for g in gaps:
+        if reason and g["reason"] != reason:
+            continue
         module, source = g["module"], g["source"]
         if source.startswith("Supplemental"):
             link = url(root, "unadapted", snapshot=name, module=module)
@@ -1247,7 +1256,8 @@ def coverage_view(workspace, query):
                        module=module, view="diagnostics")
         gap_rows.append(tr(e(module_label(module)), e(source), e(g["reason"]),
                            str(g["observations"]), '<a href="' + link + '">Inspect evidence</a>'))
-    body += table(("Module", "Collection context", "Coverage gap", "Observations", ""), gap_rows, search=True) + '</section>'
+    body += f'<p class="filter-hint">{len(gap_rows)} matching module/context/reason groups of {len(gaps)}.</p>'
+    body += table(("Module", "Collection context", "Coverage gap", "Observations", "Action"), gap_rows, search=True) + '</section>'
     health = bundle.get("configuration_health")
     if health:
         from .central_tool import health_serial
@@ -1267,7 +1277,7 @@ def coverage_view(workspace, query):
                 field(row, "activeIssues"), field(row, "topPriorityIssue"), field(row, "recommendedAction"),
                 status(issue.get("status", "not_collected")),
                 inspect(label, raw(row, "Configuration health summary") + raw(issue, "Active issue response"), "Inspect")))
-        body += '<section><h2>Configuration deployment health</h2>' + metrics([
+        body += '<section id="coverage-health"><h2>Configuration deployment health</h2>' + metrics([
             ("Device summaries", len(summary), "Count confirmed" if health.get("count_confirmed") else "Count unverified"),
             ("Active issue responses", f"{sum(v.get('status') == 'response_received' for v in issues.values())}/{len(issues)}", "All observed device identifiers"),
             ("Inventory without health summary", len(health.get("inventory_serials_missing_from_summary", [])), "Missing is not healthy"),
@@ -1277,11 +1287,11 @@ def coverage_view(workspace, query):
         body += table(("Device", "Serial", "Configuration status", "Active issues", "Top issue", "Recommended action", "Issue read", ""), health_rows, search=True)
         body += raw(health.get("summary_pages", []), "Original health summary responses") + '</section>'
     else:
-        body += '<section><h2>Configuration deployment health</h2><p class="muted">Not collected in this snapshot. Refresh to retrieve Central health evidence.</p></section>'
+        body += '<section id="coverage-health"><h2>Configuration deployment health</h2><p class="muted">Not collected in this snapshot. Refresh to retrieve Central health evidence.</p></section>'
     assignments = library.get("assignments") or {}
     scope_maps = library.get("scope_maps") or {}
     outcomes = assignments.get("scope_read_outcomes") or {}
-    body += '<section><h2>Discovery and assignments</h2>' + table(("Source", "Status", "Observed records"), [
+    body += '<section id="coverage-assignments"><h2>Discovery and assignments</h2>' + table(("Source", "Status", "Observed records"), [
         tr("Tenant assignments", status(assignments.get("status", "not_collected")) + '<small>' +
            ("Initial count confirmed" if assignments.get("collection_count_verified") else "Initial count unverified") + '</small>',
            str(len(assignments.get("rows", []))) if assignments.get("rows") or assignments.get("status") == "response_received" else "Unavailable"),
@@ -1295,7 +1305,7 @@ def coverage_view(workspace, query):
     hierarchy = bundle.get("scope_hierarchy_evidence") or {}
     individual = bundle.get("keyed_assignment_details") or {}
     if hierarchy or individual:
-        body += '<section><h2>Direct hierarchy and assignment evidence</h2>'
+        body += '<section id="coverage-hierarchy"><h2>Direct hierarchy and assignment evidence</h2>'
         body += '<p class="note">Independent reads of discovered scopes and observed assignment identities. They do not establish complete hierarchy or assignment coverage.</p>'
         if hierarchy:
             body += '<h3>Scope hierarchy</h3>' + table(("Scope", "Type", "Status", "Endpoint", "HTTP result", ""), [
@@ -1319,7 +1329,7 @@ def coverage_view(workspace, query):
         body += '</section>'
     from .library_visibility import visibility_summary
     visibility = visibility_summary(bundle)
-    body += '<section><h2>Library definitions and scope visibility</h2><p>Library objects can be assigned or referenced by other profiles. Empty scope responses do not prove they are unused. Review observed assignments and references before any cleanup.</p>'
+    body += '<section id="coverage-visibility"><h2>Library definitions and scope visibility</h2><p>Library objects can be assigned or referenced by other profiles. Empty scope responses do not prove they are unused. Review observed assignments and references before any cleanup.</p>'
     body += table(("Module", "Library profiles", "Profiles with observed assignments", "Observed assignments",
                    "Positive effective views", "Empty-object views", "Assigned identity observed",
                    "Assigned identity absent (count confirmed)", "Assignment visibility unknown", ""), [
@@ -1339,10 +1349,10 @@ def coverage_view(workspace, query):
     macs = bundle.get("nac_registrations") or {}
     nac_rows.append(tr("MAC registrations", status(macs.get("status", "not_collected")),
                        str(len(macs.get("rows", []))), "Confirmed" if macs.get("count_confirmed") is True else "Unverified"))
-    body += '<section><h2>Central NAC tenant collection</h2><p>Authentication profiles, authorization policies and identity stores use documented tenant-default parameters. Registration pagination is independent of configuration scope reads.</p>' + table(("Resource", "Read result", "Observed records", "Count evidence"), nac_rows) + f'<p><a href="{url(root, "nac", snapshot=name)}">Review NAC identities and authorization</a></p></section>'
+    body += '<section id="coverage-nac"><h2>Central NAC tenant collection</h2><p>Authentication profiles, authorization policies and identity stores use documented tenant-default parameters. Registration pagination is independent of configuration scope reads.</p>' + table(("Resource", "Read result", "Observed records", "Count evidence"), nac_rows) + f'<p><a href="{url(root, "nac", snapshot=name)}">Review NAC identities and authorization</a></p></section>'
     assets = bundle.get("nac_portal_assets") or {}
     if assets:
-        body += '<section><h2>Central NAC portal assets</h2><p>Uploaded image metadata and observed portal references. Binary image contents are not collected.</p>'
+        body += '<section id="coverage-assets"><h2>Central NAC portal assets</h2><p>Uploaded image metadata and observed portal references. Binary image contents are not collected.</p>'
         body += metrics([("Images observed", len(assets.get("images", [])), "Count confirmed" if assets.get("count_confirmed") else "Count unverified"),
                          ("Individual metadata reads", len(assets.get("details", {})), "Exact observed image identifiers")])
         body += '<p>Inventory: ' + status(assets.get("status", "not_collected")) + '</p>'
@@ -1363,7 +1373,7 @@ def coverage_view(workspace, query):
         surveyed = set(library.get("modules", {})) | set(additional) | set(bundle.get("nac_configuration", {}))
         documented = set(catalog["modules"])
         pending = documented - surveyed - {"ethernet-interfaces"}
-        body += '<section><h2>Vendor API catalog</h2>' + metrics([
+        body += '<section id="coverage-catalog"><h2>Vendor API catalog</h2>' + metrics([
             ("Published GET definitions", catalog["get_requests"], f'{catalog["unique_get_paths"]} unique paths'),
             ("Profile collections in catalog", len(documented), f'{len(documented & surveyed)} represented in this capture'),
             ("Catalog categories inspected", f'{catalog["folders_read"]}/{catalog["folders_total"]}', "HPE published collection"),
@@ -1375,7 +1385,7 @@ def coverage_view(workspace, query):
     keyed = bundle.get("keyed_profile_details")
     if keyed:
         outcomes = keyed.get("outcomes", {})
-        body += '<section><h2>Individual profile evidence</h2>' + metrics([
+        body += '<section id="coverage-keyed"><h2>Individual profile evidence</h2>' + metrics([
             ("Supported keyed modules", len(keyed.get("supported_modules", [])), "Documented single-key selectors"),
             ("Individual reads", sum(outcomes.values()), "Includes failed or invalid selectors"),
             ("Collection-only observations", sum(keyed.get("collection_only_by_module", {}).values()), "Adaptive verification; no individual GET"),
@@ -1384,13 +1394,13 @@ def coverage_view(workspace, query):
         body += f'<p><a class="button" href="{url(root, "assessment", snapshot=name, mode="keyed")}">Review individual profile discrepancies</a></p>'
         body += '<p>' + e(", ".join(f"{pretty(k)}: {v}" for k, v in sorted(outcomes.items())) or "No observed profile identities") + '</p></section>'
     else:
-        body += '<section><h2>Individual profile evidence</h2><p class="muted">Not collected. Select Deep catalog collection to retrieve additional individual profile settings.</p></section>'
+        body += '<section id="coverage-keyed"><h2>Individual profile evidence</h2><p class="muted">Not collected. Select Deep catalog collection to retrieve additional individual profile settings.</p></section>'
     ledger = bundle.get("api_read_coverage")
     if ledger:
         operations = ledger.get("operations", [])
         received = sum(bool(r["received"]) for r in operations)
         attempted = sum(bool(r["attempted"]) for r in operations)
-        body += '<section><h2>Documented API operation coverage</h2>' + metrics([
+        body += '<section id="coverage-operations"><h2>Documented API operation coverage</h2>' + metrics([
             ("Documented GET paths", len(operations), "Includes supplemental release notes"),
             ("Paths attempted", f"{attempted}/{len(operations)}", "Logical GET calls, not retries"),
             ("Paths with responses", f"{received}/{len(operations)}", "Not proof of complete data"),
@@ -1413,11 +1423,11 @@ def coverage_view(workspace, query):
         body += '<p class="note">Current handling describes tool policy, not whether the saved capture attempted or qualified the endpoint. A path selector is not the only possible required parameter.</p>'
         body += '<p>Other or ambiguous GET paths: ' + str(sum(ledger.get("unmatched_get_outcomes", {}).values())) + ' calls. These are not attributed to a documented path.</p></section>'
     else:
-        body += '<section><h2>Documented API operation coverage</h2><p class="muted">Not recorded in this snapshot. Collect a fresh audit.</p></section>'
+        body += '<section id="coverage-operations"><h2>Documented API operation coverage</h2><p class="muted">Not recorded in this snapshot. Collect a fresh audit.</p></section>'
     rows = [tr(e(persona_label(r["persona"])), e(module_label(r["module"])), f'{r["qualified"]}/{r["total"]}', status(r["status"]),
                f'<a href="{url(root, "report", snapshot=name, persona=r["persona"], module=r["module"], view="diagnostics")}">View evidence</a>')
             for r in sorted(records, key=lambda r: ({"unqualified": 0, "partial": 1, "qualified": 2}[r["status"]], r["persona"], r["module"]))]
-    body += '<section><h2>Scoped configuration</h2>' + table(("Device function", "Module", "Qualified scopes", "Read status", ""), rows, search=True) + '</section>'
+    body += '<section id="coverage-structured"><h2>Scoped configuration</h2>' + table(("Device function", "Module", "Qualified scopes", "Read status", ""), rows, search=True) + '</section>'
     rows = []
     for m, v in sorted(library.get("modules", {}).items()):
         rows.append(tr(e(module_label(m)), badge("Adapter available"), status(v.get("status", "not_collected")),
@@ -1432,7 +1442,7 @@ def coverage_view(workspace, query):
                        status(read.get("status", "not_collected")), "Unavailable",
                        e("Count confirmed" if read.get("collection_count_verified") else "Count unverified"),
                        f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Inspect evidence</a>'))
-    body += '<section><h2>Distinct Library profile collections</h2><p>Modules with both structured and supplemental reads appear once. Supplemental evidence remains available from the collection or the scoped evidence table.</p>' + table(
+    body += '<section id="coverage-library"><h2>Distinct Library profile collections</h2><p>Modules with both structured and supplemental reads appear once. Supplemental evidence remains available from the collection or the scoped evidence table.</p>' + table(
         ("Profile type", "Interpretation", "Library read", "Parsed profiles", "Collection count", ""), rows, search=True) + '</section>'
     if additional:
         scoped = []
@@ -1446,10 +1456,10 @@ def coverage_view(workspace, query):
                              f"{captured}/{len(reads)}", str(counted),
                              str(gap) if gap is not None else "Unavailable",
                              f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Inspect settings</a>'))
-        body += '<section><h2>Additional scoped configuration</h2><p class="filter-hint">These reads preserve returned data without assuming profile identity or scope applicability. Scopes not surveyed are not verified empty. Fast catalog may miss previously unobserved local-only configuration; use Deep catalog for all supplemental scope surveys. Rejected or incomplete reads remain visible.</p>' + table(
+        body += '<section id="coverage-supplemental"><h2>Additional scoped configuration</h2><p class="filter-hint">These reads preserve returned data without assuming profile identity or scope applicability. Scopes not surveyed are not verified empty. Fast catalog may miss previously unobserved local-only configuration; use Deep catalog for all supplemental scope surveys. Rejected or incomplete reads remain visible.</p>' + table(
             ("Profile type", "Scope views attempted", "Responses captured", "Count-confirmed reads", "Unfiltered scopes not surveyed", ""), scoped, search=True) + '</section>'
 
-    return page("Module coverage", body, workspace.nav(name))
+    return page("Module coverage", body, workspace.nav(name), extra_css=COVERAGE_CSS)
 
 
 def explorer_view(workspace, query):
