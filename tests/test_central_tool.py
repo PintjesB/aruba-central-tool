@@ -585,6 +585,38 @@ class Tests(unittest.TestCase):
         self.assertFalse(coverage["complete"])
         self.assertFalse(result["safe_to_apply"])
 
+    def test_targeted_catalog_limits_empty_modules_and_expands_positive_evidence(self):
+        from central_tool import inspect_unadapted_profiles
+        discovery = {"unknown_adapter_modules": [], "survey_modules": ["example"],
+                     "modules": {}, "documented_catalog": {"modules": {
+                         "example": {"source": "vendor_collection", "all_function_scope": True}}}}
+        scopes = {"ACCESS_SWITCH": [{"id": "1", "kind": "global"},
+                                   {"id": "12", "kind": "device"},
+                                   {"id": "13", "kind": "device"}]}
+        fake = Fake([{}] * 3)
+        result = inspect_unadapted_profiles(fake, discovery, {}, {},
+                    scopes_by_persona=scopes, deep_catalog=True,
+                    targeted_catalog=True)["example"]
+        self.assertEqual(len(fake.calls), 3)
+        self.assertEqual(result["catalog_scope_coverage"]["unfiltered_scopes_not_surveyed"], 2)
+        self.assertFalse(result["catalog_scope_coverage"]["complete"])
+        for responses in ([{"profiles": [{"name": "library"}]}] + [{}] * 6,
+                          [{}, {"profiles": [{"name": "global"}]}] + [{}] * 5):
+            fake = Fake(responses)
+            result = inspect_unadapted_profiles(fake, discovery, {}, {},
+                        scopes_by_persona=scopes, deep_catalog=True,
+                        targeted_catalog=True)["example"]
+            self.assertEqual(len(fake.calls), 7)
+            self.assertEqual(result["catalog_scope_coverage"]["unfiltered_scopes_not_surveyed"], 0)
+        fake = Fake([{}] * 7)
+        result = inspect_unadapted_profiles(fake, discovery, {}, {},
+                    scopes_by_persona=scopes, deep_catalog=True,
+                    targeted_catalog=True, structured_results={"ACCESS_SWITCH": {"modules": {
+                        "example": {"scope_results": [{"scope": "12", "local_view": {
+                            "raw": {"profiles": [{"name": "local"}]}}, "effective_view": {}}]}}}})["example"]
+        self.assertEqual(len(fake.calls), 7)
+        self.assertEqual(result["catalog_scope_coverage"]["unfiltered_scopes_not_surveyed"], 0)
+
     def test_deep_catalog_handles_documented_scope_without_function_selector(self):
         from central_tool import inspect_unadapted_profiles
         discovery = {"unknown_adapter_modules": [], "survey_modules": ["example"],
