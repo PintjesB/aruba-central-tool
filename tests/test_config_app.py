@@ -92,6 +92,27 @@ class WorkspaceTests(unittest.TestCase):
                 self.assertIn("Observed profiles", html)
                 self.assertIn("portal-a", html)
 
+    def test_home_reuses_small_overview_and_invalidates_on_snapshot_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            path = Path(directory) / "config-audit-one.json"
+            data = self.fixture()
+            data["tenant_name"] = "Customer A"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with patch("aruba_central.config_app.read_audit", wraps=read_audit) as read:
+                self.assertIn("Customer A", workspace.home())
+                self.assertIn("Customer A", workspace.home())
+                self.assertEqual(read.call_count, 1)
+                data["tenant_name"] = "Customer B updated"
+                path.write_text(json.dumps(data), encoding="utf-8")
+                self.assertIn("Customer B updated", workspace.home())
+                self.assertEqual(read.call_count, 2)
+                self.assertNotIn("results", workspace._overview_snapshot[1])
+                path.unlink()
+                with self.assertRaises(ValueError):
+                    workspace.snapshot_overview(path.name)
+                self.assertEqual(read.call_count, 2)
+
     def test_reviewed_snapshot_cache_is_bounded_and_invalidated_by_file_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace(directory)
