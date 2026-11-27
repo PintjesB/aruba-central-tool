@@ -82,7 +82,35 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
             grouped = measure("configuration_search_grouped", lambda: grouped_search(bundle, "vlan"))
             trial_counts.update(optimization_worklist_rows=len(worklist), health_rows=len(health),
                                 search_observations=matches["total"], search_groups=grouped["total_groups"])
-            del worklist, health, matches, grouped
+            cached_worklist = measure("optimization_worklist_lookup", lambda: workspace.optimization_worklist(bundle))
+            if cached_worklist != worklist:
+                raise ValueError("Cached worklist differs from direct analysis")
+            measure("optimization_worklist_cache_hit", lambda: workspace.optimization_worklist(bundle))
+            del worklist, cached_worklist, health, matches, grouped
+            def render(label, action):
+                html = measure(label, action)
+                trial_counts[label + "_bytes"] = len(html.encode("utf-8"))
+            for label, action in (
+                ("render_inventory", lambda: workspace.scopes({"snapshot": snapshot})),
+                ("render_advisor", lambda: workspace.advisor({"snapshot": snapshot})),
+                ("render_advisor_repeat", lambda: workspace.advisor({"snapshot": snapshot})),
+                ("render_coverage", lambda: workspace.coverage({"snapshot": snapshot})),
+                ("render_entity_search", lambda: workspace.report({"snapshot": snapshot, "mode": "entities", "q": "vlan"})),
+                ("render_field_search", lambda: workspace.report({"snapshot": snapshot, "mode": "search", "q": "vlan"})),
+            ):
+                render(label, action)
+            first_library = next(((module, sorted(view["profiles"])[0])
+                                  for module, view in sorted((bundle.get("library") or {}).get("modules", {}).items())
+                                  if view.get("status") == "list_parsed" and view.get("profiles")), None)
+            if first_library is not None:
+                module, identity = first_library
+                render("render_library_collection", lambda: workspace.library({"snapshot": snapshot, "module": module}))
+                render("render_library_profile", lambda: workspace.library({"snapshot": snapshot, "module": module, "profile": identity}))
+            if bundle.get("results"):
+                persona = sorted(bundle["results"])[0]
+                render("render_overrides", lambda: workspace.overrides({"snapshot": snapshot, "persona": persona, "result": "all"}))
+            if bundle.get("nac_registrations") or bundle.get("nac_configuration"):
+                render("render_nac", lambda: workspace.nac({"snapshot": snapshot}))
             for label, query in (("render_assessment", {}),
                                  ("render_health", {"mode": "health"}),
                                  ("render_customer_report", {"mode": "customer-report"}),
