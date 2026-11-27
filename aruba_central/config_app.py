@@ -399,6 +399,7 @@ class Workspace:
         self._advanced_snapshot = None
         self._consolidation_snapshot = None
         self._assessment_snapshot = None
+        self._optimization_worklist = None
         self._vlan_summary = None
         self.state = "idle"
         self.phase = ""
@@ -572,6 +573,7 @@ class Workspace:
             self._advanced_snapshot = None
             self._consolidation_snapshot = None
             self._assessment_snapshot = None
+            self._optimization_worklist = None
             self._vlan_summary = None
             bundle = refresh_configuration_review(read_audit(self.directory, name))
             if before != fingerprint():
@@ -619,6 +621,18 @@ class Workspace:
                     self._assessment_snapshot = assessment(bundle, findings=findings, engineering=engineering)
                 return self._assessment_snapshot
         return assessment(bundle, findings=findings, engineering=engineering)
+
+    def optimization_worklist(self, bundle):
+        """Reuse finding rows; local disposition records are always read separately."""
+        from .optimization_worklist import optimization_worklist
+        findings = self.consolidation_snapshot(bundle)
+        engineering = self.advanced_snapshot(bundle)
+        with self.snapshot_lock:
+            if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle:
+                if self._optimization_worklist is None:
+                    self._optimization_worklist = optimization_worklist(bundle, findings, engineering)
+                return self._optimization_worklist
+        return optimization_worklist(bundle, findings, engineering)
 
     def vlan_summary(self, bundle):
         """Reuse snapshot-wide aggregate diagnostics for filtered override views."""
