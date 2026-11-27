@@ -450,7 +450,9 @@ if(panel.dataset.state==='running')poll();
                  for persona, entry in bundle["results"].items() for s in entry["scopes"]}
         identities = qualify_observed_identities(evidence)
         selected_persona, selected_scope = query.get("persona"), query.get("scope")
-        body = intro(module_label(module), "Captured configuration without a qualified comparison adapter.")
+        body = intro(module_label(module), "System configuration and captured evidence." if "singleton_library" in evidence else
+                     "Supplemental captured configuration evidence." if evidence.get("status") == "supplemental_raw" else
+                     "Captured configuration without a qualified comparison adapter.")
         body += f'<div class="collection-nav"><a href="{e(root + "coverage?" + urlencode({"snapshot": name}))}">← Collection coverage</a></div>'
         body += '<p class="note">Read-only evidence. A captured value does not establish profile identity, source precedence or safe removal.</p>'
         if selected_persona is not None or selected_scope is not None:
@@ -460,11 +462,27 @@ if(panel.dataset.state==='running')poll();
             view = matches[0]
             label = names.get((selected_persona, selected_scope), selected_scope)
             body += f'<section><a href="{link()}">← All captured scopes</a><h2>{e(label)} · {e(persona_label(selected_persona))}</h2>'
+            review = view.get("singleton_review")
+            if review:
+                body += '<h3>System settings comparison</h3>'
+                differences = review.get("differences")
+                if differences is None:
+                    body += '<p class="note">Comparison unavailable. Both configuration objects must be observed.</p>'
+                else:
+                    body += '<p>Identical observed settings.</p>' if not differences else property_table({"Differences": differences})
+                for side in ("committed", "effective"):
+                    item = review[side]
+                    body += f'<h4>{e(side.title())} settings</h4>' + status(item["status"])
+                    if item.get("settings") is not None:
+                        body += property_table(item["settings"])
             body += '<h3>Committed configuration</h3>' + settings(view["committed"])
             body += '<h3>Effective configuration</h3>' + settings(view["effective"]) + '</section>'
         else:
             library = evidence["library"]
-            body += '<section><h2>Library</h2>' + settings(library) + '</section>'
+            body += '<section><h2>Library</h2>'
+            if evidence.get("singleton_library", {}).get("settings") is not None:
+                body += property_table(evidence["singleton_library"]["settings"])
+            body += settings(library) + '</section>'
             views = evidence["source_views"]
             if identities:
                 body += '<section><h2>Identity evidence</h2>' + table(("Device function", "Identity field", "Comparable observed source scopes"),
