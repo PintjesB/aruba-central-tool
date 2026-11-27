@@ -120,3 +120,49 @@ class ScopeEvidenceTests(unittest.TestCase):
                          "scope_only_observed")
         self.assertEqual(legacy_assignment_status({k: v for k, v in raw.items() if k != "persona"}, identity),
                          "scope_only_observed")
+
+
+    def test_hierarchy_fallback_only_after_request_contract_rejection(self):
+        class Client:
+            def __init__(self):
+                self.calls = []
+            def get(self, path, **params):
+                self.calls.append((path, params))
+                if path.endswith("/v1/hierarchy"):
+                    if params["id"] == "2":
+                        raise APIError(path, 400)
+                    if params["id"] == "3":
+                        raise APIError(path, 403)
+                return {"items": [{"id": params.get("id", params.get("scope-id"))}]}
+        client = Client()
+        result = hierarchy_capture(client, {"ACCESS_SWITCH": [
+            {"id": "1", "kind": "global"}, {"id": "2", "kind": "group"},
+            {"id": "3", "kind": "site"}]})
+        self.assertEqual(len(client.calls), 4)
+        self.assertEqual(client.calls[2], ("/network-config/v1alpha1/hierarchy",
+                                         {"scope-id": "2", "scope-type": "device-groups"}))
+        recovered = result["records"][1]
+        self.assertEqual(recovered["endpoint_version"], "v1alpha1")
+        self.assertEqual(recovered["primary_read"]["http_error"], 400)
+        self.assertNotIn("http_error", recovered)
+        self.assertEqual(result["outcomes"], {"response_received": 2, "request_rejected": 1})
+        self.assertNotIn("alternate_read", result["records"][2])
+        self.assertFalse(result["complete"])
+
+    def test_assignment_rejection_reasons_do_not_expose_identifiers(self):
+        from scope_evidence import assignment_selector_rejection
+        row = {"scope-id": 12, "device-function": "ACCESS_SWITCH",
+               "profile-type": "dns", "profile-instance": "example"}
+        self.assertIsNone(assignment_selector_rejection(row))
+        cases = [({**row, "profile-instance": ""}, "missing_or_invalid_profile-instance"),
+                 ({**row, "device-function": "UNKNOWN"}, "unsupported_persona"),
+                 ({**row, "profile-type": "bad/path"}, "invalid_module"),
+                 ({**row, "scope-id": "１２"}, "invalid_scope_id"),
+                 ({**row, "profile-instance": "private/name"}, "unqualified_slash_instance"),
+                 ({**row, "profile-instance": "%2F"}, "unsafe_instance")]
+        for bad, reason in cases:
+            self.assertEqual(assignment_selector_rejection(bad), reason)
+        result = keyed_assignment_capture(object(), {"rows": [bad for bad, _ in cases]})
+        self.assertEqual(result["outcomes"], {"invalid_selector": len(cases)})
+        self.assertEqual(result["selector_rejections"], {reason: 1 for _, reason in cases})
+        self.assertNotIn("private/name", str(result))

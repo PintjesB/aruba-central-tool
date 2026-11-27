@@ -149,3 +149,25 @@ class DiagnosticsTests(unittest.TestCase):
         assets = result["portal-assets"]["response_shapes"][0]["shape"]
         self.assertEqual(assets["record_fields"]["items"], {"imageId": 1})
         self.assertNotIn(private, json.dumps(result))
+
+
+    def test_assignment_rejections_and_legacy_matches_export_without_values(self):
+        private = "PRIVATE-IDENTITY"
+        selector = {"scope-id": "12", "device-function": "ACCESS_SWITCH",
+                    "profile-type": "dns", "profile-instance": private}
+        bundle = {"schema": 1, "kind": "configuration_audit",
+                  "library": {"assignments": {"rows": [selector, {**selector, "profile-instance": private + "/invalid"}]}},
+                  "keyed_assignment_details": {"records": [
+                      {"selector": selector, "raw": {"scope-id": 12, "persona": "ACCESS_SWITCH",
+                                                     "resource": "dns/" + private}},
+                      {"selector": selector, "raw": {"scope-id": 12, "persona": "ACCESS_SWITCH",
+                                                     "resource": "dns"}}]},
+                  "scope_hierarchy_evidence": {"records": [{"scope": private, "kind": "group",
+                     "status": "request_rejected", "http_error": 400}]}}
+        result = diagnostics(bundle)["specialized_reads"]
+        self.assertEqual(result["assignments"]["selector_rejection_reasons"], {"unqualified_slash_instance": 1})
+        self.assertEqual(result["assignments"]["retained_legacy_identity_matches"],
+                         {"identity_observed": 1, "scope_only_observed": 1})
+        self.assertEqual(result["hierarchy"]["scope_outcomes"], [
+            {"kind": "group", "version": "v1", "status": "request_rejected", "http_error": 400, "reads": 1}])
+        self.assertNotIn(private, json.dumps(result))
