@@ -311,6 +311,20 @@ class WorkspaceTests(unittest.TestCase):
                 self.assertIsNone(workspace.status()["phase_eta_seconds"])
                 self.assertEqual(workspace.status()["phase_elapsed"], 0)
 
+    def test_overall_progress_uses_time_weighted_remaining_phases(self):
+        from config_app import overall_audit_progress
+        history = {"Configuration scopes": 100, "Additional profile types": 300,
+                   "Profile details": 200, "Scope hierarchy": 20}
+        state = overall_audit_progress("Additional profile types", "deep", history,
+                                       250, 150, 50, 100, 100)
+        self.assertEqual(state["overall_eta_seconds"], 320)
+        self.assertEqual(state["overall_percent"], 43.9)
+        self.assertEqual(state["stage"], 6)
+        self.assertIsNone(overall_audit_progress("Additional profile types", "deep", {},
+                                                250, 150, 50, 100, 100)["overall_percent"])
+        self.assertEqual(overall_audit_progress("Saving snapshot", "standard", {},
+                                                250, 0, 0, 0, None)["stages"], 14)
+
     def test_refresh_single_flight_and_saved_capture(self):
         with tempfile.TemporaryDirectory() as directory:
             release = threading.Event()
