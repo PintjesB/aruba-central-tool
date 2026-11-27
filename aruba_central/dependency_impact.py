@@ -14,6 +14,7 @@ def dependency_impact(references, module, identity, *, persona="", scope="", lim
     """
     root = (module, identity)
     contexts = defaultdict(list)
+    root_contexts = set()
     direct = []
     unresolved = []
     for ref in references:
@@ -29,9 +30,14 @@ def dependency_impact(references, module, identity, *, persona="", scope="", lim
             unresolved.append(ref)
         if view in ("effective", "library") and ref["status"] in RESOLVED and ref["target"] is not None:
             contexts[context].append((source, target, ref))
+            if source == root or target == root:
+                root_contexts.add(context)
     paths = []
     truncated = False
-    for context, edges in sorted(contexts.items()):
+    # A path cannot start in a context with no resolved incident root edge.
+    # Avoid building two adjacency maps for unrelated devices and profiles.
+    for context in sorted(root_contexts):
+        edges = contexts[context]
         for direction in ("consumers", "dependencies"):
             adjacency = defaultdict(list)
             for source, target, ref in edges:
