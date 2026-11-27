@@ -148,10 +148,22 @@ def diff_table(fields, left="Local", right="Reference"):
         return '<p class="empty">No comparable reference captured.</p>'
     if not fields:
         return '<p class="inline-good">Captured configuration bodies are identical.</p>'
-    def value(d, key):
-        return setting_value(d[key]) if key in d else '<span class="muted">Not returned</span>'
-    return table(("Setting", left, right), [tr(e(".".join(map(str, f["path"])) or "(root)"),
-                value(f, "local_value"), value(f, "reference_value")) for f in fields], style="setting-table")
+    kinds = {"missing_local": "Missing from first observation", "missing_reference": "Missing from second observation",
+             "null_vs_value": "Null vs explicit value", "type_difference": "Value types differ",
+             "value_difference": "Values differ"}
+    types = {"str": "String", "int": "Integer", "float": "Number", "bool": "Boolean",
+             "dict": "Object", "list": "Ordered list", "NoneType": "Null"}
+    def value(d, key, type_key):
+        if key not in d:
+            return '<span class="value-empty">Not returned</span>'
+        kind = d.get(type_key, type(d[key]).__name__)
+        return '<small class="diff-type">' + e(types.get(kind, pretty(kind))) + '</small>' + setting_value(d[key])
+    def field(d):
+        path = ".".join(map(str, d["path"])) or "(root)"
+        kind = kinds.get(d.get("kind"), "Observed difference")
+        return '<strong class="diff-path">' + e(path) + '</strong><small>' + e(kind) + '</small>'
+    return table(("Setting", left, right), [tr(field(f), value(f, "local_value", "local_type"),
+                value(f, "reference_value", "reference_type")) for f in fields], style="setting-table typed-diff")
 
 
 def property_table(data):
@@ -388,6 +400,9 @@ form,.toolbar,.table-toolbar,.snapshot-picker { display: flex; flex-wrap: wrap; 
 .override-table td small { line-height: 1.4; }
 .setting-table th:first-child { width: 28%; }
 .setting-table td { vertical-align: top; }
+.typed-diff .diff-type { font-weight:600; color:var(--muted); margin:0 0 4px; }
+.typed-diff .diff-path { overflow-wrap:anywhere; }
+.typed-diff td:first-child small { color:var(--muted); }
 .value-scalar { white-space: pre-wrap; overflow-wrap: anywhere; }
 .value-empty { color: var(--muted); font-style: italic; }
 .value-bool { font-weight: 600; }
