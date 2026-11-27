@@ -63,5 +63,11 @@ OVERVIEW_CSS = """
 .review-category-tile .review-blocked { color:var(--warn); font-weight:600; }
 .review-note-preview { display:block; max-width:18rem; overflow-wrap:anywhere; margin-top:5px; }
 #optimization-worklist { scroll-margin-top:80px; }
+.compact-review-table td { vertical-align:top; }
+.compact-review-table td:first-child { width:32px; }
+.compact-review-table td:nth-child(2) { min-width:155px; }
+.compact-review-table td small { color:var(--muted); line-height:1.4; }
+.compact-review-table td:nth-child(5) .tag { white-space:normal; }
+.compact-review-table td:last-child a { display:inline-block; margin-bottom:5px; }
 @media(max-width:680px) { .review-status-grid,.review-category-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 """
