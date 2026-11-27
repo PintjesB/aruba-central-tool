@@ -1,5 +1,6 @@
 """Loopback-only configuration workspace backed by private audit files."""
 import json
+import hashlib
 import os
 import re
 import secrets
@@ -123,6 +124,83 @@ DEEP_ONLY_PHASES = {"NAC portal assets", "Profile details", "Profile detail expa
                     "Scope hierarchy", "Individual assignments"}
 
 
+def performance_record(bundle):
+    """Small private summary; never use it as configuration evidence."""
+    from central_tool import canonical, health_serial
+    topology = {
+        "region": bundle.get("region"),
+        "serials": sorted({serial for r in bundle.get("inventory", [])
+                           if (serial := health_serial(r.get("inventory")))}),
+        "scopes": sorted((p, str(s["id"]), s["kind"])
+                         for p, entry in bundle.get("results", {}).items()
+                         for s in entry.get("scopes", [])),
+        "plan": sorted((p, module, sorted(str(s["scope"]) for s in data.get("scope_results", [])))
+                       for p, entry in bundle.get("results", {}).items()
+                       for module, data in entry.get("modules", {}).items()),
+    }
+    timing = bundle.get("collection_timing") or {}
+    phases = []
+    for row in timing.get("phases", []):
+        seconds = row.get("seconds")
+        if row.get("phase") in AUDIT_PHASES and type(seconds) in (int, float) and 0 <= seconds <= 864000:
+            phases.append({"phase": row["phase"], "seconds": seconds})
+    elapsed = timing.get("elapsed_before_save_seconds")
+    transport = bundle.get("http_get_transport") or {}
+    details = bundle.get("keyed_profile_details") or {}
+    def number(value):
+        return value if type(value) is int and value >= 0 else None
+    return {"strategy": bundle.get("collection_strategy"), "detail_strategy": details.get("detail_strategy"),
+            "mixed_capture_times": bool((bundle.get("collection_checkpoint") or {}).get("mixed_capture_times")),
+            "elapsed": elapsed if type(elapsed) in (int, float) and 0 < elapsed <= 864000 else None,
+            "phases": phases, "attempts": number(transport.get("http_get_attempts")),
+            "retries": number(transport.get("http_get_retries")),
+            "rate_limits": number(transport.get("http_get_429")),
+            "detail_reads": number(details.get("actual_reads")),
+            "scope_pairs": sum(len(data.get("scope_results", [])) for entry in bundle.get("results", {}).values()
+                               for data in entry.get("modules", {}).values()),
+            "topology": hashlib.sha256(canonical(topology).encode()).hexdigest()
+                        if topology["region"] and topology["serials"] and topology["scopes"] else None}
+
+
+def performance_fingerprint(path):
+    stat = path.stat()
+    return [stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+
+
+def cache_performance(path, record):
+    from central_tool import write_private
+    destination = path.with_suffix(".performance.json")
+    if destination.is_symlink():
+        return
+    temporary = destination.with_name(destination.name + "." + secrets.token_hex(8) + ".partial")
+    try:
+        write_private(temporary, {"schema": 1, "fingerprint": performance_fingerprint(path), "record": record}, compact=True)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def read_performance(path):
+    """Use a validated small cache or rebuild from the completed local snapshot."""
+    destination = path.with_suffix(".performance.json")
+    before = performance_fingerprint(path)
+    try:
+        if not destination.is_symlink() and destination.stat().st_size <= 65536:
+            cached = json.loads(destination.read_text(encoding="utf-8"))
+            if cached.get("schema") == 1 and cached.get("fingerprint") == before and isinstance(cached.get("record"), dict):
+                return cached["record"]
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    record = performance_record(read_audit(path.parent, path.name))
+    if before != performance_fingerprint(path):
+        raise ValueError("Snapshot changed while reading performance")
+    try:
+        cache_performance(path, record)
+    except (OSError, ValueError, TypeError):
+        pass
+    return record
+
+
 def historical_phase_times(directory, strategy, exhaustive=False):
     """Use a completed comparable fresh capture in this workspace, if available."""
     if strategy not in ("standard", "deep", "targeted"):
@@ -131,15 +209,14 @@ def historical_phase_times(directory, strategy, exhaustive=False):
     if not files:
         return {}
     try:
-        previous = read_audit(directory, files[0].name)
-        if (previous.get("collection_strategy") != strategy
-                or previous.get("collection_checkpoint", {}).get("mixed_capture_times")
-                or (strategy != "standard" and
-                    ((previous.get("keyed_profile_details") or {}).get("detail_strategy")
-                     != ("exhaustive" if exhaustive else "adaptive")))):
+        previous = read_performance(files[0])
+        if (previous.get("strategy") != strategy
+                or previous.get("mixed_capture_times")
+                or (strategy != "standard" and previous.get("detail_strategy")
+                    != ("exhaustive" if exhaustive else "adaptive"))):
             return {}
         times = {}
-        for row in (previous.get("collection_timing") or {}).get("phases", []):
+        for row in previous.get("phases", []):
             phase, seconds = row.get("phase"), row.get("seconds")
             if phase in AUDIT_PHASES and type(seconds) in (float, int) and 0 <= seconds <= 864000:
                 times[phase] = times.get(phase, 0) + seconds
@@ -388,8 +465,12 @@ class Workspace:
                         bundle["collection_timing"] = {
                             "elapsed_before_save_seconds": round(time.monotonic() - self.started, 1),
                             "phases": list(self.phase_history)}
-                    write_private(temporary, bundle)
+                    write_private(temporary, bundle, compact=True)
                     os.replace(temporary, target)
+                    try:
+                        cache_performance(target, performance_record(bundle))
+                    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                        pass  # Optional index must not invalidate the capture.
                 finally:
                     temporary.unlink(missing_ok=True)
                 if checkpoint_path is not None:
@@ -508,7 +589,7 @@ class Workspace:
             + f'></progress><p id="audit-count">{status["done"]}/{status["total"]} · {status["elapsed"]}s total elapsed</p>'
             + f'<p id="audit-live-preview"{" hidden" if not status["live_module_count"] else ""}><a href="{root}live">Browse collected modules</a> <span id="audit-live-count">{status["live_module_count"]} ready</span></p>'
             + '<p id="audit-rate" class="muted"></p><details id="audit-history"><summary>Completed phases</summary><ul id="audit-phases"></ul></details>'
-            + snapshot_link + '</div>')
+            + snapshot_link + f'<p><a href="{root}performance">Collection performance history</a></p></div>')
         script = """
 <script>
 const panel=document.getElementById('audit-state');
@@ -786,6 +867,39 @@ if(panel.dataset.state==='running')poll();
         from workspace_views import coverage_view
         return coverage_view(self, query)
 
+    def performance_history(self):
+        root = "/" + self.token + "/"
+        rows = []
+        records = []
+        for path in audit_files(self.directory)[:5]:
+            try:
+                records.append((path.name, read_performance(path)))
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                continue
+        baseline = records[0][1] if records else {}
+        def display(value):
+            return e(value) if value is not None else "Unavailable"
+        for name, record in records:
+            comparable = bool(record.get("topology") and record.get("topology") == baseline.get("topology")
+                              and record.get("strategy") == baseline.get("strategy")
+                              and record.get("detail_strategy") == baseline.get("detail_strategy")
+                              and not record.get("mixed_capture_times") and not baseline.get("mixed_capture_times"))
+            elapsed = record.get("elapsed")
+            attempts = record.get("attempts")
+            duration = f"{elapsed / 60:.1f} min" if type(elapsed) in (int, float) and elapsed > 0 else None
+            throughput = f"{attempts / elapsed:.2f}" if type(attempts) is int and type(elapsed) in (int, float) and elapsed > 0 else None
+            rows.append('<tr>' + ''.join(f'<td>{display(value)}</td>' for value in (
+                name, record.get("strategy"), record.get("detail_strategy"), duration, attempts, throughput,
+                record.get("scope_pairs"), record.get("detail_reads"), record.get("rate_limits"),
+                "Same scope/module plan" if comparable else "Different or unverified workload")) + '</tr>')
+        body = (f'<p><a href="{root}">Back to workspace</a></p>'
+                '<p>Latest five completed captures. Timing excludes final snapshot serialization. Matching topology and mode '
+                'do not guarantee identical configuration content. Resumed captures are not comparable.</p>'
+                '<table><thead><tr><th>Capture</th><th>Mode</th><th>Detail strategy</th><th>Duration</th>'
+                '<th>GET attempts</th><th>GET/s</th><th>Scope pairs</th><th>Detail reads</th><th>429s</th>'
+                '<th>Compared with latest</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table>')
+        return page("Collection performance history", body, self.nav())
+
     def live_preview(self, query):
         """Separate live inspection route; never treated as a snapshot or plan."""
         root = "/" + self.token + "/"
@@ -924,6 +1038,8 @@ def handler_for(workspace):
                     return
                 if parsed.path == root:
                     body = workspace.home(query)
+                elif parsed.path == root + "performance":
+                    body = workspace.performance_history()
                 elif parsed.path == root + "live":
                     body = workspace.live_preview(query)
                 elif parsed.path == root + "report":
