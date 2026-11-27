@@ -148,7 +148,8 @@ def library_usage(bundle, module, identities, references):
                             "assignments": rows, "reference_count": len(consumers),
                             "definition_reference_count": len(definitions), "effective_reference_count": len(effective),
                             "reference_devices": len({(r["persona"], r["scope"]) for r in refs if r.get("source_scope_kind", "device") == "device" and r.get("source_view", "effective") == "effective"}),
-                            "references": refs, "shared_devices": [], "matching_other_devices": [],
+                            "references": refs, "conflicting_reference_count": len({consumer(r) for r in refs if r.get("collection_conflict")}),
+                            "shared_devices": [], "matching_other_devices": [],
                             "different_devices": [], "unknown_devices": [], "absent_devices": [], "compared_devices": 0,
                             "coverage_complete": False}
     for persona, entry in sorted(bundle["results"].items()):
@@ -182,7 +183,8 @@ def library_usage(bundle, module, identities, references):
 
 def preferred_duplicate(usage):
     """Suggest the least observed reference/assignment migration, not safe deletion."""
-    if not usage or any(u["assignment_status"] != "response_received" for u in usage.values()):
+    if not usage or any(u["assignment_status"] != "response_received" or u.get("conflicting_reference_count", 0)
+                        for u in usage.values()):
         return None
     # Do not add incomparable metrics together. Prefer more explicit consumers,
     # then more observed shared deployments, then more assignments.
