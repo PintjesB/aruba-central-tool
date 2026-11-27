@@ -2340,6 +2340,10 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
         futures = [scope_pool.submit(function, item) for item in items]
         return [future.result() for future in futures]
 
+    targets_by_module = defaultdict(list)
+    for (module, persona, sid), instances in sorted(targets.items()):
+        targets_by_module[module].append((persona, sid, instances))
+
     def inspect(module):
         def read_typed_scope(task):
             persona, sid, instances = task
@@ -2348,9 +2352,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                     "committed": capture(module, {**base, "effective": "false"}),
                     "effective": capture(module, {**base, "effective": "true"})}
 
-        evidence = scope_map(read_typed_scope, (
-            (persona, sid, instances) for (m, persona, sid), instances in sorted(targets.items())
-            if m == module))
+        evidence = scope_map(read_typed_scope, targets_by_module[module])
         # Documented collections absent from discovery still receive a Global
         # read for all functions. Keep the mixed-function results separate from
         # identified profile evidence and never use them to qualify a change.
@@ -2749,13 +2751,20 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
     # Raw surveys may contain profiles absent from the persona-filtered adapter.
     # Use only exact documented single keys, positive records and known contexts.
     existing = {task[:5] for task in tasks}
+    typed_by_module = defaultdict(list)
+    for task in tasks:
+        if task[0] in NETWORK_PERSONAS and isinstance(task[5], dict):
+            typed_by_module[task[2]].append(task)
     supplemental_count = 0
     def add(persona, sid, module, identity, kind, profile):
         nonlocal supplemental_count
         selector = (persona, sid, module, identity, kind)
         if selector not in existing:
-            tasks.append((*selector, profile))
+            task = (*selector, profile)
+            tasks.append(task)
             existing.add(selector)
+            if persona in NETWORK_PERSONAS and isinstance(profile, dict):
+                typed_by_module[module].append(task)
             supplemental_count += 1
     def parsed_profiles(read, identity_key):
         return observed_profile_candidates(read, identity_key)
@@ -2786,9 +2795,8 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
         # A matching identity alone does not establish the same body or
         # source. Deduplicate only exact observed profile+annotation evidence.
         covered = defaultdict(set)
-        for p, sid, m, identity, kind, profile in tasks:
-            if p in NETWORK_PERSONAS and m == module and isinstance(profile, dict):
-                covered[sid, identity, kind].add(canonical(profile))
+        for p, sid, m, identity, kind, profile in typed_by_module[module]:
+            covered[sid, identity, kind].add(canonical(profile))
         for view in views:
             persona, sid = view.get("persona"), str(view.get("scope", ""))
             if persona not in ("ALL_DEVICE_FUNCTIONS", "UNFILTERED_SCOPE") or not sid.isdigit():
