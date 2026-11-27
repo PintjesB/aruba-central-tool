@@ -1,5 +1,6 @@
 """Find captured devices, scopes and named profiles without scanning every field."""
 from collections import Counter
+import re
 from .central_tool import CONFIG_MODULES, observed_profile_candidates
 from .workspace_ui import e, page, intro, table, tr, badge, module_label, persona_label, pretty
 from .workspace_views import load, url, select, title_profile
@@ -43,10 +44,12 @@ def entities(bundle):
                 local, effective = profiles("local"), profiles("effective")
                 for identity in sorted(local.keys() | effective.keys()):
                     profile = local.get(identity) or effective.get(identity)
+                    alternate = title_profile(identity, effective.get(identity)) if identity in local and identity in effective else ""
+                    label = title_profile(identity, profile)
                     state = "Saved and effective observed" if identity in local and identity in effective else "Saved observed" if identity in local else "Effective observed"
                     if not record.get("review", {}).get("qualified"):
                         state += "; comparison unqualified"
-                    yield {"category": "profile", "label": title_profile(identity, profile), "identity": identity,
+                    yield {"category": "profile", "label": label, "alternate_label": alternate if alternate != label else "", "identity": identity,
                            "persona": persona, "module": module, "scope": sid, "scope_name": names[sid], "state": state}
 
 
@@ -55,11 +58,11 @@ def find_entities(bundle, text, *, category="", offset=0, limit=150):
         raise ValueError("Invalid entity search")
     if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 500:
         raise ValueError("Invalid entity search batch")
-    terms = text.casefold().split()
+    terms = [match.group(1) or match.group(2) for match in re.finditer(r'"([^"]+)"|(\S+)', text.casefold())]
     counts, rows, total = Counter(), [], 0
     if terms:
         for item in entities(bundle):
-            haystack = " ".join(str(v) for v in (item["label"], item["identity"], item["scope_name"], item["scope"],
+            haystack = " ".join(str(v) for v in (item["label"], item.get("alternate_label", ""), item["identity"], item["scope_name"], item["scope"],
                                 item["persona"], persona_label(item["persona"]), item["module"], module_label(item["module"]))).casefold()
             if not all(term in haystack for term in terms):
                 continue
@@ -103,7 +106,7 @@ def entity_search_view(workspace, query):
              + select("entity_category", [("", "All object types")] + list(CATEGORIES.items()), category, "Object type")
              + '<button type="submit">Find</button></form>'
              + f'<p><a href="{url(root, "report", snapshot=name, mode="search", q=text)}">Search configuration field values instead</a></p>'
-             '<p class="note">Searches captured inventory, parsed Library definitions, scoped profile identities and NAC tags. It does not search registration records, uncaptured objects or arbitrary raw field values.</p></section>')
+             '<p class="note">Use double quotes for an exact phrase. Searches captured inventory, parsed Library definitions, scoped profile identities and NAC tags. It does not search registration records, uncaptured objects or arbitrary raw field values.</p></section>')
     if text.strip():
         params = {"snapshot": name, "mode": "entities", "q": text}
         body += '<section><h2>Matching object types</h2><div class="filter-bar">'
@@ -114,7 +117,7 @@ def entity_search_view(workspace, query):
         rows = []
         for item in result["rows"]:
             link = entity_url(root, name, item)
-            rows.append(tr(f'<a href="{link}"><strong>{e(item["label"])}</strong></a>',
+            rows.append(tr(f'<a href="{link}"><strong>{e(item["label"])}</strong></a>' + (f'<small>Effective: {e(item["alternate_label"])}</small>' if item.get("alternate_label") else ""),
                            e(CATEGORIES[item["category"]]), e(persona_label(item["persona"])),
                            e(module_label(item["module"])) if item["module"] else "Not applicable",
                            e(item["scope_name"]), badge(item["state"]), f'<a href="{link}">Open evidence</a>'))
