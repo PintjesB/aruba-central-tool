@@ -146,6 +146,45 @@ def pagination_evidence(bundle, modules):
             for (m, s, r), n in sorted(counts.items())]
 
 
+def specialized_response_shapes(entry, name):
+    """Expose response structure without exporting arbitrary keys or values."""
+    known = {
+        "hierarchy": ("items", "Hierarchy", "hierarchy", "id", "type", "metadata", "scopeId"),
+        "assignments": ("config-assignment", "config-assignments", "items", "metadata", "@",
+                        "scope-id", "device-function", "profile-type", "profile-instance",
+                        "scope-name", "scope-type", "httpStatusCode", "errorCode", "message", "debugId"),
+        "portal-assets": ("items", "count", "imageID", "imageId", "image-id", "id",
+                          "fileName", "referencedBy", "metadata", "httpStatusCode", "errorCode", "message")
+    }[name]
+    def shape(raw):
+        if not isinstance(raw, dict):
+            return {"type": "list" if isinstance(raw, list) else "other",
+                    "size": len(raw) if isinstance(raw, list) else 0}
+        result = {"type": "object", "known_fields": {}, "other_fields": len(set(raw) - set(known))}
+        for key in known:
+            if key not in raw:
+                continue
+            value = raw[key]
+            result["known_fields"][key] = ("list" if isinstance(value, list) else "object"
+                                           if isinstance(value, dict) else "string" if isinstance(value, str)
+                                           else "integer" if type(value) is int else "other")
+            if isinstance(value, list):
+                result.setdefault("list_sizes", {})[key] = len(value)
+                observed = Counter()
+                for row in value:
+                    if isinstance(row, dict):
+                        for field in known:
+                            if field in row:
+                                observed[field] += 1
+                result.setdefault("record_fields", {})[key] = dict(observed)
+        return result
+    records = ([entry.get("list_read", {}), *entry.get("details", {}).values()]
+               if name == "portal-assets" else entry.get("records", []))
+    counts = Counter(json.dumps(shape(record["raw"]), sort_keys=True)
+                     for record in records if isinstance(record, dict) and "raw" in record)
+    return [{"shape": json.loads(key), "responses": n} for key, n in sorted(counts.items())]
+
+
 def diagnostics(bundle):
     if bundle.get("schema") != 1 or bundle.get("kind") != "configuration_audit":
         raise ValueError("Expected a configuration audit")
@@ -261,7 +300,8 @@ def diagnostics(bundle):
         outcomes = Counter()
         for state, number in entry.get("outcomes", {}).items():
             outcomes[safe_status(state)] += count(number)
-        specialized[name] = {"collected": bool(entry), "outcomes": dict(outcomes)}
+        specialized[name] = {"collected": bool(entry), "outcomes": dict(outcomes),
+                             "response_shapes": specialized_response_shapes(entry, name)}
         if name == "portal-assets":
             specialized[name].update(status=safe_status(entry.get("status", "not_collected")),
                                      images=len(entry.get("images", [])), count_confirmed=entry.get("count_confirmed") is True)
