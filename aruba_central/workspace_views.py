@@ -1089,6 +1089,9 @@ def inventory_view(workspace, query):
 
 
 def comparison_view(workspace, query):
+    if query.get("mode") == "matrix":
+        from .comparison_matrix import matrix_view
+        return matrix_view(workspace, query)
     from .config_app import compare_devices
     loaded, empty = load(workspace, query, "Compare devices", "compare")
     if empty:
@@ -1111,6 +1114,7 @@ def comparison_view(workspace, query):
         ("module", "Module", module, lambda entry: module_options(entry, "Reusable modules"))),
         submit="Compare")
     body = intro("Compare devices", "Compare two devices using captured configuration.", picker) + '<section class="filter-section">' + controls + '<p class="filter-hint">Infrastructure modules are excluded unless selected explicitly.</p></section>'
+    body += f'<p><a class="button" href="{url(root, "compare", snapshot=name, persona=persona, mode="matrix")}">Compare multiple scopes</a></p>'
     if left and right:
         if left == right:
             body += '<section class="empty">Select two different devices.</section>'
