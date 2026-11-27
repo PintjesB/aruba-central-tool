@@ -191,15 +191,25 @@ def device_override_rows(bundle, persona, *, device="", module_filter=""):
     return findings, incomplete
 
 
-def override_batch(findings, *, result="cleanup", readiness="", offset=0, limit=100):
+def override_batch(findings, *, result="cleanup", readiness="", query="", offset=0, limit=100):
     """Filter and order all findings before limiting expensive HTML rendering."""
     if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 1000:
         raise ValueError("Invalid override batch bounds")
+    if not isinstance(query, str) or len(query) > 200:
+        raise ValueError("Invalid override search")
+    terms = query.casefold().split()
+    def matches(f):
+        if not terms:
+            return True
+        source = (f.get("fallback") or {}).get("source") or {}
+        body = (f.get("profile") or {}).get("local") or {}
+        text = " ".join(str(value) for value in (f["device_name"], f.get("device", ""), f["module"], module_label(f["module"]), f["identity"], body.get("name", ""), RESULTS[f["result"]], REMOVAL_FILTERS.get(f["removal"], ""), source.get("name", ""))).casefold()
+        return all(term in text for term in terms)
     order = {state: index for index, state in enumerate(RESULTS)}
     filtered = [f for f in findings
                 if (not readiness or (f["review_candidate"] and f["removal"] == readiness))
                 and (result == "all" or (result == "cleanup" and f["review_candidate"])
-                     or f["result"] == result)]
+                     or f["result"] == result) and matches(f)]
     filtered.sort(key=lambda f: (order[f["result"]], f["device_name"], f["module"], f["identity"]))
     return {"rows": filtered[offset:offset+limit], "total": len(filtered),
             "truncated": offset + limit < len(filtered)}
@@ -224,6 +234,7 @@ def overrides_view(workspace, query):
     if result == "":
         result = "all"
     readiness = query.get("readiness", "")
+    search = query.get("q", "")
     if readiness and readiness not in REMOVAL_FILTERS:
         raise ValueError("Unknown removal readiness")
     if (device and device not in dict(devices)) or (module and module not in modules) or (result not in RESULTS and result not in ("cleanup", "all")):
@@ -236,6 +247,9 @@ def overrides_view(workspace, query):
         submit="Compare with Global", extra_fields=(("result", "Result", result,
             [("cleanup", "Redundant and likely redundant"), ("all", "All local definitions")] + list(RESULTS.items())),
             ("readiness", "Removal readiness", readiness, [("", "All assessments")] + list(REMOVAL_FILTERS.items()))))
+    filters = filters.replace('<button type="submit">Compare with Global</button>',
+        f'<label>Search all findings<input name="q" type="search" value="{e(search)}" maxlength="200" placeholder="Device, profile or module"></label>'
+        '<button type="submit">Compare with Global</button>')
     short_action = {
         "identical": "Review redundant local copy",
         "nearest_match": "Review nearest-scope match",
@@ -258,7 +272,7 @@ def overrides_view(workspace, query):
         raise ValueError("Invalid override batch offset") from None
     if offset < 0:
         raise ValueError("Invalid override batch offset")
-    selected = override_batch(scoped, result=result, readiness=readiness, offset=offset)
+    selected = override_batch(scoped, result=result, readiness=readiness, query=search, offset=offset)
     for f in selected["rows"]:
         p = f["profile"]
         label = title_profile(f["identity"], p["local"])
@@ -344,7 +358,7 @@ def overrides_view(workspace, query):
         [tr(e(field), e(", ".join(f"{key}: {value}" for key, value in outcomes.items())))
          for field, outcomes in sorted(diagnostics["feature_cli"].items())]) + '</details>'
     params = {"snapshot": name, "persona": persona, "device": device, "module": module,
-              "result": result, "readiness": readiness}
+              "result": result, "readiness": readiness, "q": search}
     total = selected["total"]
     first, last = (offset + 1, offset + len(rows)) if rows else (0, 0)
     paging = f'<p>{total} matching local definitions. Showing {first}–{last}. Table search and CSV export apply to the loaded batch only.</p>'
