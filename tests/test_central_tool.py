@@ -1644,6 +1644,19 @@ class Tests(unittest.TestCase):
             self.assertEqual(handler.https_open(proxy), "standard")
             self.assertEqual(fallback.call_count, 3)
 
+    def test_worker_budget_adapts_only_with_enough_successful_latency_samples(self):
+        from central_tool import AUDIT_WORKERS, AUDIT_MAX_WORKERS
+        client = Central(EU_REGIONS[0], token="test")
+        client._successful_get_latency.extend([2.0] * 31)
+        self.assertEqual(client.recommended_audit_workers(AUDIT_WORKERS), AUDIT_WORKERS)
+        client._successful_get_latency.append(2.0)
+        self.assertEqual(client.recommended_audit_workers(AUDIT_WORKERS), AUDIT_MAX_WORKERS)
+        client._request_interval = 1 / 8
+        self.assertEqual(client.recommended_audit_workers(AUDIT_WORKERS), AUDIT_WORKERS)
+        client._request_interval = 1 / 9
+        client._successful_get_latency.extend([.05] * 128)
+        self.assertEqual(client.recommended_audit_workers(AUDIT_WORKERS), AUDIT_WORKERS)
+
     def test_rate_limit_backoff_and_gradual_recovery_respects_cap(self):
         from unittest.mock import patch
         client = Central(EU_REGIONS[0], token="test")
