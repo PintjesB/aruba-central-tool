@@ -838,7 +838,7 @@ class Tests(unittest.TestCase):
                 ("identity_unresolved", {"dns": raw["dns"], "metadata": {"total": 3}}, None, 3),
                 ("read_failed", raw, None, 3)):
             view = {"status": status, "raw": payload, "pagination_status": pagination}
-            fake = Fake([])
+            fake = Fake([{}] * expected_calls)
             result = inspect_unadapted_profiles(
                 fake, {"unknown_adapter_modules": [], "survey_modules": ["dns"],
                        "modules": {"dns": ["ACCESS_SWITCH"]}, "documented_catalog": {"modules": {}}},
