@@ -6,6 +6,9 @@ from .history_view import private_export
 
 
 def assessment_view(workspace, query):
+    if query.get("mode") == "health":
+        from .configuration_health import health_view
+        return health_view(workspace, query)
     loaded, empty = load(workspace, query, "Configuration assessment", "assessment")
     if empty:
         return empty
@@ -22,6 +25,7 @@ def assessment_view(workspace, query):
     parsed = coverage.get("parsed", 0)
     confirmed = coverage.get("count_confirmed", 0)
     body = intro("Configuration assessment", "Prioritize the observed optimization opportunities and evidence gaps in this capture.", picker)
+    body += f'<p><a class="button" href="{url(root, "assessment", snapshot=name, mode="health")}">Review health by site, group or device</a></p>'
     body += metrics([("Device/function pairs", report["device_function_pairs"], "Captured inventory"),
                      ("Parsed scope views", f"{parsed}/{expected}", "Saved and effective reads"),
                      ("Count-confirmed views", f"{confirmed}/{expected}", "Not complete API coverage"),
