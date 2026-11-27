@@ -45,3 +45,31 @@ class LiveProbeTests(unittest.TestCase):
         serialized = json.dumps(result)
         for secret in ("1/1/24", "1/1/25", "PRIVATE-VALUE", "200", "300"):
             self.assertNotIn(secret, serialized)
+
+
+    def test_assignment_context_reads_assigned_group_not_arbitrary_device(self):
+        from live_collection_probe import assignment_context
+        scopes = {"ACCESS_SWITCH": {"scopes": [{"id": "100", "kind": "group"},
+                                                 {"id": "200", "kind": "device"}]}}
+        definition = {"name": "PRIVATE-PROFILE", "enable": True}
+        library = {"status": "list_parsed", "profiles": {"PRIVATE-PROFILE": definition, "other": {"name": "other"}}}
+        row = {"profile-type": "snmp", "profile-instance": "PRIVATE-PROFILE",
+               "scope-id": "100", "device-function": "ACCESS_SWITCH"}
+        assigned = {"status": "response_received", "collection_count_verified": True, "rows": [row, row]}
+        shared = {"status": "list_parsed", "profiles": {"PRIVATE-PROFILE": {
+            **definition, "@": {"aruba-annotation:object_type": "SHARED"}}}, "count_confirmed": True}
+        with patch("central_tool.profile_inventory_view", return_value=assigned) as inventory, patch(
+            "live_collection_probe.read_module_view", side_effect=[shared, {"status": "empty_object"}, shared]
+        ) as read:
+            result = assignment_context(Mock(), "snmp", scopes, library, 1)
+        self.assertEqual(inventory.call_args.kwargs, {"profile-type": "snmp"})
+        self.assertEqual(result["observed_assignments"], 1)
+        self.assertEqual(result["library_profiles_without_observed_assignment"], 1)
+        self.assertEqual(result["sampled_assignment_contexts"], 1)
+        self.assertEqual(read.call_count, 3)
+        self.assertTrue(all(c.args[3]["scope-id"] == "100" for c in read.call_args_list))
+        self.assertEqual({v["observation"] for v in result["visibility"]},
+                         {"matching_shared", "visibility_unverified"})
+        self.assertFalse(result["complete"])
+        self.assertNotIn("PRIVATE-PROFILE", json.dumps(result))
+        self.assertNotIn('"100"', json.dumps(result))
