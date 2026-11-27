@@ -412,6 +412,7 @@ def advisor_view(workspace, query):
     return page("Consolidation advisor", intro("Consolidation", "Choose a task, inspect the evidence, and prepare a change preview.", picker)
                 + '<section><div id="snapshot-label" hidden data-snapshot="' + e(name) + '" data-binding="' + e(binding) + '"></div>'
                 + filters + '<div class="table-toolbar"><span id="visible-count" class="muted" aria-live="polite"></span>'
+                '<button id="advisor-export-csv" type="button" title="Export all recommendations matching the current filters, including other pages">Export filtered CSV</button>'
                 '<div><button id="advisor-prev" type="button">Previous</button> <span id="advisor-page" class="muted"></span> '
                 '<button id="advisor-next" type="button">Next</button></div></div>'
                 + listing + '<p id="advisor-empty" class="empty" hidden>No matching recommendations.</p></section>'
@@ -448,6 +449,7 @@ function filter(reset=true){
  $('visible-count').textContent=filtered.length+' of '+rows.length+' recommendations';
  $('advisor-page').textContent=(page+1)+' / '+pages;$('advisor-prev').disabled=page===0;$('advisor-next').disabled=page+1>=pages;
  $('advisor-empty').hidden=filtered.length>0;
+ $('advisor-export-csv').disabled=!filtered.length;
  $('advisor-prev').parentElement.hidden=pages<=1;
  updateHiddenSelection();
 }
@@ -649,6 +651,24 @@ $('select-visible').addEventListener('click',()=>{for(const r of filtered){const
 $('clear-selection').addEventListener('click',()=>{for(const c of checks)c.checked=false;selection();});
 $('open-preview').addEventListener('click',()=>{preview();$('plan-dialog').showModal();$('plan-dialog').querySelector('.plan-content').scrollTop=0;});
 $('close-preview').addEventListener('click',()=>$('plan-dialog').close());
+$('advisor-export-csv').addEventListener('click',()=>{
+ function csvCell(value){
+  let text=String(value??'');
+  if(/^[\s\u0000-\u001f]*[=+\-@]/.test(text)||/^[\t\r\n]/.test(text))text="'"+text;
+  return '"'+text.replaceAll('"','""')+'"';
+ }
+ const records=[['Finding ID','Profile','Module','Device function','Recommendation','Readiness','Local copies','Source scopes','Suggested next step','Devices matching','Devices compared','Devices not comparable','Selected for preview']];
+ for(const row of filtered){
+  const check=row.querySelector('.choose'),f=JSON.parse(check.dataset.plan);
+  const field=row.querySelector('.destination'),observed=f.observed_devices||{};
+  records.push([f.id,f.identity,f.module,f.persona,f.action,row.dataset.readiness,f.sources.length,f.sources.map(s=>s.name).join('; '),
+   field?field.selectedOptions[0]?.textContent:row.cells[4].textContent.trim(),
+   observed.matching?.length??'',Object.keys(observed).length?Object.values(observed).reduce((n,v)=>n+v.length,0):'',observed.unknown?.length??'',check.checked&&!check.disabled?'Yes':'No']);
+ }
+ const content='\uFEFF'+records.map(row=>row.map(csvCell).join(',')).join('\r\n');
+ const u=URL.createObjectURL(new Blob([content],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');
+ a.href=u;a.download='central-consolidation-worklist.csv';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);
+});
 $('export-plan').addEventListener('click',()=>{
  const chosen=selection();if($('export-plan').disabled)return;
  const snapshot=$('snapshot-label').dataset;
