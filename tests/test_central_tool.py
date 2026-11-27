@@ -712,6 +712,49 @@ class Tests(unittest.TestCase):
         self.assertEqual(set(result["profiles"]["CAMPUS_AP"]["12"]["portals"]["shared"]), {"effective"})
         self.assertFalse(result["safe_to_apply"])
 
+    def test_keyed_singleton_metadata_is_validated_without_discarding_fields(self):
+        from central_tool import keyed_profile_read
+        profile = {"name": "example", "enabled": False, "future-field": {"value": 0}}
+        for raw in ({**profile, "metadata": {"count": 1}},
+                    {"dns": profile, "metadata": {"count_objects_in_module": {"ANY": 1}}}):
+            result = keyed_profile_read(Fake([raw]), "dns", "name", "example", {}, None)
+            self.assertEqual(result["status"], "identity_observed")
+            self.assertEqual(result["profile"], profile)
+            self.assertFalse(result["source_verified"])
+        for meta in ({"count": 2}, {"offset": 3}, {"count_objects_in_module": {"ANY": 0}}):
+            result = keyed_profile_read(Fake([{"dns": profile, "metadata": meta}]), "dns", "name", "example", {}, None)
+            self.assertEqual(result["status"], "count_mismatch")
+        result = keyed_profile_read(Fake([{"dns": profile, "unexpected": {"name": "example"}}]),
+                                    "dns", "name", "example", {}, None)
+        self.assertEqual(result["status"], "schema_unresolved")
+
+    def test_deep_keyed_vlan_reads_cover_library_and_all_observed_scopes(self):
+        from central_tool import capture_keyed_profile_details, keyed_profile_read
+        profile = {"vlan": 10, "name": "example"}
+        def view(*profiles):
+            return {"status": "list_parsed", "profiles": {str(p["vlan"]): p for p in profiles}}
+        library = {"modules": {"layer2-vlan": view(profile)}}
+        results = {"ACCESS_SWITCH": {"modules": {"layer2-vlan": {"scope_results": [
+            {"scope": "1", "scope_kind": "global", "local_view": view(profile), "effective_view": view(profile)},
+            {"scope": "2", "scope_kind": "device", "local_view": view(), "effective_view": view(profile)},
+        ]}}}}
+        class Client:
+            def __init__(self):
+                self.calls = []
+            def get(self, path, **params):
+                self.calls.append((path, params))
+                return {"l2-vlan": profile, "metadata": {"count": 1}}
+        client = Client()
+        result = capture_keyed_profile_details(client, results, library, workers=1)
+        self.assertEqual(result["outcomes"], {"identity_observed": 4})
+        self.assertTrue(all(path.endswith("/layer2-vlan/10") for path, _ in client.calls))
+        self.assertEqual(set(result["profiles"]["ACCESS_SWITCH"]["2"]["layer2-vlan"]["10"]), {"effective"})
+        self.assertEqual(set(result["profiles"]["ACCESS_SWITCH"]["1"]["layer2-vlan"]["10"]), {"local", "effective"})
+        for vid in ("0", "4095", "10-20", "0010"):
+            detail = keyed_profile_read(client, "layer2-vlan", "vlan", vid, {}, None)
+            self.assertEqual(detail["status"], "invalid_selector")
+        self.assertEqual(len(client.calls), 4)
+
     def test_keyed_profile_rejects_ambiguous_identity_and_unsafe_selectors(self):
         from central_tool import keyed_profile_read
         fake = Fake([{"profiles": [{"name": "different"}]}])
