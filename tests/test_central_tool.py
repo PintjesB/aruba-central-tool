@@ -872,6 +872,38 @@ class Tests(unittest.TestCase):
         self.assertEqual(sum("/server-groups/" in p for p, _ in client.calls), 5)
         self.assertEqual(result["collection_only_by_module"], {"dns": 1})
 
+    def test_adaptive_unfiltered_details_keep_selectors_separate_and_expand_on_difference(self):
+        from central_tool import capture_keyed_profile_details
+        profile = {"name": "service", "enable": True, "@": {
+            "aruba-annotation:inherited": True, "aruba-annotation:object_type": "SHARED"}}
+        def view(*profiles):
+            return {"status": "response_received", "raw": {"profiles": list(profiles)}}
+        results = {"CAMPUS_AP": {"modules": {}, "scopes": [
+            {"id": str(i), "kind": "device"} for i in range(1, 7)]}}
+        extra = {"net-services": {"source_views": [
+            {"persona": "ALL_DEVICE_FUNCTIONS", "scope": str(i), "effective": view(profile)}
+            for i in range(1, 7)]}}
+        class Client:
+            def __init__(self, differs=False):
+                self.calls = []
+                self.differs = differs
+            def get(self, path, **params):
+                self.calls.append(params)
+                return {"name": "service", "enable": not self.differs}
+        client = Client()
+        capture = capture_keyed_profile_details(client, results, {}, workers=1,
+                                                unadapted=extra, adaptive=True)
+        self.assertEqual(len(client.calls), 2)
+        self.assertTrue(all("device-function" not in p for p in client.calls))
+        self.assertEqual(capture["collection_only_by_module"], {"net-services": 4})
+        self.assertEqual(capture["profiles"]["ALL_DEVICE_FUNCTIONS"]["2"]["net-services"]["service"]["effective"]["status"],
+                         "collection_only_sampled")
+        for adaptive, differs in ((True, True), (False, False)):
+            client = Client(differs)
+            capture_keyed_profile_details(client, results, {}, workers=1,
+                                          unadapted=extra, adaptive=adaptive)
+            self.assertEqual(len(client.calls), 6)
+
     def test_adaptive_inherited_higher_scopes_are_grouped_by_scope_kind(self):
         from central_tool import capture_keyed_profile_details
         profile = {"name": "dns", "@": {"aruba-annotation:inherited": True}}
