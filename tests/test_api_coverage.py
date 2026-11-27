@@ -55,7 +55,7 @@ class CoverageTests(unittest.TestCase):
         self.assertNotIn("private error", json.dumps(report))
         self.assertFalse(report["complete"])
 
-    def test_exact_complete_collection_reused_but_not_empty_or_partial(self):
+    def test_exact_complete_collection_reused_but_not_unqualified_empty_or_partial(self):
         class CountingClient:
             def __init__(self):
                 self.calls = 0
@@ -64,6 +64,10 @@ class CoverageTests(unittest.TestCase):
                 self.calls += 1
                 if params.get("scope-id") == "empty":
                     return {"profiles": [], "metadata": {"total": 0}}
+                if params.get("scope-id") == "uncounted":
+                    return {}
+                if params.get("scope-id") == "conflicting":
+                    return {"profiles": [], "metadata": {"total": 0, "count": 1}}
                 if params.get("scope-id") == "partial":
                     return {"profiles": [{"name": "x"}], "metadata": {"total": 2}}
                 return {"profiles": [{"name": "x"}], "metadata": {"total": 1}}
@@ -76,14 +80,18 @@ class CoverageTests(unittest.TestCase):
         first = tracked.get(path, **{"view-type": "LOCAL", "scope-id": "1"})
         first["profiles"][0]["name"] = "modified"
         self.assertEqual(tracked.get(path, **{"scope-id": "1", "view-type": "LOCAL"})["profiles"][0]["name"], "x")
-        for scope in ("empty", "partial"):
+        for scope in ("empty", "partial", "uncounted", "conflicting"):
             for _ in range(2):
                 tracked.get(path, **{"view-type": "LOCAL", "scope-id": scope})
         tracked.get(path, **{"view-type": "LOCAL", "scope-id": "2"})
         tracked.get(path, **{"view-type": "LOCAL", "scope-id": "1", "offset": 0})
-        self.assertEqual(client.calls, 7)
-        self.assertEqual(tracked.report()["exact_collection_gets_reused"], 1)
-        self.assertEqual(tracked.report()["operations"][0]["attempted"], 7)
+        self.assertEqual(client.calls, 10)
+        report = tracked.report()
+        self.assertEqual(report["exact_collection_gets_reused"], 2)
+        self.assertEqual(report["exact_counted_empty_gets_reused"], 1)
+        self.assertEqual(report["operations"][0]["attempted"], 10)
+        self.assertEqual(report["duplicate_config_get_attempts"], [{"path": path, "duplicates": 3}])
+        self.assertFalse(report["duplicate_accounting_truncated"])
 
     def test_endpoint_duration_aggregates_success_and_failure(self):
         from unittest.mock import patch
