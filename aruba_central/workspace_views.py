@@ -17,6 +17,11 @@ def load(workspace, query, title, route):
     name = query.get("snapshot", files[0].name)
     bundle = workspace.reviewed_snapshot(name)
     picker = snapshot_picker(root, route, files, name)
+    from .filter_presets import preset_link
+    try:
+        picker += preset_link(root, name, route, query)
+    except ValueError:
+        pass  # An invalid preset selection must not change the existing page behavior.
     if bundle.get("collection_checkpoint", {}).get("mixed_capture_times"):
         picker += '<p class="note">Resumed collection: some scope evidence predates the final capture. Do not use this snapshot to verify remediation.</p>'
     return (root, name, bundle, picker), None
