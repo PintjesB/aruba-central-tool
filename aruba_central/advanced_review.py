@@ -133,7 +133,7 @@ def library_usage(bundle, module, identities, references):
         if ref["target_module"] == module and ref["target"] in wanted:
             referenced[ref["target"]].append(ref)
     expected_signatures = {identity: canonical(profile_body(profile))
-                           for identity, profile in view.get("profiles", {}).items() if identity in wanted}
+                           for identity, profile in view.get("profiles", {}).items() if identity in wanted and profile is not None}
     result = {}
     for identity in sorted(wanted):
         rows = assigned[identity]
