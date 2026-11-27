@@ -272,3 +272,35 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(usage["definition_reference_count"], 1)
         self.assertEqual(usage["reference_devices"], 0)
         self.assertFalse(usage["coverage_complete"])
+
+
+    def test_server_membership_and_individual_dependencies_preserve_conflicts(self):
+        from advanced_review import explicit_references, library_usage, preferred_duplicate
+        group = {"name": "group", "servers": [{"server-name": "a", "position": 1}]}
+        self.assertEqual(list(explicit_references(group, module="server-groups")),
+                         [("auth-servers", "a", ("servers", 0, "server-name"))])
+        self.assertEqual(list(explicit_references({"servers": [{"address": "x"}]}, module="server-groups")),
+                         [("auth-servers", None, ("servers", 0, "server-name"))])
+        self.assertFalse(list(explicit_references(group, module="unrelated")))
+        servers = view({"a": {"name": "a", "enable": True}, "b": {"name": "b", "enable": True}})
+        bundle = {"results": {}, "library": {"modules": {
+            "server-groups": view({"group": group}), "auth-servers": servers},
+            "assignments": {"status": "response_received", "rows": []}},
+            "keyed_profile_details": {"profiles": {"Library": {"": {
+                "server-groups": {"group": {"library": {"status": "identity_observed",
+                    "profile": {"name": "group", "servers": [{"server-name": "b", "position": 1},
+                                                               {"server-name": "a", "position": 2}]}}}}
+            }}}}}
+        result = advanced_analysis(bundle)
+        refs = result["references"]
+        self.assertEqual(len(refs), 3)
+        self.assertEqual(sum(r.get("source_evidence") == "individual" for r in refs), 2)
+        self.assertEqual(sum(bool(r.get("collection_conflict")) for r in refs), 1)
+        usage = library_usage(bundle, "auth-servers", ["a", "b"], refs)
+        self.assertEqual(usage["a"]["reference_count"], 1)
+        self.assertEqual(usage["b"]["conflicting_reference_count"], 1)
+        self.assertIsNone(preferred_duplicate(usage))
+        self.assertFalse(result["safe_to_apply"])
+        bundle["keyed_profile_details"]["profiles"]["Library"][""]["server-groups"]["group"]["library"] = {
+            "status": "collection_only_sampled"}
+        self.assertEqual(len(advanced_analysis(bundle)["references"]), 1)
