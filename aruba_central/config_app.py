@@ -275,22 +275,25 @@ def overall_audit_progress(phase, strategy, history, elapsed, phase_elapsed, don
     return result
 
 
-def library_profile_comparison(bundle, module):
+def library_profile_comparison(bundle, module, *, identities=None):
     """Join only exact profile identities; absence of assignments proves nothing."""
     from .central_tool import canonical, field_differences, profile_body
     library = bundle.get("library", {})
     view = library.get("modules", {}).get(module, {})
     if view.get("status") != "list_parsed":
         return {}
+    wanted = set(view["profiles"]) if identities is None else set(identities) & view["profiles"].keys()
     assignments = library.get("assignments", {})
     from collections import defaultdict
     indexed_assignments = defaultdict(list)
     for row in assignments.get("rows", []):
-        if row.get("profile-type") == module and type(row.get("profile-instance")) in (str, int):
+        if row.get("profile-type") == module and type(row.get("profile-instance")) in (str, int) and str(row["profile-instance"]) in wanted:
             indexed_assignments[str(row["profile-instance"])].append(row)
     by_identity = {}
     signatures = {}
     for identity, profile in view["profiles"].items():
+        if identity not in wanted:
+            continue
         matches = indexed_assignments.get(identity, [])
         by_identity[identity] = {"profile": profile_body(profile), "assignments": matches,
                                  "assignment_completeness_verified": False, "local_variants": []}

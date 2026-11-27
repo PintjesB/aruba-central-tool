@@ -1023,6 +1023,23 @@ def keyed_profile_evidence(bundle, persona, scope, module, identity):
     return body
 
 
+def library_profile_detail(bundle, root, name, module, identity, profile, review, usage):
+    variants = review.get("local_variants", [])
+    detail = '<h3>Profile settings</h3>' + property_table(review.get("profile", profile))
+    detail += '<h3>Local instances</h3>' + table(("Scope", "Function", "Comparison", "Action"), [
+        tr(e(v["scope_name"]), e(persona_label(v["persona"])), status(v["classification"]),
+           f'<a href="{url(root, "report", snapshot=name, persona=v["persona"], scope=v["scope"], module=module, view="all")}">Open configuration</a>') for v in variants], search=True)
+    differing = [v for v in variants if v["differences"]]
+    if differing:
+        detail += '<details><summary>Local configuration differences</summary>' + "".join(
+            f'<h3>{e(v["scope_name"])}</h3>' + diff_table(v["differences"], "Local", "Library") for v in differing) + '</details>'
+    detail += f'<p><a href="{url(root, "assignments", snapshot=name, module=module, identity=identity)}">Review assignments and recipients</a></p>'
+    detail += f'<p><a href="{url(root, "impact", snapshot=name, module=module, identity=identity)}">Trace all observed references to this name</a></p>'
+    detail += keyed_profile_evidence(bundle, "Library", "", module, identity)
+    detail += '<details><summary>Observed assignments and usage</summary>' + usage_detail(usage) + '</details>'
+    return detail + raw({"profile": profile, **review}, "Complete profile evidence")
+
+
 def library_view(workspace, query):
     from .config_app import library_profile_comparison
     from .advanced_review import advanced_analysis, library_usage
@@ -1092,8 +1109,13 @@ def library_view(workspace, query):
                 raise ValueError("Unknown Library profile")
             from .library_usage_presentation import device_visibility
             usage = library_usage(bundle, module, [selected_profile], workspace.advanced_snapshot(bundle)["references"])
-            body += '<section><h2>' + e(selected_profile) + ' · Device visibility</h2>'
+            comparison = library_profile_comparison(bundle, module, identities=[selected_profile])
+            body += '<section><h2>' + e(selected_profile) + ' · Profile review</h2>'
             body += f'<p><a href="{url(root, "library", snapshot=name, module=module, visibility=visibility)}">Back to profile collection</a></p>'
+            body += library_profile_detail(bundle, root, name, module, selected_profile,
+                                           view["profiles"][selected_profile], comparison.get(selected_profile, {}),
+                                           usage[selected_profile])
+            body += '</section><section><h2>' + e(selected_profile) + ' · Device visibility</h2>'
             body += device_visibility(usage[selected_profile], root=root, snapshot=name, module=module) + '</section>'
             return page("Library", body, workspace.nav(name))
         comparison = library_profile_comparison(bundle, module)
@@ -1108,18 +1130,11 @@ def library_view(workspace, query):
             matches = review.get("assignments", [])
             variants = review.get("local_variants", [])
             conflict = sum(v["classification"] == "different_body" for v in variants)
-            detail = '<h3>Profile settings</h3>' + property_table(review.get("profile", profile))
-            detail += '<h3>Local instances</h3>' + table(("Scope", "Function", "Comparison"), [tr(e(v["scope_name"]), e(persona_label(v["persona"])), status(v["classification"])) for v in variants])
-            differing = [v for v in variants if v["differences"]]
-            if differing:
-                detail += '<details><summary>Local configuration differences</summary>' + "".join(
-                    f'<h3>{e(v["scope_name"])}</h3>' + diff_table(v["differences"], "Local", "Library") for v in differing) + '</details>'
-            detail += f'<p><a href="{url(root, "assignments", snapshot=name, module=module, identity=identity)}">Review assignments and recipients</a></p>'
-            detail += f'<p><a href="{url(root, "impact", snapshot=name, module=module, identity=identity)}">Trace all observed references to this name</a></p>'
-            detail += keyed_profile_evidence(bundle, "Library", "", module, identity)
-            detail += '<details><summary>Observed assignments and usage</summary>' + usage_detail(usage[identity], root=root, snapshot=name, module=module) + '</details>' + raw({"profile": profile, **review})
-            rows.append(tr(f'<strong>{e(title_profile(identity, profile))}</strong>', *usage_cells(usage[identity]), str(len(variants)),
-                           badge(str(conflict), "warn" if conflict else "neutral"), inspect(identity, detail)))
+            href = url(root, "library", snapshot=name, module=module, profile=identity, visibility=visibility)
+            rows.append(tr(f'<strong><a href="{href}">{e(title_profile(identity, profile))}</a></strong>',
+                           *usage_cells(usage[identity]), str(len(variants)),
+                           badge(str(conflict), "warn" if conflict else "neutral"),
+                           f'<a href="{href}">Review profile</a>'))
         body += f'<section><h2>{e(module_label(module))} · {len(rows)} of {len(usage)} profiles</h2>' + table(("Profile", "Observed assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Local instances", "Different bodies", ""), rows, search=True) + '</section>'
     body += '<p class="note">Assignments link a Library profile to a scope and device function. A zero count means no assignment was observed in this snapshot, not that the profile is unused.</p>' + raw(assignments, "Assignment capture diagnostics")
     return page("Library", body, workspace.nav(name))

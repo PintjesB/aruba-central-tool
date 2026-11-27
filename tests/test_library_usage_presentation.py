@@ -44,7 +44,7 @@ class LibraryUsagePresentationTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from unittest.mock import patch
-        from aruba_central.config_app import Workspace
+        from aruba_central.config_app import Workspace, library_profile_comparison
         from aruba_central.advanced_review import library_usage
         from test_consolidation import fixture
         bundle = fixture()
@@ -55,8 +55,18 @@ class LibraryUsagePresentationTests(unittest.TestCase):
             workspace = Workspace(directory)
             reviewed = workspace.reviewed_snapshot(name)
             workspace.advanced_snapshot(reviewed)
-            with patch("aruba_central.config_app.library_profile_comparison", side_effect=AssertionError("Unneeded full comparison")), patch("aruba_central.advanced_review.library_usage", wraps=library_usage) as use:
+            with patch("aruba_central.config_app.library_profile_comparison", wraps=library_profile_comparison) as compare, patch("aruba_central.advanced_review.library_usage", wraps=library_usage) as use:
                 html = workspace.library({"snapshot": name, "module": "roles", "profile": "A"})
                 self.assertIn("A · Device visibility", html)
                 self.assertEqual(use.call_count, 1)
                 self.assertEqual(use.call_args.args[2], ["A"])
+                self.assertEqual(compare.call_count, 1)
+                self.assertEqual(compare.call_args.kwargs["identities"], ["A"])
+                self.assertIn("Profile settings", html)
+                self.assertIn("Review assignments and recipients", html)
+                self.assertIn("Trace all observed references", html)
+            listing = workspace.library({"snapshot": name, "module": "roles"})
+            self.assertIn("profile=A", listing)
+            self.assertIn("profile=B", listing)
+            self.assertNotIn("Complete profile evidence", listing)
+            self.assertNotIn("Profile settings</h3>", listing)
