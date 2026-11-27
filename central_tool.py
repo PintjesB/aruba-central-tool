@@ -6,7 +6,7 @@ import re
 import sys
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from collections import Counter, defaultdict
 from functools import lru_cache
 from datetime import datetime, timezone
@@ -2014,15 +2014,33 @@ def ordered_parallel(items, function, workers=1, completed=None, item_completed=
                 item_completed(len(result), len(items), item)
         return result
     result = [None] * len(items)
-    with ThreadPoolExecutor(max_workers=min(AUDIT_WORKERS, workers, len(items))) as pool:
-        pending = {pool.submit(function, item): index for index, item in enumerate(items)}
+    active = min(AUDIT_WORKERS, workers, len(items))
+    with ThreadPoolExecutor(max_workers=active) as pool:
+        # Bound queued work as well as active threads. Avoid creating thousands
+        # of futures at once and stop admitting work after a fatal response.
+        indices = iter(range(len(items)))
+        pending = {}
+        def replenish():
+            while len(pending) < active * 2:
+                index = next(indices, None)
+                if index is None:
+                    break
+                pending[pool.submit(function, items[index])] = index
+        count = 0
         try:
-            for count, future in enumerate(as_completed(pending), 1):
-                result[pending[future]] = future.result()
-                if completed:
-                    completed(count, len(items))
-                if item_completed:
-                    item_completed(count, len(items), items[pending[future]])
+            replenish()
+            while pending:
+                finished, _ = wait(pending, return_when=FIRST_COMPLETED)
+                # Inspect all completed futures before admitting more requests.
+                for future in finished:
+                    index = pending.pop(future)
+                    result[index] = future.result()
+                    count += 1
+                    if completed:
+                        completed(count, len(items))
+                    if item_completed:
+                        item_completed(count, len(items), items[index])
+                replenish()
         except BaseException:
             for future in pending:
                 future.cancel()
