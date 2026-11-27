@@ -278,6 +278,33 @@ def profile_recommendations(bundle):
                         target = f"Review {exact['kind']} / {exact['name']}; or Library"
                     else:
                         conflicts.append("No common higher scope with exactly the intended observed device set is established; review exact-scope Library assignments instead.")
+                if action == "remove_override":
+                    # Do not offer a removal preview when a direct individual
+                    # read contradicts the collection evidence used to qualify
+                    # the fallback. Absence of detail is not a contradiction.
+                    details = (bundle.get("keyed_profile_details") or {}).get("profiles", {}).get(persona, {})
+                    for (scope, row), fallback in zip(members, fallbacks):
+                        checks = [(scope["scope"], identity, "local", row["local"]),
+                                  (scope["scope"], identity, "effective", row["effective"])]
+                        source = fallback.get("source")
+                        if source:
+                            checks.append((source["scope"], source["identity"], "effective", source["body"]))
+                        discrepancies = []
+                        for sid, profile_id, kind, expected in checks:
+                            evidence = details.get(str(sid), {}).get(module, {}).get(profile_id, {}).get(kind, {})
+                            body = evidence.get("profile")
+                            if (evidence.get("status") == "identity_observed" and isinstance(body, dict)
+                                    and isinstance(expected, dict) and canonical(profile_body(body)) != canonical(expected)):
+                                discrepancies.append({"scope": sid, "identity": profile_id, "view": kind,
+                                                      "differences": field_differences(expected, profile_body(body))})
+                        if discrepancies:
+                            fallback["individual_conflicts"] = discrepancies
+                            fallback["status"] = "individual_evidence_conflict"
+                            fallback.setdefault("blockers", []).append(
+                                "Direct individual configuration differs from the collection evidence.")
+                    if any(f.get("individual_conflicts") for f in fallbacks):
+                        conflicts.append("Individual profile evidence contradicts the configuration comparison; removal preview is blocked.")
+                        target = "Retain: conflicting individual configuration evidence"
                 add(action, persona, module, identity, sources, local, target, ref, observed, conflicts, steps, scope_references, placements, fallbacks if action == "remove_override" else ())
     for module, view in sorted(library_modules.items()):
         if (library.get("assignments") or {}).get("status") != "response_received":
