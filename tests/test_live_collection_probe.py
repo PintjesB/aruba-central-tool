@@ -6,6 +6,41 @@ from live_collection_probe import probe, qualified_scopes
 
 
 class LiveProbeTests(unittest.TestCase):
+    def test_change_window_probe_reconciles_overlapping_ids(self):
+        from datetime import datetime, timezone
+        from live_collection_probe import change_window_probe, AUDIT_LOG_PATH
+        rows = [
+            {"id": "PRIVATE-FIRST", "occurredOn": "2026-11-21T11:55:00.000Z"},
+            {"id": "PRIVATE-SECOND", "occurredOn": "2026-11-22T12:00:00.000Z"},
+        ]
+        def read(path, **params):
+            self.assertEqual(path, AUDIT_LOG_PATH)
+            self.assertEqual(params["offset"], 1)
+            self.assertEqual(params["limit"], 1000)
+            selected = [r for r in rows if params["start-at"] <= r["occurredOn"] <= params["end-at"]]
+            return {"items": selected, "total": len(selected), "count": len(selected), "offset": 1}
+        client = Mock()
+        client.get.side_effect = read
+        with patch("live_collection_probe.qualified_scopes"):
+            report = change_window_probe(client, {}, now=datetime(2026, 11, 27, 12, tzinfo=timezone.utc))
+        self.assertEqual(client.get.call_count, 9)
+        self.assertTrue(report["window_counts_reconciled"])
+        self.assertEqual(report["unique_daily_events"], 2)
+        self.assertEqual(report["overlapping_events"], 1)
+        self.assertFalse(report["incremental_reuse_qualified"])
+        self.assertNotIn("PRIVATE", json.dumps(report))
+
+    def test_change_window_probe_rejects_inconsistent_window_metadata(self):
+        from datetime import datetime, timezone
+        from live_collection_probe import change_window_probe
+        client = Mock()
+        client.get.return_value = {"items": [], "total": 10, "count": 100, "offset": 1}
+        with patch("live_collection_probe.qualified_scopes"):
+            report = change_window_probe(client, {}, now=datetime(2026, 11, 27, 12, tzinfo=timezone.utc))
+        self.assertFalse(report["window_counts_reconciled"])
+        self.assertFalse(report["broad_read"]["valid_page"])
+        self.assertFalse(report["incremental_reuse_qualified"])
+
     def test_change_audit_probe_uses_fixed_window_and_anonymous_aggregate(self):
         from datetime import datetime, timezone
         from live_collection_probe import change_audit_probe, AUDIT_LOG_PATH
