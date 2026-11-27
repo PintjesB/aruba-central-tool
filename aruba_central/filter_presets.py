@@ -10,7 +10,7 @@ ROUTES = {
     "assessment": {"mode", "category", "state", "persona", "group_by"},
     "overrides": {"persona", "device", "module", "result", "readiness"},
     "report": {"mode", "persona", "module", "scope", "view", "q"},
-    "compare": {"mode", "persona", "module", "left", "right", "view", "identity", *("scope" + str(i) for i in range(1, 6))},
+    "compare": {"mode", "persona", "module", "left", "right", "view", "identity", "fields", *("scope" + str(i) for i in range(1, 6))},
     "library": {"module"},
     "advanced": {"workflow", "group"},
     "assignments": {"module", "persona", "identity"},
