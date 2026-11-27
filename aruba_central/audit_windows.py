@@ -85,6 +85,7 @@ def collect_audit_window(client, lo, hi, *, max_requests=31):
     This does not prove that Central logs every configuration change.
     """
     if (lo.tzinfo is None or hi.tzinfo is None or not lo < hi
+            or lo.microsecond % 1000 or hi.microsecond % 1000
             or hi - lo >= timedelta(days=90)
             or type(max_requests) is not int or not 1 <= max_requests <= 127):
         raise ValueError("Invalid audit window or request budget")
@@ -122,7 +123,7 @@ def collect_audit_window(client, lo, hi, *, max_requests=31):
                 "subdivision_reconciled": bool(qualified),
                 "subdivision_conflicts": conflicts,
                 "parent_stable": stable,
-                "unique_subdivision_events": len(merged)}, merged
+                "unique_subdivision_events": len(merged)}, ({**observed, **merged} if not qualified else merged)
 
     summary, observed = visit(lo, hi)
     return {**summary, "window_requests": attempts}, observed
