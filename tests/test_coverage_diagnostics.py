@@ -127,7 +127,7 @@ class DiagnosticsTests(unittest.TestCase):
                   "keyed_profile_details": {"detail_strategy": "adaptive",
                     "profiles": {"ACCESS_SWITCH": {"PRIVATE-SCOPE": {"dns": {
                         "PRIVATE-PROFILE": {"effective": {"status": "collection_only_sampled"},
-                                            "local": {"status": "identity_observed"}}}}}}}
+                                            "local": {"status": "identity_observed"}}}}}}}}
         report = diagnostics(bundle)
         performance = report["collection_performance"]
         self.assertEqual(performance["individual_reads"], 1)
