@@ -619,3 +619,26 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(after["recovered_values"]["Switch show vlan"], 2)
         self.assertGreater(after["comparisons"]["observed_match"], summary["comparisons"].get("observed_match", 0))
         self.assertNotIn("PRIVATE-CUSTOMER", json.dumps(after))
+
+
+    def test_collection_gap_rows_distinguish_empty_failed_and_skipped_evidence(self):
+        from workspace_views import collection_gap_rows
+        bundle = {"results": {"ACCESS_SWITCH": {"modules": {"dns": {"scope_results": [
+            {"local_view": {"status": "empty_object"},
+             "effective_view": {"status": "list_parsed", "count_confirmed": True}},
+            {"local_view": {"status": "request_rejected", "http_error": 400},
+             "effective_view": {"status": "list_parsed", "count_confirmed": False,
+                                "pagination_status": "request_failed"}}]}}}},
+            "library": {"modules": {"dns": {"status": "list_parsed", "count_confirmed": False}}},
+            "unadapted_profiles": {"dns": {"library": {"reused_exact_collection": True},
+                "source_views": [{"persona": "ACCESS_SWITCH",
+                   "committed": {"status": "empty_response"},
+                   "effective": {"status": "partial_response", "reused_exact_collection": True}}],
+                "catalog_scope_coverage": {"unfiltered_scopes_not_surveyed": 3}}}}
+        rows = collection_gap_rows(bundle)
+        self.assertEqual(rows[0]["reason"], "HTTP 400")
+        self.assertEqual(len(rows), 6)
+        self.assertEqual(sum(r["observations"] for r in rows), 8)
+        self.assertEqual({r["reason"] for r in rows}, {"HTTP 400", "Unverified empty response",
+            "Pagination unverified: Request failed", "Record count unverified", "Scopes not surveyed"})
+        self.assertFalse(any(r["source"] == "Supplemental Library" for r in rows))
