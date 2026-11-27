@@ -48,7 +48,8 @@ class LocalBenchmarkTests(unittest.TestCase):
             self.assertEqual(result["central_api_requests"], 0)
             for stage in ("optimization_worklist", "configuration_health", "configuration_search",
                           "configuration_search_grouped", "render_assessment", "render_health",
-                          "render_customer_report", "render_device_review"):
+                          "render_customer_report", "render_device_review", "render_keyed_evidence",
+                          "render_assessment_repeat", "consolidation_workspace_lookup", "consolidation_cache_hit"):
                 self.assertEqual(len(result["stages"][stage]["samples"]), 2)
             self.assertGreater(result["counts"]["render_assessment_bytes"], 0)
             self.assertGreater(result["counts"]["search_observations"], 0)

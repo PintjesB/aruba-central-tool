@@ -47,6 +47,11 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
         overview = measure("dashboard_summary", lambda: workspace.snapshot_overview(snapshot))
         measure("dashboard_cache_hit", lambda: workspace.snapshot_overview(snapshot))
         findings = measure("consolidation", lambda: profile_recommendations(bundle))
+        cached_findings = measure("consolidation_workspace_lookup", lambda: workspace.consolidation_snapshot(bundle))
+        if cached_findings != findings:
+            raise ValueError("Cached recommendations differ from direct analysis")
+        measure("consolidation_cache_hit", lambda: workspace.consolidation_snapshot(bundle))
+        del cached_findings
         engineering = measure("engineering", lambda: workspace.advanced_snapshot(bundle))
         measure("engineering_cache_hit", lambda: workspace.advanced_snapshot(bundle))
         measure("vlan_evidence_summary", lambda: workspace.vlan_summary(bundle))
@@ -80,7 +85,9 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
             del worklist, health, matches, grouped
             for label, query in (("render_assessment", {}),
                                  ("render_health", {"mode": "health"}),
-                                 ("render_customer_report", {"mode": "customer-report"})):
+                                 ("render_customer_report", {"mode": "customer-report"}),
+                                 ("render_keyed_evidence", {"mode": "keyed"}),
+                                 ("render_assessment_repeat", {})):
                 html = measure(label, lambda: workspace.assessment({"snapshot": snapshot, **query}))
                 trial_counts[label + "_bytes"] = len(html.encode("utf-8"))
                 # Page tokens have a fixed length. Do not retain HTML or expose it.
