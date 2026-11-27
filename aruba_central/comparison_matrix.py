@@ -4,7 +4,9 @@ from .workspace_ui import e, page, intro, table, tr, setting_value, badge
 from .workspace_views import load, scope_filter_form, module_options, url
 
 
-def comparison_matrix(bundle, persona, module, identity, scopes, *, view="effective"):
+def comparison_matrix(bundle, persona, module, identity, scopes, *, view="effective", depth="top"):
+    if depth not in ("top", "nested"):
+        raise ValueError("Unknown comparison depth")
     if view not in ("local", "effective") or not 2 <= len(scopes) <= 5 or len(set(scopes)) != len(scopes):
         raise ValueError("Select two to five distinct scopes and a valid view")
     entry = bundle["results"][persona]
@@ -21,15 +23,32 @@ def comparison_matrix(bundle, persona, module, identity, scopes, *, view="effect
                  and capture.get("count_confirmed") is True else "unqualified")
         columns.append({"scope": sid, "name": names[sid].get("name") or sid, "kind": names[sid]["kind"],
                         "state": state, "body": body, "count_confirmed": capture.get("count_confirmed") is True})
-    keys = sorted({key for col in columns for key in (col["body"] or {})})
     rows = []
+    def compare_fields(path, cells):
+        observed = [cell["value"] for cell in cells if cell["state"] == "observed"]
+        # Descend only through compatible nonempty mappings. A list remains
+        # an ordered value. A scalar, empty object or type conflict remains
+        # visible at its parent instead of disappearing into child rows.
+        if depth == "nested" and observed and all(isinstance(v, dict) and v for v in observed):
+            keys = sorted({key for value in observed for key in value})
+            for key in keys:
+                child = [{"state": "observed", "value": cell["value"][key]}
+                         if cell["state"] == "observed" and key in cell["value"]
+                         else {"state": "not_returned" if cell["state"] == "observed" else cell["state"]}
+                         for cell in cells]
+                compare_fields((*path, key), child)
+            return
+        values = {canonical(value) for value in observed}
+        state = ("different" if len(values) > 1 else "matching" if all(cell["state"] == "observed" for cell in cells)
+                 else "unqualified")
+        # JSON Pointer keeps literal dots and slash-containing field names distinct.
+        field = path[0] if depth == "top" else "/" + "/".join(k.replace("~", "~0").replace("/", "~1") for k in path)
+        rows.append({"field": field, "state": state, "cells": cells})
+    keys = sorted({key for col in columns for key in (col["body"] or {})})
     for key in keys:
         cells = [{"state": "observed", "value": col["body"][key]} if col["body"] is not None and key in col["body"]
                  else {"state": "not_returned" if col["body"] is not None else col["state"]} for col in columns]
-        values = {canonical(cell["value"]) for cell in cells if cell["state"] == "observed"}
-        state = ("different" if len(values) > 1 else "matching" if all(cell["state"] == "observed" for cell in cells)
-                 else "unqualified")
-        rows.append({"field": key, "state": state, "cells": cells})
+        compare_fields((key,), cells)
     return {"columns": columns, "rows": rows, "safe_to_apply": False}
 
 
@@ -47,6 +66,9 @@ def matrix_view(workspace, query):
     if persona not in personas:
         raise ValueError("Unknown device function")
     module, identity, view = (query.get(k, default) for k, default in (("module", ""), ("identity", ""), ("view", "effective")))
+    depth = query.get("depth", "top")
+    if depth not in ("top", "nested"):
+        raise ValueError("Unknown comparison depth")
     slots = [query.get("scope" + str(i), "") for i in range(1, 6)]
     def scope_options(entry):
         return [("", "Select scope")] + [(s["id"], s["kind"].title() + " / " + (s.get("name") or s["id"])) for s in entry["scopes"]]
@@ -74,7 +96,7 @@ def matrix_view(workspace, query):
     options = "".join(f'<option value="{e(value)}"></option>' for value in sorted(observed))
     controls = controls.replace('<button type="submit">Compare scopes</button>',
         f'<label>Exact profile identity<input name="identity" list="matrix-identities" value="{e(identity)}" maxlength="512"></label>'
-        f'<datalist id="matrix-identities">{options}</datalist><button type="submit">Compare scopes</button>')
+        f'<datalist id="matrix-identities">{options}</datalist><input type="hidden" name="depth" value="{e(depth)}"><button type="submit">Compare scopes</button>')
     controls = controls.replace('class="button reset-link" href="' + url(root, "compare", snapshot=name) + '"',
         'class="button reset-link" href="' + url(root, "compare", snapshot=name, mode="matrix") + '"')
     controls += '<p class="filter-hint">Choose scopes and a module, then submit to populate the observed profile suggestions. Manual identities remain valid for absence checks.</p>'
@@ -84,7 +106,7 @@ def matrix_view(workspace, query):
         if len(scopes) < 2 or len(set(scopes)) != len(scopes):
             body += '<section class="empty">Select at least two distinct scopes.</section>'
         else:
-            result = comparison_matrix(bundle, persona, module, identity, scopes, view=view)
+            result = comparison_matrix(bundle, persona, module, identity, scopes, view=view, depth=depth)
             labels = {"observed": "Profile observed", "confirmed_absent": "Profile absent (count confirmed)",
                       "unqualified": "Read or presence unqualified", "not_returned": "Field not returned"}
             headers = ("Setting", "Comparison") + tuple(c["kind"].title() + " / " + c["name"] for c in result["columns"])
@@ -92,11 +114,15 @@ def matrix_view(workspace, query):
                     tr("Collection count", "", *(e("Confirmed" if c["count_confirmed"] else "Unverified") for c in result["columns"]))]
             counts = {state: sum(row["state"] == state for row in result["rows"]) for state in ("matching", "different", "unqualified")}
             differences_only = query.get("fields", "") == "differences"
-            params = {"mode": "matrix", "persona": persona, "module": module, "identity": identity, "view": view,
+            params = {"mode": "matrix", "persona": persona, "module": module, "identity": identity, "view": view, "depth": depth,
                       **{"scope" + str(i): sid for i, sid in enumerate(slots, 1) if sid}}
             body += '<section><h2>Comparison summary</h2><p>' + e(
                 f'{counts["different"]} differing · {counts["matching"]} matching · {counts["unqualified"]} insufficient comparison') + '</p>'
-            body += f'<a class="button" href="{url(root, "compare", snapshot=name, **params, fields="" if differences_only else "differences")}">{"Show all fields" if differences_only else "Hide matching fields"}</a></section>'
+            body += f'<a class="button" href="{url(root, "compare", snapshot=name, **params, fields="" if differences_only else "differences")}">{"Show all fields" if differences_only else "Hide matching fields"}</a> '
+            depth_params = {**params, "depth": "nested" if depth == "top" else "top"}
+            body += f'<a class="button" href="{url(root, "compare", snapshot=name, **depth_params, fields="differences" if differences_only else "")}">{"Expand nested settings" if depth == "top" else "Show top-level settings"}</a></section>'
+            if depth == "nested":
+                body += '<p class="note">Nested object fields use JSON Pointer paths. Lists remain ordered values; incompatible structures are compared at their parent field.</p>'
             for row in result["rows"]:
                 if differences_only and row["state"] == "matching":
                     continue
