@@ -44,3 +44,11 @@ def device_visibility(usage, *, root=None, snapshot=None, module=None):
     return '<h3>Observed device visibility</h3><p>Each device/function pair is listed with its captured relationship to this Library definition.</p>' + (
         table(("Device", "Function", "Visibility", "Action"), rows, search=True) if rows else
         '<p class="note">No device observations available; usage is not established.</p>')
+
+
+def visibility_detail_link(usage, *, root=None, snapshot=None, module=None):
+    html = '<h3>Observed device visibility</h3>' + table(("Visibility", "Device/function pairs"), [
+        tr(e(label), str(len(usage.get(key, [])))) for key, label in STATES])
+    if root and snapshot and module and usage.get("identity"):
+        html += f'<p><a href="{url(root, "library", snapshot=snapshot, module=module, profile=usage["identity"])}">Inspect all device observations</a></p>'
+    return html
