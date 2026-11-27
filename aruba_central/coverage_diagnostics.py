@@ -373,6 +373,14 @@ def diagnostics(bundle):
                                    for row in sorted((r for r in operations if "elapsed_ms_sum" in r),
                                                      key=lambda r: (-r["elapsed_ms_sum"], r["path"]))[:20]],
             "exact_collection_gets_reused": count((bundle.get("api_read_coverage") or {}).get("exact_collection_gets_reused")),
+            "supplemental_exact_reuse": [
+                {"module": module, "scope_views": sum(
+                    read.get("reused_exact_collection") is True
+                    for view in entry.get("source_views", [])
+                    for read in (view.get("committed", {}), view.get("effective", {}))),
+                 "library_view": entry.get("library", {}).get("reused_exact_collection") is True}
+                for module, entry in sorted((bundle.get("unadapted_profiles") or {}).items())
+                if module in modules],
             "detail_read_plan": [{"module": m,
                                   "candidates": count((details.get("candidate_reads_by_module") or {}).get(m)),
                                   "initial_reads": count((details.get("initial_reads_by_module") or {}).get(m)),
@@ -425,10 +433,86 @@ def diagnostics(bundle):
     }
 
 
+def compare_coverage(previous, current):
+    """Compare exact private selectors locally; export only aggregate counts.
+
+    A changed or missing observation may reflect tenant drift, not lost
+    coverage. Never infer that equal counts prove equal configuration.
+    """
+    def index(bundle):
+        if bundle.get("schema") != 1 or bundle.get("kind") != "configuration_audit":
+            raise ValueError("Expected configuration audit")
+        selectors = {}
+        duplicate = Counter()
+        def add(kind, key, view, positive, counted=False):
+            full = (kind, *key)
+            if full in selectors:
+                duplicate[kind] += 1
+            selectors[full] = (positive, counted, view.get("status"))
+        for persona, entry in bundle.get("results", {}).items():
+            for module, data in entry.get("modules", {}).items():
+                for scope in data.get("scope_results", []):
+                    for side in ("local", "effective"):
+                        view = scope.get(side + "_view", {})
+                        add("structured", (persona, module, str(scope["scope"]), side), view,
+                            view.get("status") == "list_parsed",
+                            view.get("count_confirmed") is True)
+        for module, data in (bundle.get("unadapted_profiles") or {}).items():
+            for scope in data.get("source_views", []):
+                for side in ("committed", "effective"):
+                    view = scope.get(side, {})
+                    add("supplemental", (scope.get("persona"), module, str(scope.get("scope")), side),
+                        view, view.get("status") == "response_received",
+                        view.get("collection_count_verified") is True)
+            view = data.get("library", {})
+            add("supplemental_library", (module,), view,
+                view.get("status") == "response_received",
+                view.get("collection_count_verified") is True)
+        for module, view in (bundle.get("library") or {}).get("modules", {}).items():
+            add("library", (module,), view, view.get("status") == "list_parsed",
+                view.get("count_confirmed") is True)
+        for persona, scopes in (bundle.get("keyed_profile_details") or {}).get("profiles", {}).items():
+            for scope, modules in scopes.items():
+                for module, identities in modules.items():
+                    for identity, views in identities.items():
+                        for side, view in views.items():
+                            add("keyed", (persona, str(scope), module, identity, side), view,
+                                view.get("status") in ("identity_observed", "collection_only_sampled"))
+        return selectors, duplicate
+
+    old, old_duplicates = index(previous)
+    new, new_duplicates = index(current)
+    result = {}
+    for kind in ("structured", "supplemental", "supplemental_library", "library", "keyed"):
+        a = {key for key in old if key[0] == kind}
+        b = {key for key in new if key[0] == kind}
+        common = a & b
+        result[kind] = {
+            "previous": len(a), "current": len(b), "matched": len(common),
+            "previous_only": len(a - b), "current_only": len(b - a),
+            "previous_duplicate_selectors": old_duplicates[kind],
+            "current_duplicate_selectors": new_duplicates[kind],
+            "previous_positive_now_missing": sum(old[key][0] for key in a - b),
+            "previous_positive_now_unqualified": sum(old[key][0] and not new[key][0] for key in common),
+            "previous_count_confirmed_now_unqualified": sum(old[key][1] and not new[key][1] for key in common),
+            "status_changed": sum(old[key][2] != new[key][2] for key in common),
+        }
+        if kind == "keyed":
+            result[kind]["direct_to_sampled"] = sum(
+                old[key][2] == "identity_observed" and new[key][2] == "collection_only_sampled" for key in common)
+            result[kind]["sampled_to_direct"] = sum(
+                old[key][2] == "collection_only_sampled" and new[key][2] == "identity_observed" for key in common)
+    return {"same_region": bool(previous.get("region") and previous.get("region") == current.get("region")),
+            "same_collection_strategy": bool(previous.get("collection_strategy") and previous.get("collection_strategy") == current.get("collection_strategy")),
+            "mixed_capture_times": any((b.get("collection_checkpoint") or {}).get("mixed_capture_times") is True for b in (previous, current)),
+            "selectors": result, "complete": False, "safe_to_apply": False}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", required=True, type=Path)
     parser.add_argument("--snapshot", help="Specific snapshot filename; default is latest")
+    parser.add_argument("--compare-previous", action="store_true", help="Compare exact selector coverage with the preceding saved audit, offline")
     parser.add_argument("--output", type=Path, help="Write JSON to a new private file instead of standard output")
     args = parser.parse_args()
     if args.output is not None and (args.output.exists() or args.output.is_symlink()):
@@ -437,7 +521,15 @@ def main():
     files = audit_files(args.directory)
     if not files:
         parser.error("No configuration audit snapshots found")
-    result = diagnostics(read_audit(args.directory, args.snapshot or files[0].name))
+    selected = args.snapshot or files[0].name
+    bundle = read_audit(args.directory, selected)
+    result = diagnostics(bundle)
+    if args.compare_previous:
+        index = next((i for i, path in enumerate(files) if path.name == selected), None)
+        if index is None or index + 1 >= len(files):
+            parser.error("No preceding saved configuration audit")
+        result["coverage_comparison"] = compare_coverage(
+            read_audit(args.directory, files[index + 1].name), bundle)
     if args.output is None:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
