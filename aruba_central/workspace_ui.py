@@ -664,27 +664,57 @@ const dialog=document.getElementById('workspace-inspector');
 const body=document.getElementById('workspace-inspector-body');
 const title=document.getElementById('workspace-inspector-title');
 const closeButton=document.getElementById('workspace-close');
-let opener=null;
-document.addEventListener('click',event=>{
- const button=event.target.closest('[data-inspect]');
- if(!button)return;
- const template=button.nextElementSibling;
- if(!template||template.tagName!=='TEMPLATE')return;
- const content=template.content.cloneNode(true);
- const heading=content.querySelector('.inspector-title');
- title.textContent=heading?heading.textContent.trim():'Configuration review';
- if(heading)heading.remove();
- body.replaceChildren(content);
- for(const grid of body.querySelectorAll('[data-paginated]'))initGrid(grid);
+let opener=null,inspectionRequest=0;
+function openInspector(button){
  if(!dialog.open){
   opener=button;
   dialog.showModal();
   document.documentElement.classList.add('inspector-open');
  }
  body.scrollTop=0;closeButton.focus({preventScroll:true});
+}
+function renderInspector(template,button){
+ const content=template.content.cloneNode(true);
+ const heading=content.querySelector('.inspector-title');
+ title.textContent=heading?heading.textContent.trim():'Configuration review';
+ if(heading)heading.remove();
+ body.replaceChildren(content);
+ for(const grid of body.querySelectorAll('[data-paginated]'))initGrid(grid);
+ openInspector(button);
+}
+document.addEventListener('click',async event=>{
+ const button=event.target.closest('[data-inspect]');
+ if(!button)return;
+ const request=++inspectionRequest;
+ if(button.dataset.inspectUrl){
+  const endpoint=new URL(button.dataset.inspectUrl,location.href);
+  if(endpoint.origin!==location.origin)return;
+  title.textContent='Configuration review';
+  const loading=document.createElement('p');loading.textContent='Loading captured evidence…';loading.setAttribute('role','status');
+  body.replaceChildren(loading);openInspector(button);
+  try{
+   const response=await fetch(endpoint,{credentials:'same-origin',cache:'no-store',redirect:'error'});
+   if(!response.ok)throw Error('Evidence unavailable');
+   const documentCopy=new DOMParser().parseFromString(await response.text(),'text/html');
+   const template=documentCopy.querySelector('template[data-advisor-evidence]');
+   if(!template)throw Error('Evidence unavailable');
+   if(request!==inspectionRequest||!dialog.open)return;
+   renderInspector(template,button);
+  }catch(error){
+   if(request!==inspectionRequest||!dialog.open)return;
+   const message=document.createElement('p');
+   message.textContent='Unable to load the exact finding. Reopen the worklist if the snapshot changed, or close and retry.';
+   message.setAttribute('role','alert');body.replaceChildren(message);
+  }
+  return;
+ }
+ const template=button.nextElementSibling;
+ if(!template||template.tagName!=='TEMPLATE')return;
+ renderInspector(template,button);
 });
 closeButton.addEventListener('click',()=>dialog.close());
 dialog.addEventListener('close',()=>{
+ inspectionRequest++;
  document.documentElement.classList.remove('inspector-open');
  body.replaceChildren();title.textContent='';
  if(opener&&opener.isConnected)opener.focus({preventScroll:true});

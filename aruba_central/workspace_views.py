@@ -268,6 +268,10 @@ def advisor_view(workspace, query):
         findings = [f for f in findings if f["action"] == "remove_override"
                     and f["persona"] == query.get("persona") and f["module"] == query.get("module")
                     and f["identity"] == identity_filter and any(s["scope"] == scope_filter for s in f["sources"])]
+    detail_only = query.get("detail") == "1"
+    if detail_only and (not query.get("group") or len(findings) != 1 or query.get("binding") != binding):
+        raise ValueError("Finding or snapshot changed; reopen the worklist")
+    render_details = detail_only or bool(query.get("group") or (scope_filter and identity_filter))
     recipient_indexes = {}
     for finding in findings:
         persona = finding["persona"]
@@ -307,61 +311,70 @@ def advisor_view(workspace, query):
                         for p in f["placement_options"]]
             placement = '<select class="destination" aria-label="Proposed destination">' + "".join(
                 f'<option value="{e(key)}">{e(value)}</option>' for key, value in choices) + '</select>'
-        source_table = table(("Scope", "Type", "Finding"), [tr(e(s["name"]), e(pretty(s["kind"])), e(profile_state_label(s["status"]))) for s in sources]) if sources else '<p class="muted">Library definition.</p>'
-        device_rows = [tr(e(d["name"]), status(k)) for k in ("matching", "different", "absent", "unknown") for d in observed.get(k, [])]
-        scope_rows = [tr(e(s["name"]), e(pretty(s["kind"])), status(s["effective"])) for s in f["scope_references"]]
-        placement_rows = [tr(e(p["name"]), e(pretty(p["kind"])), str(len(p["intended_devices"])),
-                           str(len(p["additional_devices"])), str(len(p["unknown_membership"])), status(p["effective"]))
-                          for p in f["placement_options"]]
-        reference_label = "Library" if action == "reuse_library" else "Nearest inherited" if action == "remove_override" and f["preview_selectable"] else "Global" if action in ("remove_override", "default_review") else "Reference"
-        comparison = ""
-        if action == "default_review":
-            from .central_tool import vlan_comparison_evidence
-            sections = []
-            for source in sources:
-                if source["kind"] != "device":
-                    continue
-                row = {"identity": f["identity"], "local": f["local"], "effective": f["local"],
-                       "global_reference": f["reference"]}
-                evidence = vlan_comparison_evidence(bundle, f["persona"], source["scope"], row)
-                sections.append(f'<h3>{e(source["name"])}</h3>' + vlan_explanation(f["local"], f["reference"], f["local"], evidence))
-            comparison = "".join(sections) or vlan_explanation(f["local"], f["reference"], f["local"])
-        if not comparison:
-            comparison = '<h3>Configuration comparison</h3>' + diff_table(f["differences"], "Local", reference_label)
-        fallback_html = ""
-        if f["fallbacks"]:
-            fallback_html = '<h3>Expected inherited definition for each source</h3>' + table(("Source", "Nearest observed scope", "Result", "Blockers"), [tr(e(x["name"]), e((x.get("source") or {}).get("name", "Unavailable")), e(pretty(x["status"])), list_items(x["blockers"])) for x in f["fallbacks"]])
-            for x in f["fallbacks"]:
-                if x.get("source"):
-                    fallback_html += '<h4>' + e(x["name"]) + '</h4>' + diff_table(x.get("differences"), "Local", "Nearest higher scope")
-                for conflict in x.get("individual_conflicts", []):
-                    fallback_html += '<h4>Conflicting individual evidence</h4><p>' + e(
-                        str(conflict["scope"]) + " / " + str(conflict["identity"]) + " / " + conflict["view"]) + '</p>'
-                    fallback_html += diff_table(conflict["differences"], "Collection", "Individual read")
-        dep = f["dependency_review"]
-        dependency_rows = []
-        for key, label in (("consumers", "Consumer"), ("dependencies", "Prerequisite"), ("unresolved_target_observations", "Unresolved target")):
-            for ref in dep[key]:
-                dependency_rows.append(tr(e(label), e(ref["device"]), e(ref["source_module"] + " / " + str(ref["source"])),
-                                          e(ref["target_module"] + " / " + str(ref["target"] or "Unknown")),
-                                          badge(pretty(ref["status"]))))
-        dependency_html = ('<h3>Observed dependencies</h3><p>' + str(dep["observed_consumer_devices"])
-                           + ' effective consumer device/function pairs; ' + str(len(dep["unqualified_edges"]))
-                           + ' unqualified edges; ' + str(len(dep["unresolved_target_observations"]))
-                           + ' unresolved target observations. Same-name references may belong to another scope; no complete dependency claim.</p>'
-                           + table(("Relationship", "Scope", "Source", "Target", "Evidence"), dependency_rows, search=True)
-                           + f'<p><a href="{url(root, "impact", snapshot=name, module=f["module"], identity=f["identity"])}">Trace direct and transitive impact</a></p>')
-        details = (
-            f'<div class="review-decision"><div><strong>{e(f["target"] if action == "remove_override" else ACTION_GUIDE[action][2])}</strong><p>{e(ACTION_GUIDE[action][1])}</p></div></div>'
-            + fallback_html + comparison + dependency_html
-            + ('<h3>Destination impact</h3>' + table(("Destination", "Type", "Intended", "Additional", "Unknown", "Current"), placement_rows) if placement_rows else "")
-            + '<h3>Proposed workflow</h3>' + list_items(f["steps"], ordered=True)
-            + '<h3>Validation required</h3>' + list_items(f["blockers"])
-            + '<details><summary>Affected scopes and devices</summary>' + source_table
-            + ('<h3>Observed device configuration</h3>' + table(("Device", "Profile state"), device_rows) if device_rows else "")
-            + ('<h3>Higher-scope configuration</h3>' + table(("Scope", "Type", "Effective body"), scope_rows) if scope_rows else "") + '</details>'
-            + '<details><summary>Source evidence</summary>'
-            + (vlan_instance_context(bundle, f["persona"], sources, f["identity"]) + operational_vlan_context(bundle, f["persona"], sources, f["identity"]) if f["module"] == "layer2-vlan" else "") + raw(f) + '</details>')
+        if render_details:
+            source_table = table(("Scope", "Type", "Finding"), [tr(e(s["name"]), e(pretty(s["kind"])), e(profile_state_label(s["status"]))) for s in sources]) if sources else '<p class="muted">Library definition.</p>'
+            device_rows = [tr(e(d["name"]), status(k)) for k in ("matching", "different", "absent", "unknown") for d in observed.get(k, [])]
+            scope_rows = [tr(e(s["name"]), e(pretty(s["kind"])), status(s["effective"])) for s in f["scope_references"]]
+            placement_rows = [tr(e(p["name"]), e(pretty(p["kind"])), str(len(p["intended_devices"])),
+                               str(len(p["additional_devices"])), str(len(p["unknown_membership"])), status(p["effective"]))
+                              for p in f["placement_options"]]
+            reference_label = "Library" if action == "reuse_library" else "Nearest inherited" if action == "remove_override" and f["preview_selectable"] else "Global" if action in ("remove_override", "default_review") else "Reference"
+            comparison = ""
+            if action == "default_review":
+                from .central_tool import vlan_comparison_evidence
+                sections = []
+                for source in sources:
+                    if source["kind"] != "device":
+                        continue
+                    row = {"identity": f["identity"], "local": f["local"], "effective": f["local"],
+                           "global_reference": f["reference"]}
+                    evidence = vlan_comparison_evidence(bundle, f["persona"], source["scope"], row)
+                    sections.append(f'<h3>{e(source["name"])}</h3>' + vlan_explanation(f["local"], f["reference"], f["local"], evidence))
+                comparison = "".join(sections) or vlan_explanation(f["local"], f["reference"], f["local"])
+            if not comparison:
+                comparison = '<h3>Configuration comparison</h3>' + diff_table(f["differences"], "Local", reference_label)
+            fallback_html = ""
+            if f["fallbacks"]:
+                fallback_html = '<h3>Expected inherited definition for each source</h3>' + table(("Source", "Nearest observed scope", "Result", "Blockers"), [tr(e(x["name"]), e((x.get("source") or {}).get("name", "Unavailable")), e(pretty(x["status"])), list_items(x["blockers"])) for x in f["fallbacks"]])
+                for x in f["fallbacks"]:
+                    if x.get("source"):
+                        fallback_html += '<h4>' + e(x["name"]) + '</h4>' + diff_table(x.get("differences"), "Local", "Nearest higher scope")
+                    for conflict in x.get("individual_conflicts", []):
+                        fallback_html += '<h4>Conflicting individual evidence</h4><p>' + e(
+                            str(conflict["scope"]) + " / " + str(conflict["identity"]) + " / " + conflict["view"]) + '</p>'
+                        fallback_html += diff_table(conflict["differences"], "Collection", "Individual read")
+            dep = f["dependency_review"]
+            dependency_rows = []
+            for key, label in (("consumers", "Consumer"), ("dependencies", "Prerequisite"), ("unresolved_target_observations", "Unresolved target")):
+                for ref in dep[key]:
+                    dependency_rows.append(tr(e(label), e(ref["device"]), e(ref["source_module"] + " / " + str(ref["source"])),
+                                              e(ref["target_module"] + " / " + str(ref["target"] or "Unknown")),
+                                              badge(pretty(ref["status"]))))
+            dependency_html = ('<h3>Observed dependencies</h3><p>' + str(dep["observed_consumer_devices"])
+                               + ' effective consumer device/function pairs; ' + str(len(dep["unqualified_edges"]))
+                               + ' unqualified edges; ' + str(len(dep["unresolved_target_observations"]))
+                               + ' unresolved target observations. Same-name references may belong to another scope; no complete dependency claim.</p>'
+                               + table(("Relationship", "Scope", "Source", "Target", "Evidence"), dependency_rows, search=True)
+                               + f'<p><a href="{url(root, "impact", snapshot=name, module=f["module"], identity=f["identity"])}">Trace direct and transitive impact</a></p>')
+            details = (
+                f'<div class="review-decision"><div><strong>{e(f["target"] if action == "remove_override" else ACTION_GUIDE[action][2])}</strong><p>{e(ACTION_GUIDE[action][1])}</p></div></div>'
+                + fallback_html + comparison + dependency_html
+                + ('<h3>Destination impact</h3>' + table(("Destination", "Type", "Intended", "Additional", "Unknown", "Current"), placement_rows) if placement_rows else "")
+                + '<h3>Proposed workflow</h3>' + list_items(f["steps"], ordered=True)
+                + '<h3>Validation required</h3>' + list_items(f["blockers"])
+                + '<details><summary>Affected scopes and devices</summary>' + source_table
+                + ('<h3>Observed device configuration</h3>' + table(("Device", "Profile state"), device_rows) if device_rows else "")
+                + ('<h3>Higher-scope configuration</h3>' + table(("Scope", "Type", "Effective body"), scope_rows) if scope_rows else "") + '</details>'
+                + '<details><summary>Source evidence</summary>'
+                + (vlan_instance_context(bundle, f["persona"], sources, f["identity"]) + operational_vlan_context(bundle, f["persona"], sources, f["identity"]) if f["module"] == "layer2-vlan" else "") + raw(f) + '</details>')
+            if detail_only:
+                return '<template data-advisor-evidence><div class="inspector-title"><h2>' + e(profile) + '</h2></div>' + details + '</template>'
+            review_control = inspect(profile, details, "Review")
+        else:
+            endpoint = url(root, "advisor", snapshot=name, group=f["id"], detail="1", binding=binding)
+            href = url(root, "advisor", snapshot=name, group=f["id"], finding=action)
+            review_control = (f'<button class="quiet inspect-trigger" type="button" data-inspect data-inspect-url="{endpoint}">Review</button>'
+                              f'<noscript><a href="{href}">Review</a></noscript>')
         matching = len(observed.get("matching", []))
         unknown = len(observed.get("unknown", []))
         device_summary = f'<strong>{matching} / {sum(len(v) for v in observed.values())}</strong>' + (f'<small>{unknown} not comparable</small>' if unknown else "") if observed else '<span class="muted">Not assessed</span>'
@@ -375,7 +388,7 @@ def advisor_view(workspace, query):
             f'<input type="checkbox" class="choose" aria-label="Select {e(profile)}" data-plan="{e(json.dumps(f, ensure_ascii=False))}"{" disabled" if not selectable else ""}>',
             summary, badge(short[action], "warn" if action in ("conflict", "default_review") else "info" if action in OPPORTUNITIES else "neutral") + f'<small>{e(SHORT_REASON[action])}</small><small><strong>{e(readiness_text)}</strong></small>',
             f'<strong>{len(sources)}</strong><small>{e(names or "Library definition")}</small>', placement, device_summary,
-            inspect(profile, details, "Review"),
+            review_control,
             attrs=f' data-readiness="{readiness}" data-source-count="{len(sources)}" data-action="{e(action)}" data-module="{e(f["module"])}" data-persona="{e(f["persona"])}" data-search="{e(profile+" "+str([s["name"] for s in sources]))}"'))
     filters = (
         '<div class="filter-bar advisor-filters">'
