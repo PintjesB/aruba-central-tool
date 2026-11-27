@@ -263,12 +263,14 @@ def navigation(root, snapshot=None):
     for group, items in (
         ("Analyze", (("", "Overview"), ("overrides", "Device overrides"), ("advisor", "Consolidation"),
                        ("assessment", "Configuration assessment"), ("advanced", "Engineering"), ("assignments", "Library assignments"), ("nac", "NAC identities"), ("sources", "Configuration sources"), ("impact", "Dependency impact"), ("drift", "Configuration drift"), ("remediation", "Remediation verification"), ("standards", "Standards compliance"), ("trends", "Compliance trends"))),
-        ("Explore", (("report", "Configuration"), ("scopes", "Inventory"), ("library", "Library"), ("compare", "Compare"))),
+        ("Explore", (("find", "Find devices and profiles"), ("report", "Configuration"), ("scopes", "Inventory"), ("library", "Library"), ("compare", "Compare"))),
         ("System", (("filters", "Saved filters"), ("coverage", "Coverage")))):
         links.append(f'<div class="nav-group"><span>{e(group)}</span>')
         for route, label in items:
-            links.append(f'<a data-nav="{e(label)}" aria-label="{e(label)}" title="{e(label)}" href="{e(root + route + suffix)}">'
-                         f'{icon(route or "overview")}<span class="nav-label">{e(label)}</span></a>')
+            target = (root + "report?" + urlencode({"mode": "entities", **({"snapshot": snapshot} if snapshot else {})})
+                      if route == "find" else root + route + suffix)
+            links.append(f'<a data-nav="{e(label)}" aria-label="{e(label)}" title="{e(label)}" href="{e(target)}">'
+                         f'{icon("search" if route == "find" else route or "overview")}<span class="nav-label">{e(label)}</span></a>')
         links.append('</div>')
     return "".join(links)
 
