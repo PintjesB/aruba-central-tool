@@ -2,6 +2,7 @@
 from collections import Counter
 from .central_tool import canonical
 from .coverage_diagnostics import raw_shape
+from .applicability_evidence import applicability_evidence
 
 MODULE_KEYS = {"role-gpids": "name", "roles": "name", "server-groups": "name"}
 PUBLIC_FIELDS = frozenset(("name", "servers", "type", "count-servers", "description",
@@ -80,4 +81,5 @@ def keyed_qualification(bundle):
                                   for (m, v, f, k, l, r), c in sorted(differences.items())],
             "profile_differences": [{"module": m, "view": v, "category": k, "reads": c}
                                     for (m, v, k), c in sorted(profiles.items())],
+            "applicability": applicability_evidence(bundle),
             "safe_to_apply": False, "order_equivalence_qualified": False}
