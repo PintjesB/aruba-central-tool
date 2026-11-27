@@ -132,6 +132,8 @@ def library_usage(bundle, module, identities, references):
     for ref in references:
         if ref["target_module"] == module and ref["target"] in wanted:
             referenced[ref["target"]].append(ref)
+    expected_signatures = {identity: canonical(profile_body(profile))
+                           for identity, profile in view.get("profiles", {}).items() if identity in wanted and profile is not None}
     result = {}
     for identity in sorted(wanted):
         rows = assigned[identity]
@@ -169,8 +171,7 @@ def library_usage(bundle, module, identities, references):
                 if profile is None:
                     usage["absent_devices" if actual.get("count_confirmed") is True else "unknown_devices"].append(record)
                     continue
-                expected = view.get("profiles", {}).get(identity)
-                if expected is None or canonical(profile_body(profile)) != canonical(profile_body(expected)):
+                if identity not in expected_signatures or canonical(profile_body(profile)) != expected_signatures[identity]:
                     usage["different_devices"].append(record)
                     continue
                 annotation = profile.get("@", {})
@@ -240,10 +241,17 @@ def advanced_analysis(bundle):
               "safe_to_apply": False}
     library = bundle.get("library") or {}
     library_modules = library.get("modules", {})
+    port_library = library_modules.get("sw-port-profiles", {})
+    port_library_index = defaultdict(list)
+    if port_library.get("status") == "list_parsed":
+        for name, profile in sorted(port_library["profiles"].items()):
+            content = {k: v for k, v in profile_body(profile).items() if k not in ("profile-name", "description")}
+            port_library_index[canonical(content)].append(name)
     for persona, entry in sorted(bundle["results"].items()):
         views = effective_views(entry)
         members = scope_memberships(entry["scopes"])
         names = {s["id"]: s.get("name") or s["id"] for s in entry["scopes"]}
+        scope_kinds = {s["kind"] for s in entry["scopes"]}
         port_groups = defaultdict(list)
         for device in (s for s in entry["scopes"] if s["kind"] == "device"):
             sid = device["id"]
@@ -303,13 +311,14 @@ def advanced_analysis(bundle):
                     # A direct winner must have explicit annotations at a known
                     # member scope, and agree exactly with the device effective body.
                     actual = profile_body(raw)
+                    actual_signature = canonical(actual)
                     chain = [("device", sid)] + [(kind, members[sid][kind]) for kind in PRECEDENCE]
                     winner = None
                     unknown_higher = False
                     for index, (kind, scope_id) in enumerate(chain):
                         if scope_id is None:
                             # Optional absent membership is not proven by a missing ID.
-                            if any(s["kind"] == kind for s in entry["scopes"]):
+                            if kind in scope_kinds:
                                 unknown_higher = True
                             continue
                         effective = views[module].get(scope_id, {})
@@ -322,7 +331,7 @@ def advanced_analysis(bundle):
                         ann = candidate.get("@", {})
                         if not isinstance(ann, dict) or ann.get("aruba-annotation:inherited") is not False or ann.get("aruba-annotation:object_type") not in ("LOCAL", "SHARED") or ann.get("aruba-annotation:is_default") is True:
                             continue
-                        if canonical(profile_body(candidate)) == canonical(actual):
+                        if canonical(profile_body(candidate)) == actual_signature:
                             if not unknown_higher:
                                 winner = (index, kind, scope_id)
                             break
@@ -343,7 +352,7 @@ def advanced_analysis(bundle):
                             "winning_scope": names[winning_scope], "winning_scope_id": winning_scope,
                             "winning_scope_kind": winning_kind,
                             "higher_scope": names[ancestor], "higher_scope_id": ancestor,
-                            "relationship": "same_body" if canonical(other) == canonical(actual) else "different_body",
+                            "relationship": "same_body" if canonical(other) == actual_signature else "different_body",
                             "effective": actual, "higher_body": other,
                             "safe_to_apply": False})
         port_reference_index = defaultdict(list)
@@ -354,16 +363,11 @@ def advanced_analysis(bundle):
             if len(ports) < 2:
                 continue
             settings = ports[0]["portable"]
-            profile_view = library_modules.get("sw-port-profiles", {})
+            profile_view = port_library
             library_matches = []
+            settings_signature = canonical(settings)
             if profile_view.get("status") == "list_parsed":
-                for name, profile in sorted(profile_view["profiles"].items()):
-                    body = profile_body(profile)
-                    # A profile description describes the reusable object, not
-                    # necessarily the physical port; do not ignore extra settings.
-                    content = {k: v for k, v in body.items() if k not in ("profile-name", "description")}
-                    if canonical(content) != canonical(settings):
-                        continue
+                for name in port_library_index.get(settings_signature, ()):
                     visibility = []
                     for sid in sorted({p["scope"] for p in ports}):
                         v = views.get("sw-port-profiles", {}).get(sid, {})
@@ -371,7 +375,7 @@ def advanced_analysis(bundle):
                         status = ("unknown" if v.get("status") != "list_parsed" else
                                   "not_observed" if actual is None else
                                   "matching" if canonical({k: val for k, val in profile_body(actual).items()
-                                                           if k not in ("profile-name", "description")}) == canonical(settings)
+                                                           if k not in ("profile-name", "description")}) == settings_signature
                                   else "different")
                         visibility.append({"scope": sid, "device": names[sid], "status": status})
                     library_matches.append({"identity": name, "visibility": visibility})

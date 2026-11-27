@@ -280,13 +280,18 @@ def library_profile_comparison(bundle, module):
     if view.get("status") != "list_parsed":
         return {}
     assignments = library.get("assignments", {})
+    from collections import defaultdict
+    indexed_assignments = defaultdict(list)
+    for row in assignments.get("rows", []):
+        if row.get("profile-type") == module and type(row.get("profile-instance")) in (str, int):
+            indexed_assignments[str(row["profile-instance"])].append(row)
     by_identity = {}
+    signatures = {}
     for identity, profile in view["profiles"].items():
-        matches = [r for r in assignments.get("rows", [])
-                   if r.get("profile-type") == module and type(r.get("profile-instance")) in (str, int)
-                   and str(r["profile-instance"]) == identity]
+        matches = indexed_assignments.get(identity, [])
         by_identity[identity] = {"profile": profile_body(profile), "assignments": matches,
                                  "assignment_completeness_verified": False, "local_variants": []}
+        signatures[identity] = canonical(by_identity[identity]["profile"])
     for persona, data in bundle["results"].items():
         scope_names = {s["id"]: s.get("name") or s["id"] for s in data["scopes"]}
         for scope in data["modules"].get(module, {}).get("scope_results", []):
@@ -300,7 +305,7 @@ def library_profile_comparison(bundle, module):
                 differences = field_differences(row["local"], target["profile"])
                 target["local_variants"].append({"persona": persona, "scope": scope["scope"],
                                                  "scope_name": scope_names.get(scope["scope"], scope["scope"]),
-                                                 "classification": "exact_match" if canonical(row["local"]) == canonical(target["profile"])
+                                                 "classification": "exact_match" if canonical(row["local"]) == signatures[identity]
                                                  else "different_body", "differences": differences})
     return by_identity
 
