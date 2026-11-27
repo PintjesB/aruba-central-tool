@@ -50,6 +50,14 @@ def capture_portal_assets(client, workers=1, progress=None):
         item = evidence_read(client, ALPHA + "/cnac-image/" + quote(identity, safe=""))
         if item["status"] == "response_received":
             body = item["raw"]
+            # The published individual endpoint also documents the same
+            # items envelope as the inventory. Require exactly one matching
+            # identity and a consistent count, never pick an arbitrary row.
+            if isinstance(body, dict) and "items" in body:
+                items = body["items"]
+                count = body.get("count", 1)
+                body = items[0] if (isinstance(items, list) and len(items) == 1
+                                    and type(count) is int and count == 1) else None
             if isinstance(body, dict) and body.get("imageID") == identity:
                 item["status"] = "identity_observed"
                 item["differences"] = field_differences(observed[identity], body)
