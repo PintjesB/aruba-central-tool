@@ -67,10 +67,11 @@ def scope_memberships(scopes):
     return membership
 
 
-def placement_evidence(scopes, sources, observed, references):
-    """Preview known and unknown recipients, not a simulated deployment."""
+def placement_index(scopes):
+    """Build one immutable-in-use membership/recipient index per persona."""
     membership = scope_memberships(scopes)
     scope_by_id = {s["id"]: s for s in scopes}
+    names = {s["id"]: s.get("name") or s["id"] for s in scopes}
     def recipients(sid):
         scope = scope_by_id[sid]
         kind = scope["kind"]
@@ -80,6 +81,16 @@ def placement_evidence(scopes, sources, observed, references):
             return set(), set(membership)
         return ({dev for dev, m in membership.items() if m[kind] == sid},
                 {dev for dev, m in membership.items() if m[kind] is None})
+    return membership, scope_by_id, names, {sid: recipients(sid) for sid in scope_by_id}
+
+
+def placement_evidence(scopes, sources, observed, references, *, index=None):
+    """Preview known and unknown recipients, not a simulated deployment."""
+    if index is None:
+        index = placement_index(scopes)
+    membership, scope_by_id, names, recipient_sets = index
+    def recipients(sid):
+        return recipient_sets[sid]
     intended, unknown_sources = set(), set()
     for source in sources:
         if source["scope"] not in scope_by_id:
@@ -89,7 +100,6 @@ def placement_evidence(scopes, sources, observed, references):
         intended.update(known)
         unknown_sources.update(unknown)
     matching = {d["scope"] for d in observed.get("matching", [])}
-    names = {s["id"]: s.get("name") or s["id"] for s in scopes}
     def describe(ids):
         return [{"scope": sid, "name": names.get(sid, sid)} for sid in sorted(ids)]
     proposals = []
@@ -117,6 +127,8 @@ def profile_recommendations(bundle):
     library = bundle.get("library") or {}
     library_modules = library.get("modules", {})
     assignments = (library.get("assignments") or {}).get("rows", [])
+    assigned = {(a.get("profile-type"), str(a["profile-instance"])) for a in assignments
+                if isinstance(a.get("profile-type"), str) and type(a.get("profile-instance")) in (str, int)}
     def add(action, persona, module, identity, sources, body, target, reference=None,
             observed=None, blockers=(), steps=(), scope_references=(), placement=(), fallbacks=()):
         payload = {"action": action, "persona": persona, "module": module,
@@ -133,11 +145,14 @@ def profile_recommendations(bundle):
         payload["id"] = hashlib.sha256(canonical(payload).encode()).hexdigest()[:24]
         findings.append(payload)
     for persona, entry in sorted(bundle["results"].items()):
-        names = {s["id"]: s.get("name") or s["id"] for s in entry["scopes"]}
+        placement = placement_index(entry["scopes"])
+        membership, scope_by_id, names, _ = placement
         for module, data in sorted(entry["modules"].items()):
             if module not in REUSABLE or data.get("device_scope_only"):
                 continue
             scopes = data["scope_results"]
+            by_scope = {s["scope"]: s for s in scopes}
+            effective_signatures = {}
             qualified = [s for s in scopes if s.get("review", {}).get("qualified")]
             groups = defaultdict(list)
             variants = defaultdict(set)
@@ -158,13 +173,17 @@ def profile_recommendations(bundle):
                     variants[identity].add(sig)
             lib_view = library_modules.get(module, {})
             lib_profiles = lib_view.get("profiles", {}) if lib_view.get("status") == "list_parsed" else {}
+            def effective_signature(sid, identity, evidence):
+                key = (sid, identity)
+                if key not in effective_signatures:
+                    effective_signatures[key] = canonical(profile_body(evidence["profiles"][identity]))
+                return effective_signatures[key]
             for (identity, signature), members in sorted(groups.items()):
                 local = members[0][1]["local"]
                 sources = [{"scope": s["scope"], "kind": s["scope_kind"],
                             "name": names.get(s["scope"], s["scope"]), "status": row["status"]}
                            for s, row in members]
                 observed = {"matching": [], "different": [], "absent": [], "unknown": []}
-                by_scope = {s["scope"]: s for s in scopes}
                 for device in (s for s in entry["scopes"] if s["kind"] == "device"):
                     sid = device["id"]
                     evidence = by_scope.get(sid, {}).get("effective_view", {})
@@ -172,7 +191,7 @@ def profile_recommendations(bundle):
                         state = "unknown"
                     elif identity not in evidence["profiles"]:
                         state = "absent" if evidence.get("count_confirmed") is True else "unknown"
-                    elif canonical(profile_body(evidence["profiles"][identity])) == signature:
+                    elif effective_signature(sid, identity, evidence) == signature:
                         state = "matching"
                     else:
                         state = "different"
@@ -186,7 +205,7 @@ def profile_recommendations(bundle):
                         state = "unknown"
                     elif identity not in evidence["profiles"]:
                         state = "absent" if evidence.get("count_confirmed") is True else "unknown"
-                    elif canonical(profile_body(evidence["profiles"][identity])) == signature:
+                    elif effective_signature(scope["id"], identity, evidence) == signature:
                         state = "matching"
                     else:
                         state = "different"
@@ -220,7 +239,8 @@ def profile_recommendations(bundle):
                 for scope, row in members:
                     if scope["scope_kind"] == "device":
                         fallback = nearest_fallback(entry, module, scope["scope"], identity,
-                                                   row["local"], row["effective"], row.get("annotations", {}))
+                                                   row["local"], row["effective"], row.get("annotations", {}),
+                                                   index=(membership, scope_by_id, by_scope))
                     else:
                         fallback = {"status": "unresolved", "source": None, "blockers": [
                             "Higher-scope removal must be checked for every affected descendant device."],
@@ -270,7 +290,7 @@ def profile_recommendations(bundle):
                              "If approved, create a Library profile and preview exact assignments.",
                              "Verify effective configuration before removing any local definition.")
                     conflicts.append("A unique local profile may be intentional; no reuse is proven.")
-                placements = placement_evidence(entry["scopes"], sources, observed, scope_references)
+                placements = placement_evidence(entry["scopes"], sources, observed, scope_references, index=placement)
                 if action == "promote_local":
                     exact = next((p for p in placements if p["membership_status"] == "exact_observed_recipient_set"
                                   and p["effective"] in ("matching", "absent")), None)
@@ -314,10 +334,7 @@ def profile_recommendations(bundle):
         for identity, raw in sorted(view["profiles"].items()):
             if (module == "layer2-vlan" and identity == "1") or (isinstance(raw.get("@"), dict) and raw["@"].get("aruba-annotation:is_default") is True):
                 continue
-            matches = [a for a in assignments if a.get("profile-type") == module
-                       and type(a.get("profile-instance")) in (str, int)
-                       and str(a["profile-instance"]) == identity]
-            if not matches:
+            if (module, identity) not in assigned:
                 add("unassigned_library", "Library", module, identity, [], None,
                     "Review assignments and references; retain until verified", profile_body(raw),
                     blockers=("No matching assignment was observed; assignment completeness and reverse references are unverified.",),
