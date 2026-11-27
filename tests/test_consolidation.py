@@ -62,6 +62,30 @@ class ConsolidationTests(unittest.TestCase):
             self.assertIn("Source and comparison are not verified", html)
         self.assertFalse(any(f["identity"] == "999" for f in profile_recommendations(data)))
 
+    def test_recipient_index_matches_independent_membership_scan(self):
+        from aruba_central.consolidation import placement_index
+        scopes = [{"id": "1", "kind": "global"},
+                  {"id": "2", "kind": "site", "metadata": {"id": 20, "collectionId": 40}},
+                  {"id": "3", "kind": "site", "metadata": {"id": 30}},
+                  {"id": "4", "kind": "collection", "metadata": {"id": 40}},
+                  {"id": "5", "kind": "group", "metadata": {"id": 50}},
+                  {"id": "6", "kind": "device", "metadata": {"siteId": 20, "deviceGroupId": 50}},
+                  {"id": "7", "kind": "device", "metadata": {"siteId": 30}},
+                  {"id": "8", "kind": "device"},
+                  {"id": "9", "kind": "other"}]
+        memberships, _, _, recipients = placement_index(scopes)
+        for scope in scopes:
+            sid, kind = scope["id"], scope["kind"]
+            if kind == "device":
+                expected = ({sid}, set())
+            elif kind in ("global", "site", "group", "collection"):
+                expected = ({dev for dev, m in memberships.items() if m[kind] == sid},
+                            {dev for dev, m in memberships.items() if m[kind] is None})
+            else:
+                expected = (set(), set(memberships))
+            self.assertEqual(recipients[sid], expected)
+        self.assertIs(recipients["2"][1], recipients["3"][1])
+
     def test_consolidation_builds_membership_index_once_per_persona(self):
         from unittest.mock import patch
         from aruba_central.consolidation import scope_memberships, placement_evidence, placement_index
