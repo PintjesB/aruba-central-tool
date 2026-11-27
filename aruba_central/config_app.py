@@ -1249,7 +1249,7 @@ def handler_for(workspace):
                 self.connection.settimeout(10)
                 values = parse_qs(self.rfile.read(length).decode("utf-8"),
                                   keep_blank_values=True, strict_parsing=True,
-                                  max_num_fields=512 if self.path == root + "save-standard" else 12 if self.path in (root + "save-standard", root + "approve-exception", root + "revoke-exception") else 7)
+                                  max_num_fields=512 if self.path == root + "save-standard" else 12 if self.path in (root + "save-standard", root + "approve-exception", root + "revoke-exception") else 9 if self.path in (root + "review-disposition", root + "bulk-review-disposition") else 7)
                 fields = values.pop("field_selection", []) if self.path == root + "save-standard" else []
                 if any(len(v) != 1 for v in values.values()):
                     raise ValueError("Invalid form")
@@ -1278,12 +1278,14 @@ def handler_for(workspace):
                 if self.path == root + "bulk-review-disposition":
                     from .review_dispositions import update_dispositions
                     form = {key: value[0] for key, value in values.items()}
+                    from .review_dispositions import review_return_filters
+                    return_filters = review_return_filters(form.pop("return_category", ""), form.pop("return_state", ""))
                     if set(form) != {"snapshot", "keys", "state", "note", "replace_notes", "confirmed"} or form["confirmed"] != "yes" or form["replace_notes"] not in ("yes", "no"):
                         raise ValueError("Invalid bulk review form")
                     update_dispositions(workspace, form["snapshot"], json.loads(form["keys"]), form["state"],
                                         form["note"], replace_notes=form["replace_notes"] == "yes")
                     self.send_response(303)
-                    self.send_header("Location", root + "assessment?" + urlencode({"snapshot": form["snapshot"]}))
+                    self.send_header("Location", root + "assessment?" + urlencode({"snapshot": form["snapshot"], **return_filters}))
                     self.send_header("Cache-Control", "no-store")
                     self.send_header("Content-Length", "0")
                     self.end_headers()
@@ -1291,11 +1293,13 @@ def handler_for(workspace):
                 if self.path == root + "review-disposition":
                     from .review_dispositions import update_disposition
                     form = {key: value[0] for key, value in values.items()}
+                    from .review_dispositions import review_return_filters
+                    return_filters = review_return_filters(form.pop("return_category", ""), form.pop("return_state", ""))
                     if set(form) != {"snapshot", "key", "state", "note"}:
                         raise ValueError("Invalid review form")
                     update_disposition(workspace, **form)
                     self.send_response(303)
-                    self.send_header("Location", root + "assessment?" + urlencode({"snapshot": form["snapshot"]}))
+                    self.send_header("Location", root + "assessment?" + urlencode({"snapshot": form["snapshot"], **return_filters}))
                     self.send_header("Cache-Control", "no-store")
                     self.send_header("Content-Length", "0")
                     self.end_headers()
