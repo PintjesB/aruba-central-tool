@@ -1671,6 +1671,50 @@ class Tests(unittest.TestCase):
                 "http_get_retries": 15, "http_get_5xx": 21,
                 "custom_500_retry_sequences_suppressed": 1})
 
+    def test_ordered_parallel_bounded_submission_and_order(self):
+        from central_tool import ordered_parallel
+        from unittest.mock import patch
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event, Thread
+        release = Event()
+        submitted = []
+        result = []
+        class RecordingExecutor(ThreadPoolExecutor):
+            def submit(self, fn, *args, **kwargs):
+                submitted.append(args[0])
+                if len(submitted) == 4:
+                    release.set()
+                return super().submit(fn, *args, **kwargs)
+        def collect(value):
+            if not release.wait(5):
+                raise RuntimeError("scheduler failed to replenish")
+            return value * 2
+        progress = []
+        with patch("central_tool.ThreadPoolExecutor", RecordingExecutor):
+            result = ordered_parallel(range(100), collect, workers=2,
+                                      completed=lambda done, total: progress.append((done, total)))
+        self.assertEqual(result, [i * 2 for i in range(100)])
+        self.assertEqual(progress, [(i, 100) for i in range(1, 101)])
+        self.assertEqual(submitted, list(range(100)))
+
+    def test_ordered_parallel_does_not_admit_entire_queue_on_failure(self):
+        from central_tool import ordered_parallel
+        from unittest.mock import patch
+        from concurrent.futures import ThreadPoolExecutor
+        submitted = []
+        class RecordingExecutor(ThreadPoolExecutor):
+            def submit(self, fn, *args, **kwargs):
+                submitted.append(args[0])
+                return super().submit(fn, *args, **kwargs)
+        def collect(value):
+            if value == 0:
+                raise ValueError("fatal")
+            return value
+        with patch("central_tool.ThreadPoolExecutor", RecordingExecutor):
+            with self.assertRaisesRegex(ValueError, "fatal"):
+                ordered_parallel(range(10000), collect, workers=2)
+        self.assertLessEqual(len(submitted), 4)
+
     def test_concurrent_token_refresh_is_single_flight(self):
         import time
         from unittest.mock import patch
