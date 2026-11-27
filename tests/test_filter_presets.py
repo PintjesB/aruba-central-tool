@@ -53,3 +53,20 @@ class SavedFilterTests(unittest.TestCase):
             self.assertEqual(html.count(">Select original snapshot</a>"), 2)
             html = filters_view(workspace, {"snapshot": name})
             self.assertEqual(html.count(">Open filter</a>"), 2)
+
+    def test_new_review_contexts_round_trip_without_losing_selectors(self):
+        from aruba_central.filter_presets import selection
+        for route, params in (
+            ("overrides", {"result": "all", "device": "3"}),
+            ("report", {"mode": "search", "q": "name", "presentation": "grouped", "group": "a" * 64}),
+            ("scopes", {"mode": "device", "persona": "ACCESS_SWITCH", "device": "3"}),
+            ("assessment", {"mode": "history", "previous": "config-audit-before.json", "confirmed": "yes"}),
+        ):
+            self.assertEqual(selection(route, params), params)
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(fixture()))
+            workspace = Workspace(directory)
+            html = workspace.overrides({"snapshot": name, "result": "all"})
+            self.assertIn('value="all" selected', html)
+            self.assertIn('value="all" selected', workspace.overrides({"snapshot": name, "result": ""}))
