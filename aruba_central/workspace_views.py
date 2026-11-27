@@ -629,7 +629,7 @@ def usage_cells(usage):
 
 
 def usage_detail(usage, *, root=None, snapshot=None, module=None):
-    from .library_usage_presentation import device_visibility
+    from .library_usage_presentation import visibility_detail_link
     return ('<h3>Observed usage</h3>'
             + table(("Measure", "Count"), [
                 tr("Distinct scope/function assignments", usage_cells(usage)[0]),
@@ -642,7 +642,7 @@ def usage_detail(usage, *, root=None, snapshot=None, module=None):
                 tr("Devices with matching settings but unverified Library source", str(len(usage["matching_other_devices"])))])
             + '<h3>Assigned at</h3>' + table(("Scope", "Device function"), [
                 tr(e(a.get("scope-name", a.get("scope-id", "Unknown"))), e(persona_label(a.get("device-function", "")))) for a in usage["assignments"]])
-            + device_visibility(usage, root=root, snapshot=snapshot, module=module)
+            + visibility_detail_link(usage, root=root, snapshot=snapshot, module=module)
             + '<h3>Configuration references</h3>' + table(("Source scope", "View", "Module", "Object", "Field", "Evidence"), [
                 tr(e(r["device"]), e(pretty(r.get("source_view", "effective"))), e(module_label(r["source_module"])), e(r["source"]), e(".".join(map(str, r.get("path", [])))),
                    badge("Conflicting observation", "warn") if r.get("collection_conflict") else e("Individual read" if r.get("source_evidence") == "individual" else "Collection")) for r in usage["references"]])
@@ -1060,6 +1060,15 @@ def library_view(workspace, query):
         from .library_usage_presentation import visibility_filter, usage_summary
         visibility = query.get("visibility", "all")
         filtered = visibility_filter(usage, visibility)
+        selected_profile = query.get("profile")
+        if selected_profile is not None:
+            if selected_profile not in usage:
+                raise ValueError("Unknown Library profile")
+            from .library_usage_presentation import device_visibility
+            body += '<section><h2>' + e(selected_profile) + ' · Device visibility</h2>'
+            body += f'<p><a href="{url(root, "library", snapshot=name, module=module, visibility=visibility)}">Back to profile collection</a></p>'
+            body += device_visibility(usage[selected_profile], root=root, snapshot=name, module=module) + '</section>'
+            return page("Library", body, workspace.nav(name))
         body += usage_summary(root, name, module, usage, visibility)
         rows = []
         for identity, profile in sorted(view["profiles"].items()):
