@@ -77,16 +77,17 @@ class Central:
         self._rate_lock = threading.Lock()
         self._retry_at = 0.0
         self._next_request_at = 0.0
+        self._request_interval = 1 / 9
 
     def _wait_rate_limit(self):
         # HPE documents 10 requests/s per account across all credentials.
-        # Pace this client at 8/s, leaving limited headroom for other consumers.
+        # Pace at 9/s, backing off to 8/s if the shared account returns 429.
         while True:
             with self._rate_lock:
                 now = time.monotonic()
                 delay = max(self._retry_at, self._next_request_at) - now
                 if delay <= 0:
-                    self._next_request_at = now + 0.125
+                    self._next_request_at = now + self._request_interval
                     return
             time.sleep(delay)
 
@@ -108,6 +109,7 @@ class Central:
                     if exc.code == 429:
                         with self._rate_lock:
                             self._retry_at = max(self._retry_at, time.monotonic() + seconds)
+                            self._request_interval = max(self._request_interval, 1 / 8)
                     else:
                         time.sleep(seconds)
                     continue
@@ -2019,7 +2021,7 @@ def read_raw_profile_collection(client, module, params, *, paginate_uncounted=Fa
     return incomplete("page_limit_reached")
 
 
-def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, workers=1, progress=None, *, scopes_by_persona=None, deep_catalog=False, checkpoint=None):
+def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, workers=1, progress=None, *, scopes_by_persona=None, deep_catalog=False, checkpoint=None, structured_results=None, structured_library=None):
     """Inspect observed source scopes for modules without an explicit adapter.
 
     These are raw read-only diagnostics, not qualified local/effective views.
@@ -2076,7 +2078,30 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
         print(f"Deep catalog survey: up to {planned} additional unfiltered scope reads before pagination; "
               "rejected and incomplete reads remain visible.", flush=True)
 
+    # These requests are identical to the earlier structured collection GETs.
+    # Reuse only the original successful raw response (and its page evidence),
+    # never a failed request, a differently filtered view or another scope.
+    exact_reads = {}
+    for persona, entry in (structured_results or {}).items():
+        for module, data in entry["modules"].items():
+            for scope in data["scope_results"]:
+                params = {"view-type": "LOCAL", "scope-id": str(scope["scope"]), "device-function": persona,
+                          "effective": "true", "detailed": "true"}
+                exact_reads[(module, canonical(params))] = scope["effective_view"]
+    for module, view in (structured_library or {}).get("modules", {}).items():
+        if module != "auth-profiles":
+            exact_reads[(module, canonical({"view-type": "LIBRARY", "detailed": "true"}))] = view
+
     def capture(module, params):
+        previous = exact_reads.get((module, canonical(params)))
+        if previous is not None and "raw" in previous and previous.get("status") in ("list_parsed", "empty_object"):
+            raw = previous["raw"]
+            count_verified = previous.get("count_confirmed") is True
+            partial = previous.get("pagination_status") not in (None, "complete", "pagination_exhausted")
+            return {"status": "partial_response" if partial else "response_received" if raw else "empty_response",
+                    "raw": raw, "collection_count_verified": count_verified,
+                    **{key: previous[key] for key in ("raw_pages", "initial_raw", "pagination_status", "http_error") if key in previous},
+                    "reused_exact_collection": True}
         try:
             read = lambda: read_raw_profile_collection(client, module, params, paginate_uncounted=deep_catalog)
             return checkpoint.observe("raw_catalog", [module, params], read, lambda v: v.get("collection_count_verified") is True) if checkpoint else read()
@@ -2535,7 +2560,8 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
                 and scope_kind == "device" and isinstance(profile, dict)
                 and isinstance(annotation, dict)
                 and (annotation.get("aruba-annotation:inherited") is True
-                     or annotation.get("aruba-annotation:object_type") == "SHARED")):
+                     or annotation.get("aruba-annotation:object_type") == "SHARED"
+                     or annotation.get("aruba-annotation:is_default") is True)):
             groups[(persona, module, identity, canonical(profile_body(profile)),
                     canonical(annotation))].append(task)
         else:
@@ -3474,7 +3500,8 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     print("Reading tenant Library and assignments", flush=True)
     library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress, checkpoint=checkpoint, paginate_uncounted=deep_catalog)
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress,
-                                           scopes_by_persona=scopes_by_persona, deep_catalog=deep_catalog, checkpoint=checkpoint)
+                                           scopes_by_persona=scopes_by_persona, deep_catalog=deep_catalog, checkpoint=checkpoint,
+                                           structured_results=results, structured_library=library)
     from nac_authorization import capture_nac_configuration
     nac_configuration = capture_nac_configuration(client, progress, checkpoint=checkpoint)
     from nac_review import read_mac_registrations
