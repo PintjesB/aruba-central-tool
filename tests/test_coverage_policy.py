@@ -18,3 +18,15 @@ class CoveragePolicyTests(unittest.TestCase):
         self.assertIn("user principal", operation_handling(ALPHA + "/cnac-certificate"))
         self.assertIn("Excluded", operation_handling(ALPHA + "/cnac-visitor/export"))
         self.assertIn("Path selector required", operation_handling(ALPHA + "/roles/:name"))
+
+    def test_keyed_gap_reasons_do_not_infer_absence(self):
+        from aruba_central.coverage_policy import gap_handling, keyed_gap_context
+        row = {"path": ALPHA + "/roles/:name", "attempted": 0}
+        self.assertIn("not recorded", gap_handling(row, keyed_gap_context({})))
+        bundle = {"keyed_profile_details": {"supported_modules": ["roles"], "candidate_reads_by_module": {}}}
+        self.assertIn("absence not established", gap_handling(row, keyed_gap_context(bundle)))
+        bundle["keyed_profile_details"]["candidate_reads_by_module"]["roles"] = 3
+        self.assertIn("3 individual candidates", gap_handling(row, keyed_gap_context(bundle)))
+        self.assertNotIn("3 individual candidates", gap_handling({**row, "attempted": 1}, keyed_gap_context(bundle)))
+        from aruba_central.filter_presets import selection
+        self.assertEqual(selection("assessment", {"mode": "keyed", "module": "roles"}), {"mode": "keyed", "module": "roles"})
