@@ -1202,7 +1202,7 @@ def handler_for(workspace):
             # form pages or privacy settings may send an opaque/null Origin;
             # permit that only with same-origin fetch metadata and a CSRF token.
             origin_ok = origin == expected or (origin in (None, "null") and fetch_site == "same-origin")
-            if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials", root + "save-standard", root + "approve-exception", root + "revoke-exception", root + "review-disposition", root + "save-filter", root + "delete-filter")
+            if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials", root + "save-standard", root + "approve-exception", root + "revoke-exception", root + "review-disposition", root + "bulk-review-disposition", root + "save-filter", root + "delete-filter")
                     or not origin_ok or fetch_site not in (None, "same-origin")):
                 self.reply("Forbidden: local session or origin check failed. Reopen the application.", 403)
                 return
@@ -1235,6 +1235,19 @@ def handler_for(workspace):
                         delete_preset(workspace.directory, form["id"])
                     self.send_response(303)
                     self.send_header("Location", root + "filters?" + urlencode({"snapshot": form["snapshot"]}))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                if self.path == root + "bulk-review-disposition":
+                    from .review_dispositions import update_dispositions
+                    form = {key: value[0] for key, value in values.items()}
+                    if set(form) != {"snapshot", "keys", "state", "note", "replace_notes", "confirmed"} or form["confirmed"] != "yes" or form["replace_notes"] not in ("yes", "no"):
+                        raise ValueError("Invalid bulk review form")
+                    update_dispositions(workspace, form["snapshot"], json.loads(form["keys"]), form["state"],
+                                        form["note"], replace_notes=form["replace_notes"] == "yes")
+                    self.send_response(303)
+                    self.send_header("Location", root + "assessment?" + urlencode({"snapshot": form["snapshot"]}))
                     self.send_header("Cache-Control", "no-store")
                     self.send_header("Content-Length", "0")
                     self.end_headers()
