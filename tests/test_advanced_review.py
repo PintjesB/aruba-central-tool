@@ -253,3 +253,22 @@ class AdvancedTests(unittest.TestCase):
         self.assertIn(("net-services", "dns-service",
                        ("security-policy", "policy-rule", 0, "condition", "services", "net-service")), refs)
         self.assertFalse(list(explicit_references(body, module="unqualified")))
+
+
+    def test_network_group_exclusion_counts_as_library_usage(self):
+        from advanced_review import explicit_references, library_usage
+        body = {"name": "parent", "exclude": "child", "items": [{"exclude": "unrelated"}]}
+        self.assertEqual(list(explicit_references(body, module="net-groups")),
+                         [("net-groups", "child", ("exclude",))])
+        self.assertFalse(list(explicit_references(body, module="unqualified")))
+        self.assertEqual(list(explicit_references({"exclude": {}}, module="net-groups")),
+                         [("net-groups", None, ("exclude",))])
+        profiles = {"parent": body, "child": {"name": "child", "invert": False}}
+        bundle = {"results": {}, "library": {"modules": {
+            "net-groups": {"status": "list_parsed", "profiles": profiles}}}}
+        refs = advanced_analysis(bundle)["references"]
+        usage = library_usage(bundle, "net-groups", ["child"], refs)["child"]
+        self.assertEqual(usage["reference_count"], 1)
+        self.assertEqual(usage["definition_reference_count"], 1)
+        self.assertEqual(usage["reference_devices"], 0)
+        self.assertFalse(usage["coverage_complete"])
