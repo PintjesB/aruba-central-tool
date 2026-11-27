@@ -256,6 +256,8 @@ def advisor_view(workspace, query):
     if empty:
         return empty
     root, name, bundle, picker = loaded
+    from .review_dispositions import snapshot_binding
+    binding = snapshot_binding(workspace, name, bundle)
     from .bulk_review import source_recipient_evidence, source_recipient_index
     findings = [dict(f) for f in workspace.consolidation_snapshot(bundle)]
     if query.get("group"):
@@ -395,7 +397,7 @@ def advisor_view(workspace, query):
               '<div id="preview"></div><button id="export-plan" type="button" class="primary" disabled>Export private preview JSON</button>'
               '</div></dialog>')
     return page("Consolidation advisor", intro("Consolidation", "Choose a task, inspect the evidence, and prepare a change preview.", picker)
-                + '<section><div id="snapshot-label" hidden data-snapshot="' + e(name) + '"></div>'
+                + '<section><div id="snapshot-label" hidden data-snapshot="' + e(name) + '" data-binding="' + e(binding) + '"></div>'
                 + filters + '<div class="table-toolbar"><span id="visible-count" class="muted" aria-live="polite"></span>'
                 '<div><button id="advisor-prev" type="button">Previous</button> <span id="advisor-page" class="muted"></span> '
                 '<button id="advisor-next" type="button">Next</button></div></div>'
@@ -636,7 +638,10 @@ $('open-preview').addEventListener('click',()=>{preview();$('plan-dialog').showM
 $('close-preview').addEventListener('click',()=>$('plan-dialog').close());
 $('export-plan').addEventListener('click',()=>{
  const chosen=selection();if($('export-plan').disabled)return;
- const content=JSON.stringify({schema:1,kind:'consolidation_preview',safe_to_apply:false,snapshot:$('snapshot-label').dataset.snapshot,bulk_review:bulkReview(chosen),recommendations:chosen},null,2);
+ const snapshot=$('snapshot-label').dataset;
+ const selection_manifest={schema:1,kind:'consolidation_selection',snapshot:snapshot.snapshot,snapshot_binding:snapshot.binding,
+  selections:chosen.map(f=>({id:f.id,destination:f.action==='promote_local'?(f.selected_destination.kind==='library'?'library':f.selected_destination.scope):null}))};
+ const content=JSON.stringify({schema:1,kind:'consolidation_preview',safe_to_apply:false,snapshot:snapshot.snapshot,selection_manifest,bulk_review:bulkReview(chosen),recommendations:chosen},null,2);
  const u=URL.createObjectURL(new Blob([content],{type:'application/json'})),a=document.createElement('a');a.href=u;a.download='consolidation-preview.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);
 });
 filter();selection();
