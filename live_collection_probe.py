@@ -302,13 +302,113 @@ def specialized_probe(client, previous):
             "complete": False, "safe_to_apply": False}
 
 
+PERFORMANCE_MODULES = ("net-services", "role-gpids", "aaa-profile", "device-persona-mapping",
+                       "ethernet-interfaces", "dns")
+
+
+def performance_probe(client, previous, sample=1):
+    """Bounded read-only selector and page-size experiments.
+
+    Compare exact source-annotated bodies only within current qualified scopes.
+    No inference of absence or universal applicability from a sample.
+    One initial, two explicit page-size and one typed GET per context at most.
+    """
+    from central_tool import ALPHA, canonical, documented_offset_collections
+    if type(sample) is not int or not 1 <= sample <= 4:
+        raise ValueError("Invalid sample")
+    scopes = qualified_scopes(client, previous)
+    measurements = []
+    validators_before = client.get_validator_metrics() if isinstance(client, Central) else {}
+    def fetch(module, params):
+        try:
+            raw = client.get(ALPHA + "/" + module, **params)
+        except APIError as exc:
+            if exc.status in (401, 429):
+                raise
+            return {"status": "request_rejected", "http_error": exc.status}, None, None
+        except (RuntimeError, OSError, ValueError):
+            return {"status": "read_failed"}, None, None
+        if not isinstance(raw, dict):
+            return {"status": "schema_unresolved"}, None, None
+        lists = [(k, v) for k, v in raw.items() if k != "metadata" and isinstance(v, list)]
+        meta = raw.get("metadata", {})
+        if (len(lists) != 1 or set(raw) - {"metadata", lists[0][0]}
+                or not isinstance(meta, dict) or not all(isinstance(v, dict) for v in lists[0][1])):
+            return {"status": "schema_unresolved"}, None, None
+        rows = lists[0][1]
+        counts = meta.get("count_objects_in_module", {})
+        expected = counts.get("ANY") if isinstance(counts, dict) else None
+        total = meta.get("total", expected)
+        consistent = (isinstance(counts, dict) and
+                      (expected is None or type(expected) is int and expected == total) and
+                      type(meta.get("count", len(rows))) is int and meta.get("count", len(rows)) == len(rows) and
+                      type(meta.get("offset", 0)) is int and meta.get("offset", 0) in (0, len(rows)))
+        unique = len({canonical(row) for row in rows}) == len(rows)
+        confirmed = consistent and unique and type(total) is int and total == len(rows)
+        return {"status": "response_received", "records": len(rows), "count_confirmed": confirmed,
+                "declared_total": total if type(total) is int and total >= 0 else None,
+                "advertised_limit": meta["limit"] if type(meta.get("limit")) is int and 0 <= meta["limit"] <= 100000 else None,
+                "offset": meta["offset"] if type(meta.get("offset")) is int and 0 <= meta["offset"] <= 100000 else None}, rows, lists[0][0]
+
+    for persona, entry in sorted(scopes.items()):
+        by_kind = {}
+        for scope in sorted(entry["scopes"], key=lambda s: str(s["id"])):
+            if scope["kind"] in ("global", "device"):
+                by_kind.setdefault(scope["kind"], []).append(scope)
+        for module in PERFORMANCE_MODULES:
+            if module not in documented_offset_collections():
+                continue
+            spec = CONFIG_MODULES.get(module)
+            if spec and (persona not in spec[1]):
+                continue
+            for kind, candidates in sorted(by_kind.items()):
+                if spec and spec[2] and kind != "device":
+                    continue
+                for scope in candidates[:sample]:
+                    params = {"view-type": "LOCAL", "scope-id": str(scope["id"]),
+                              "effective": "true", "detailed": "true"}
+                    raw_summary, raw_rows, envelope = fetch(module, params)
+                    typed_summary, typed_rows, typed_envelope = fetch(module, {**params, "device-function": persona})
+                    comparison = "unqualified"
+                    if (raw_summary.get("count_confirmed") and typed_summary.get("count_confirmed")
+                            and envelope == typed_envelope):
+                        def function(row):
+                            annotation = row.get("@")
+                            return annotation.get("aruba-annotation:device_function") if isinstance(annotation, dict) else None
+                        if all(function(row) in NETWORK_PERSONAS for row in raw_rows) and all(
+                                function(row) == persona for row in typed_rows):
+                            expected = Counter(canonical(row) for row in raw_rows if function(row) == persona)
+                            comparison = "exact_projection" if expected == Counter(map(canonical, typed_rows)) else "different"
+                    pages = []
+                    for limit in (100, 500):
+                        page, page_rows, page_envelope = fetch(module, {**params, "limit": limit, "offset": 0})
+                        prefix = None
+                        if raw_rows is not None and page_rows is not None and envelope == page_envelope:
+                            overlap = min(len(raw_rows), len(page_rows))
+                            prefix = overlap > 0 and [canonical(r) for r in raw_rows[:overlap]] == [canonical(r) for r in page_rows[:overlap]]
+                        pages.append({"requested_limit": limit, **page, "matching_initial_prefix": prefix})
+                    measurements.append({"module": module, "persona": persona, "scope_kind": kind,
+                                         "unfiltered": raw_summary, "typed": typed_summary,
+                                         "projection": comparison, "pages": pages})
+    validators_after = client.get_validator_metrics() if isinstance(client, Central) else {}
+    return {"schema": 1, "kind": "anonymous_performance_probe", "sample_limit": sample,
+            "contexts": measurements, "http_config_validators": {
+                key: validators_after.get(key, 0) - validators_before.get(key, 0)
+                for kind in ("collection", "keyed")
+                for field in ("responses", "strong_etag", "weak_etag", "last_modified")
+                for key in (kind + "_" + field,)},
+            "complete": False, "safe_to_apply": False}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--snapshot")
     parser.add_argument("--module", choices=PROBE_MODULES, action="append")
     parser.add_argument("--sample", type=int, choices=range(1, 5), default=2)
-    parser.add_argument("--specialized", action="store_true", help="Bounded probe of management-server, custom-get-api, failed hierarchy scopes, assignment identities and portal assets")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--specialized", action="store_true", help="Bounded probe of management-server, custom-get-api, failed hierarchy scopes, assignment identities and portal assets")
+    modes.add_argument("--performance", action="store_true", help="Bounded selector and page-size qualification")
     args = parser.parse_args()
     from config_app import audit_files, read_audit
     try:
@@ -323,7 +423,12 @@ def main():
             client_id = client_id or getpass.getpass("Central client ID: ")
             secret = secret or getpass.getpass("Central client secret: ")
         client = Central(previous["region"], token, client_id, secret)
-        report = specialized_probe(client, previous) if args.specialized else probe(client, previous, args.module or ["ethernet-interfaces", "snmp", "net-groups"], args.sample)
+        if args.performance:
+            report = performance_probe(client, previous, args.sample)
+        elif args.specialized:
+            report = specialized_probe(client, previous)
+        else:
+            report = probe(client, previous, args.module or ["ethernet-interfaces", "snmp", "net-groups"], args.sample)
         print(json.dumps(report, indent=2, sort_keys=True))
     except APIError as exc:
         parser.exit(1, f"Probe stopped: Central HTTP {exc.status}.\n")
