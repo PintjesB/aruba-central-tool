@@ -27,3 +27,18 @@ class OptimizationHistoryTests(unittest.TestCase):
         after["inventory"] = [{"inventory": {"serial": "Other"}}]
         with self.assertRaises(ValueError):
             compare_workload(refresh_configuration_review(before), refresh_configuration_review(after))
+
+    def test_cached_current_workload_preserves_comparison(self):
+        from unittest.mock import patch
+        from aruba_central.consolidation import profile_recommendations
+        from aruba_central.advanced_review import advanced_analysis
+        before = refresh_configuration_review(snapshot())
+        after = refresh_configuration_review(snapshot("Changed"))
+        expected = compare_workload(before, after)
+        findings = profile_recommendations(after)
+        engineering = advanced_analysis(after)
+        with patch("aruba_central.optimization_history.profile_recommendations", wraps=profile_recommendations) as recommendations, patch("aruba_central.optimization_history.advanced_analysis", wraps=advanced_analysis) as analysis:
+            actual = compare_workload(before, after, current_findings=findings, current_engineering=engineering)
+            self.assertEqual(actual, expected)
+            recommendations.assert_called_once_with(before)
+            analysis.assert_called_once_with(before)
