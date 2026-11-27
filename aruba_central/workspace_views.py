@@ -755,8 +755,8 @@ def engineering_view(workspace, query):
         group = engineering_group_id(workflow, record)
         href = url(root, "advanced", snapshot=name, workflow=workflow, group=group)
         detail_url = url(root, "advanced", snapshot=name, workflow=workflow, group=group, detail="1", binding=binding)
-        return (f'<button type="button" class="secondary" data-inspect data-inspect-url="{e(detail_url)}">{e(action)}</button>'
-                f'<noscript><a href="{e(href)}">{e(label)}: {e(action)}</a></noscript>')
+        return (f'<button type="button" class="secondary" data-inspect data-inspect-url="{detail_url}">{e(action)}</button>'
+                f'<noscript><a href="{href}">{e(label)}: {e(action)}</a></noscript>')
     panels = []
     def panel(key, label, hint, headers, rows, count):
         content = (f'<section data-panel="{key}" data-group="engineering"><p class="filter-hint">{e(hint)}</p>'
@@ -787,9 +787,9 @@ def engineering_view(workspace, query):
             if selected_group:
                 visibility = []
                 for match in matches:
-                    counts = Counter(v["status"] for v in match["visibility"])
+                    visibility_counts = Counter(v["status"] for v in match["visibility"])
                     visibility.append(tr(e(match["identity"]), *usage_cells(match_usage[match["identity"]]),
-                                         e(f'{counts["matching"]}/{len(devices)} matching; {counts["unknown"]} unknown')))
+                                         e(f'{visibility_counts["matching"]}/{len(devices)} matching; {visibility_counts["unknown"]} unknown')))
                 mapping = table(("Device", "Port", "Description", "Proposed profile"), [
                     tr(e(p["device"]), e(p["port"]), e(p.get("description") or "—"),
                        '<span data-port-target>' + e(preferred or "Not selected") + '</span>') for p in ports], search=len(ports) > 30)
