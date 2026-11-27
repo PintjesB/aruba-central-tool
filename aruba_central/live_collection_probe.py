@@ -567,7 +567,7 @@ def audit_detail_samples(client, combined):
 def change_window_probe(client, previous, *, now=None):
     """Check a fixed seven-day interval using overlapping daily windows.
 
-    Nine list requests and up to six individual audit reads, excluding workspace continuity and retries.
+    Nine list requests for ordinary windows; at most 107 list requests for busy windows, plus six details.
     No offset-based page traversal. Only anonymous counters leave this function.
     Even exact reconciliation cannot establish coverage of all config changes.
     """
@@ -580,71 +580,10 @@ def change_window_probe(client, previous, *, now=None):
     def stamp(value):
         return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
+    from .audit_windows import read_audit_window, collect_audit_window
+
     def fetch(lo, hi):
-        try:
-            raw = client.get(AUDIT_LOG_PATH, **{"start-at": stamp(lo), "end-at": stamp(hi),
-                                               "limit": 1000, "offset": 1})
-        except APIError as exc:
-            if exc.status in (401, 429):
-                raise
-            return {"status": "request_rejected", "http_error": exc.status}, {}
-        except (RuntimeError, OSError, ValueError):
-            return {"status": "read_failed"}, {}
-        if not isinstance(raw, dict) or not isinstance(raw.get("items"), list):
-            return {"status": "schema_unresolved"}, {}
-        rows = raw["items"]
-        total = raw.get("total")
-        count = raw.get("count")
-        offset = raw.get("offset")
-        # The API may echo the requested page size as count, even for a
-        # short page. Never use count as evidence of the number of events.
-        # A complete window still requires total == actual unique rows and
-        # independent reconciliation with a stable broader read.
-        count_kind = ("returned_records" if type(count) is int and count == len(rows)
-                      else "requested_limit" if type(count) is int and count == 1000
-                      else "unqualified")
-        metadata_ok = (type(total) is int and total >= len(rows)
-                       and count_kind != "unqualified"
-                       and type(offset) is int and offset == 1
-                       and len(rows) <= 1000)
-        observed, invalid, duplicates, outside, conflicts, impact = {}, 0, 0, 0, 0, 0
-        for row in rows:
-            if not isinstance(row, dict):
-                invalid += 1
-                continue
-            event_id, when = row.get("id"), row.get("occurredOn")
-            if type(event_id) not in (str, int) or not str(event_id).strip() or not isinstance(when, str):
-                invalid += 1
-                continue
-            try:
-                instant = datetime.fromisoformat(when.replace("Z", "+00:00"))
-                if instant.tzinfo is None:
-                    raise ValueError("timestamp has no timezone")
-                if not lo <= instant <= hi:
-                    outside += 1
-            except (ValueError, OverflowError):
-                invalid += 1
-                continue
-            details = row.get("logDetails")
-            if isinstance(details, dict) and details.get("impactRadius"):
-                impact += 1
-            key = str(event_id)
-            signature = canonical(row)
-            if key in observed:
-                duplicates += 1
-                conflicts += observed[key] != signature
-            observed[key] = signature
-        qualified = metadata_ok and not (invalid or duplicates or outside or conflicts)
-        return {"status": "response_received", "records": len(rows),
-                "declared_total": total if type(total) is int and total >= 0 else None,
-                "metadata_consistent": metadata_ok, "count_interpretation": count_kind,
-                "reported_count": count if type(count) is int and 0 <= count <= 1000 else None,
-                "reported_offset": offset if type(offset) is int and 0 <= offset <= 1000 else None,
-                "invalid_records": invalid,
-                "duplicate_ids": duplicates, "conflicting_ids": conflicts,
-                "outside_window": outside, "impact_radius_present": impact,
-                "complete_window": bool(qualified and total == len(rows)),
-                "valid_page": bool(qualified)}, observed
+        return read_audit_window(client, lo, hi)
 
     broad, initial = fetch(start, end)
     windows, combined = [], {}
@@ -654,7 +593,7 @@ def change_window_probe(client, previous, *, now=None):
         if day:
             lo -= timedelta(seconds=1)
         hi = start + timedelta(days=day + 1)
-        summary, events = fetch(lo, hi)
+        summary, events = collect_audit_window(client, lo, hi, max_requests=15)
         windows.append({"window_index": day + 1, **summary})
         for key, signature in events.items():
             if key in combined:
