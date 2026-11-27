@@ -61,9 +61,9 @@ def evidence_id(record):
     return hashlib.sha256(canonical([selector, record["body"]]).encode()).hexdigest()
 
 
-def search_configuration(bundle, query, *, module="", persona="", limit=300):
+def search_configuration(bundle, query, *, module="", persona="", limit=300, offset=0):
     terms = query.casefold().split()
-    if not terms or len(query) > 200 or not 1 <= limit <= 1000:
+    if not terms or len(query) > 200 or not 1 <= limit <= 1000 or type(offset) is not int or offset < 0:
         raise ValueError("Invalid search")
     rows, total, scanned = [], 0, 0
     for record in configuration_sources(bundle):
@@ -77,11 +77,11 @@ def search_configuration(bundle, query, *, module="", persona="", limit=300):
             if not all(term in haystack for term in terms):
                 continue
             total += 1
-            if len(rows) < limit:
+            if offset < total <= offset + limit:
                 if source_id is None:
                     source_id = evidence_id(record)
                 rows.append({**{k: v for k, v in record.items() if k != "body"}, "path": list(path), "value": value, "evidence_id": source_id})
-    return {"matches": rows, "total": total, "sources_searched": scanned, "truncated": total > len(rows), "complete": False}
+    return {"matches": rows, "total": total, "sources_searched": scanned, "truncated": total > offset + len(rows), "complete": False}
 
 
 def search_view(workspace, query):
@@ -105,7 +105,11 @@ def search_view(workspace, query):
              + '<button type="submit">Search configuration</button></form>'
              '<p class="note">Search is local and includes parsed structured profiles, unparsed structured responses, supplemental raw responses and directly observed individual profiles. Sampled markers, operational telemetry and uncaptured configuration are not searched. Repeated observations may appear independently.</p></section>')
     if text.strip():
-        result = search_configuration(bundle, text, module=module, persona=persona)
+        try:
+            offset = int(query.get("offset", "0"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid search offset") from exc
+        result = search_configuration(bundle, text, module=module, persona=persona, offset=offset)
         rows = []
         for row in result["matches"]:
             link = url(root, "report", snapshot=name, mode="evidence", persona=row["persona"],
@@ -113,9 +117,17 @@ def search_view(workspace, query):
             rows.append(tr(e(row["name"] or "Library"), e(row["persona"]), e(row["module"]), e(row["identity"] or "Raw response"),
                            e(row["view"]), e(".".join(row["path"]) or "(root)"), setting_value(row["value"]),
                            badge(row["source"].replace("_", " ")), f'<a href="{link}">Inspect source</a>'))
-        body += f'<section><h2>{result["total"]} matching fields</h2><p>{result["sources_searched"]} captured sources searched. Showing {len(rows)} results.</p>'
+        first = offset + 1 if rows else 0
+        last = offset + len(rows) if rows else 0
+        body += f'<section><h2>{result["total"]} matching fields</h2><p>{result["sources_searched"]} captured sources searched. Showing {first}–{last}.</p>'
+        params = {"snapshot": name, "mode": "search", "q": text, "module": module, "persona": persona}
+        if offset:
+            body += f'<a class="button" href="{url(root, "report", **params, offset=max(0, offset - 300))}">Previous result batch</a> '
         if result["truncated"]:
-            body += '<p class="note">Result limit reached; narrow the search to a module, function or more specific terms.</p>'
+            body += f'<a class="button" href="{url(root, "report", **params, offset=offset + 300)}">Next result batch</a>'
+        if offset >= result["total"] and offset:
+            body += f'<p><a href="{url(root, "report", **params)}">Return to first result batch</a></p>'
+        body += '<p class="note">Search results are shown in batches of up to 300. Table filters and CSV export apply to the loaded batch only.</p>'
         body += table(("Scope", "Function", "Module", "Profile", "View", "Field path", "Captured value", "Evidence", ""), rows, search=True) + '</section>'
     return page("Configuration explorer", body, workspace.nav(name))
 
