@@ -1180,6 +1180,15 @@ def coverage_view(workspace, query):
                      ("Qualified modules", f"{counts['qualified']}/{len(records)}", "All requested scopes interpretable"),
                      ("Observed types without adapter", len(unknown), "Raw evidence only"),
                      ("Distinct Library collections", len(set(library.get("modules", {})) | set(additional)), "Structured and supplemental evidence deduplicated")])
+    transport = bundle.get("http_get_transport")
+    if isinstance(transport, dict):
+        body += '<section><h2>Collection request performance</h2>' + metrics([
+            ("HTTP GET attempts", transport.get("http_get_attempts", "Unavailable"), "Includes retries"),
+            ("HTTP GET retries", transport.get("http_get_retries", "Unavailable"), "Additional transport attempts"),
+            ("Rate-limit responses", transport.get("http_get_429", "Unavailable"), "HTTP 429"),
+            ("Server error responses", transport.get("http_get_5xx", "Unavailable"), "HTTP 5xx"),
+            ("Repeated retry sequences avoided", transport.get("custom_500_retry_sequences_suppressed", "Unavailable"), "Custom GET API only"),
+        ]) + '<p class="note">Counts cover GET attempts during this audit, including failed attempts. Authentication and troubleshooting POST requests are excluded. A resumed audit counts only this run, not earlier checkpoint requests.</p></section>'
     gaps = collection_gap_rows(bundle)
     body += '<section><h2>Collection gaps requiring review</h2><p>Failed requests, incomplete counts and unverified empty responses are not evidence of absent configuration. Counts below represent observations, not missing profiles. Reused identical responses are not counted twice.</p>'
     gap_rows = []
