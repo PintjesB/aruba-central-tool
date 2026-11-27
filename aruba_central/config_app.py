@@ -1199,7 +1199,7 @@ def handler_for(workspace):
             # form pages or privacy settings may send an opaque/null Origin;
             # permit that only with same-origin fetch metadata and a CSRF token.
             origin_ok = origin == expected or (origin in (None, "null") and fetch_site == "same-origin")
-            if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials", root + "save-standard", root + "approve-exception", root + "revoke-exception")
+            if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials", root + "save-standard", root + "approve-exception", root + "revoke-exception", root + "review-disposition")
                     or not origin_ok or fetch_site not in (None, "same-origin")):
                 self.reply("Forbidden: local session or origin check failed. Reopen the application.", 403)
                 return
@@ -1217,6 +1217,18 @@ def handler_for(workspace):
                 token = values.pop("csrf", [""])[0]
                 if not secrets.compare_digest(token.encode("utf-8"), workspace.csrf.encode("utf-8")):
                     self.reply("Forbidden: stale or invalid form token. Reopen the application.", 403)
+                    return
+                if self.path == root + "review-disposition":
+                    from .review_dispositions import update_disposition
+                    form = {key: value[0] for key, value in values.items()}
+                    if set(form) != {"snapshot", "key", "state", "note"}:
+                        raise ValueError("Invalid review form")
+                    update_disposition(workspace, **form)
+                    self.send_response(303)
+                    self.send_header("Location", root + "assessment?" + urlencode({"snapshot": form["snapshot"]}))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
                     return
                 if self.path in (root + "save-standard", root + "approve-exception", root + "revoke-exception"):
                     from .local_standards import create_standard, approve_exception, revoke_exception
