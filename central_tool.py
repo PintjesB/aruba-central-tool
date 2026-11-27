@@ -2455,12 +2455,17 @@ def observed_profile_candidates(view, identity):
     Never qualify counts, choose between contradictory bodies or modify the
     collection's parsed status. These candidates are for inspection/GET only.
     """
-    if view.get("status") == "list_parsed":
+    parsed = view.get("status") == "list_parsed"
+    incomplete_pages = view.get("pagination_status") not in (None, "complete", "pagination_exhausted")
+    if parsed and not incomplete_pages:
         return view.get("profiles", {})
-    if view.get("status") not in ("response_received", "partial_response", "count_mismatch",
+    if view.get("status") not in ("list_parsed", "response_received", "partial_response", "count_mismatch",
                                   "identity_unresolved", "schema_unresolved"):
         return {}
-    observations = {}
+    # A parseable first page is not the same as an exhausted collection.
+    # Keep its qualified identities and additional positive rows, while
+    # excluding contradictions from follow-up requests and partial displays.
+    observations = dict(view.get("profiles", {})) if parsed else {}
     conflicts = set()
     for raw in [view.get("raw"), *view.get("raw_pages", [])]:
         if not isinstance(raw, dict):
