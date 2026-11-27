@@ -214,7 +214,8 @@ def specialized_probe(client, previous):
     never returns private selectors, field values, error text or credentials.
     """
     from central_tool import read_raw_profile_collection
-    from scope_evidence import hierarchy_capture, keyed_assignment_capture, assignment_identity, valid_assignment_selector
+    from scope_evidence import (hierarchy_capture, keyed_assignment_capture, assignment_identity,
+                                assignment_selector_rejection, legacy_assignment_status)
     from nac_assets import capture_portal_assets
     scopes = qualified_scopes(client, previous)
     selected = {}
@@ -270,10 +271,13 @@ def specialized_probe(client, previous):
     rows = ((previous.get("library") or {}).get("assignments") or {}).get("rows", [])
     sampled, used = [], Counter()
     unique = set()
+    rejected = Counter()
     for row in rows:
-        identity = assignment_identity(row)
-        if not valid_assignment_selector(identity):
+        reason = assignment_selector_rejection(row)
+        if reason:
+            rejected[reason] += 1
             continue
+        identity = assignment_identity(row)
         sid, persona, _, _ = identity
         if (persona, sid) not in live_pairs or used[persona] >= 2 or identity in unique:
             continue
@@ -281,10 +285,18 @@ def specialized_probe(client, previous):
         used[persona] += 1
         sampled.append(row)
     assignments = keyed_assignment_capture(client, {"rows": sampled})
+    retained = Counter()
+    for record in (previous.get("keyed_assignment_details") or {}).get("records", []):
+        identity = assignment_identity(record.get("selector"))
+        raw = record.get("raw")
+        if identity and isinstance(raw, dict) and "persona" in raw and "resource" in raw:
+            retained[legacy_assignment_status(raw, identity)] += 1
     assets = capture_portal_assets(client, detail_limit=2)
     return {"schema": 1, "kind": "anonymous_specialized_live_probe",
             "collections": collections, "hierarchy": hierarchy_rows,
-            "assignments": {"sampled": len(sampled), "outcomes": assignments["outcomes"]},
+            "assignments": {"sampled": len(sampled), "outcomes": assignments["outcomes"],
+                            "retained_legacy_identity_matches": dict(retained),
+                            "selector_rejection_reasons": dict(rejected)},
             "portal_assets": {"status": assets.get("status"), "count_confirmed": assets["count_confirmed"],
                               "images": len(assets["images"]), "outcomes": assets.get("outcomes", {})},
             "complete": False, "safe_to_apply": False}
