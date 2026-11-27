@@ -628,7 +628,8 @@ def usage_cells(usage):
             str(len(usage["unknown_devices"])))
 
 
-def usage_detail(usage):
+def usage_detail(usage, *, root=None, snapshot=None, module=None):
+    from .library_usage_presentation import device_visibility
     return ('<h3>Observed usage</h3>'
             + table(("Measure", "Count"), [
                 tr("Distinct scope/function assignments", usage_cells(usage)[0]),
@@ -641,7 +642,7 @@ def usage_detail(usage):
                 tr("Devices with matching settings but unverified Library source", str(len(usage["matching_other_devices"])))])
             + '<h3>Assigned at</h3>' + table(("Scope", "Device function"), [
                 tr(e(a.get("scope-name", a.get("scope-id", "Unknown"))), e(persona_label(a.get("device-function", "")))) for a in usage["assignments"]])
-            + '<h3>Devices with matching shared configuration</h3>' + list_items([d["name"] for d in usage["shared_devices"]])
+            + device_visibility(usage, root=root, snapshot=snapshot, module=module)
             + '<h3>Configuration references</h3>' + table(("Source scope", "View", "Module", "Object", "Field", "Evidence"), [
                 tr(e(r["device"]), e(pretty(r.get("source_view", "effective"))), e(module_label(r["source_module"])), e(r["source"]), e(".".join(map(str, r.get("path", [])))),
                    badge("Conflicting observation", "warn") if r.get("collection_conflict") else e("Individual read" if r.get("source_evidence") == "individual" else "Collection")) for r in usage["references"]])
@@ -882,7 +883,7 @@ def engineering_view(workspace, query):
                       + table(("Profile", "Saved referring objects", "Assignments", "All referring objects", "Shared devices", "Different body", "Unknown reads"), comparison)
                       + f'<div data-duplicate-preview data-usage="{e(json.dumps(preview_data))}" data-migration-plans="{e(json.dumps(migration_plans))}"><h3>Migration preview</h3>{choose_keep}<div data-migration-summary aria-live="polite">Choose a profile to preview the observed migration workload.</div></div>'
                       + (f'<p class="note"><strong>{unresolved} unresolved reference observations in this module.</strong> Their target identities are not established; they may affect this migration.</p>' if unresolved else "")
-                      + "".join(f'<details><summary>{e(identity)} · Where it is used</summary>{usage_detail(u)}</details>' for identity, u in usage.items())
+                      + "".join(f'<details><summary>{e(identity)} · Where it is used</summary>{usage_detail(u, root=root, snapshot=name, module=r["module"])}</details>' for identity, u in usage.items())
                       + '<details><summary>Validation before consolidation</summary><ol><li>Choose the canonical name based on usage and naming standards.</li><li>Move assignments and references to that name.</li><li>Verify effective configuration and complete reverse references before deleting the old profile.</li></ol></details>'
                       + raw(r))
             # One decision per duplicate group. Keep all per-profile usage counts
@@ -1056,8 +1057,14 @@ def library_view(workspace, query):
             return page("Library", body, workspace.nav(name))
         comparison = library_profile_comparison(bundle, module)
         usage = library_usage(bundle, module, view["profiles"], workspace.advanced_snapshot(bundle)["references"])
+        from .library_usage_presentation import visibility_filter, usage_summary
+        visibility = query.get("visibility", "all")
+        filtered = visibility_filter(usage, visibility)
+        body += usage_summary(root, name, module, usage, visibility)
         rows = []
         for identity, profile in sorted(view["profiles"].items()):
+            if identity not in filtered:
+                continue
             review = comparison.get(identity, {})
             matches = review.get("assignments", [])
             variants = review.get("local_variants", [])
@@ -1071,10 +1078,10 @@ def library_view(workspace, query):
             detail += f'<p><a href="{url(root, "assignments", snapshot=name, module=module, identity=identity)}">Review assignments and recipients</a></p>'
             detail += f'<p><a href="{url(root, "impact", snapshot=name, module=module, identity=identity)}">Trace all observed references to this name</a></p>'
             detail += keyed_profile_evidence(bundle, "Library", "", module, identity)
-            detail += '<details><summary>Observed assignments and usage</summary>' + usage_detail(usage[identity]) + '</details>' + raw({"profile": profile, **review})
+            detail += '<details><summary>Observed assignments and usage</summary>' + usage_detail(usage[identity], root=root, snapshot=name, module=module) + '</details>' + raw({"profile": profile, **review})
             rows.append(tr(f'<strong>{e(title_profile(identity, profile))}</strong>', *usage_cells(usage[identity]), str(len(variants)),
                            badge(str(conflict), "warn" if conflict else "neutral"), inspect(identity, detail)))
-        body += f'<section><h2>{e(module_label(module))} · {len(rows)} profiles</h2>' + table(("Profile", "Observed assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Local instances", "Different bodies", ""), rows, search=True) + '</section>'
+        body += f'<section><h2>{e(module_label(module))} · {len(rows)} of {len(usage)} profiles</h2>' + table(("Profile", "Observed assignments", "Shared devices", "Referencing objects", "Unknown device reads", "Local instances", "Different bodies", ""), rows, search=True) + '</section>'
     body += '<p class="note">Assignments link a Library profile to a scope and device function. A zero count means no assignment was observed in this snapshot, not that the profile is unused.</p>' + raw(assignments, "Assignment capture diagnostics")
     return page("Library", body, workspace.nav(name))
 
