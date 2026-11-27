@@ -34,3 +34,22 @@ class SavedFilterTests(unittest.TestCase):
                 save_preset(workspace, name, "../bad", {}, "Invalid", binding)
             delete_preset(directory, scoped["id"])
             self.assertEqual(len(read_presets(directory)), 1)
+
+    def test_drilldown_and_evidence_presets_bound_to_original_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            other = "config-audit-other.json"
+            for filename in (name, other):
+                (Path(directory) / filename).write_text(json.dumps(fixture()))
+            workspace = Workspace(directory)
+            binding = snapshot_binding(workspace, name, workspace.reviewed_snapshot(name))
+            for route, params in (("assessment", {"mode": "health", "parent_kind": "site", "drill": "scope:2"}),
+                                  ("report", {"mode": "evidence", "evidence": "a" * 64})):
+                record = save_preset(workspace, name, route, params, route, binding)
+                self.assertEqual(record["params"], params)
+                self.assertEqual(record["binding"], binding)
+            html = filters_view(workspace, {"snapshot": other})
+            self.assertEqual(html.count(">Open filter</a>"), 0)
+            self.assertEqual(html.count(">Select original snapshot</a>"), 2)
+            html = filters_view(workspace, {"snapshot": name})
+            self.assertEqual(html.count(">Open filter</a>"), 2)
