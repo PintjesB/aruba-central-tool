@@ -101,7 +101,7 @@ def health_view(workspace, query):
         coverage = url(root, "report", snapshot=name, view="diagnostics", **params)
         override = url(root, "overrides", snapshot=name, persona=row["persona"], **({"device": row["scope"]} if grouping == "device" and row["scope"] else {}))
         if grouping == "device":
-            links = f'<a href="{coverage}">Evidence</a> · <a href="{override}">Overrides</a>'
+            links = f'<a href="{url(root, "scopes", snapshot=name, mode="device", persona=row["persona"], device=row["scope"])}">Review device</a> · <a href="{coverage}">Evidence</a> · <a href="{override}">Overrides</a>'
         else:
             target = "unknown" if row["membership_unknown"] else "scope:" + str(row["scope"])
             links = f'<a href="{url(root, "assessment", snapshot=name, mode="health", persona=row["persona"], group_by="device", parent_kind=grouping, drill=target)}">Review member devices</a>'
