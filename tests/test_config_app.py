@@ -35,6 +35,32 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             compare_devices(data, "ACCESS_SWITCH", "a", "a")
 
+    def test_device_comparison_distinguishes_individual_details_and_sampled_evidence(self):
+        bundle = self.fixture()
+        scopes = bundle["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"]
+        scopes[1]["effective_view"]["profiles"]["10"]["name"] = "A"
+        def detail(enabled):
+            return {"status": "identity_observed", "profile": {"vlan": 10, "name": "A", "enable": enabled}}
+        def scope(evidence):
+            return {"layer2-vlan": {"10": {"effective": evidence}}}
+        profiles = {"a": scope(detail(True)), "b": scope(detail(False))}
+        bundle["keyed_profile_details"] = {"profiles": {"ACCESS_SWITCH": profiles}}
+        result = compare_devices(bundle, "ACCESS_SWITCH", "a", "b")[0]
+        self.assertEqual(result["status"], "different")
+        row = result["differences"][0]
+        self.assertEqual(row["status"], "individual_detail_difference")
+        self.assertEqual(row["fields"], [])
+        self.assertEqual(row["individual"]["fields"][0]["path"], ["enable"])
+        profiles["b"] = scope({"status": "collection_only_sampled"})
+        result = compare_devices(bundle, "ACCESS_SWITCH", "a", "b")[0]
+        self.assertEqual(result["status"], "unqualified")
+        row = result["differences"][0]
+        self.assertEqual(row["status"], "individual_comparison_unavailable")
+        self.assertIsNone(row["individual"]["right"])
+        self.assertIsNone(row["individual"]["fields"])
+        profiles["b"] = scope(detail(True))
+        self.assertEqual(compare_devices(bundle, "ACCESS_SWITCH", "a", "b")[0]["status"], "exact_match")
+
     def test_snapshot_selection_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
