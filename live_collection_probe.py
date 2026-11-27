@@ -419,6 +419,94 @@ def performance_probe(client, previous, sample=1):
             "complete": False, "safe_to_apply": False}
 
 
+AUDIT_LOG_PATH = "/network-services/v1/audits"
+
+
+def change_audit_probe(client, previous, *, now=None):
+    """Observe the documented tenant audit-log contract without authorizing reuse.
+
+    Fixed seven-day window, three GETs maximum (apart from transport retries
+    and tenant continuity checks). Never return raw events, descriptions,
+    identifiers, category values, timestamps or configuration values.
+    """
+    from datetime import datetime, timedelta, timezone
+    from central_tool import canonical
+    qualified_scopes(client, previous)
+    end = (now or datetime.now(timezone.utc)) - timedelta(seconds=30)
+    start = end - timedelta(days=7)
+    def stamp(value):
+        return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    params = {"start-at": stamp(start), "end-at": stamp(end), "limit": 100}
+
+    def fetch(offset):
+        try:
+            raw = client.get(AUDIT_LOG_PATH, **params, offset=offset)
+        except APIError as exc:
+            if exc.status in (401, 429):
+                raise
+            return {"status": "request_rejected", "http_error": exc.status}, None
+        except (RuntimeError, OSError, ValueError):
+            return {"status": "read_failed"}, None
+        if isinstance(raw, list):
+            rows = raw
+            shape = "root_list"
+        elif isinstance(raw, dict):
+            candidates = [(key, raw[key]) for key in ("items", "audits", "auditLogs", "data", "results")
+                          if isinstance(raw.get(key), list)]
+            if len(candidates) != 1:
+                return {"status": "schema_unresolved"}, None
+            shape, rows = candidates[0]
+        else:
+            return {"status": "schema_unresolved"}, None
+        if not all(isinstance(row, dict) for row in rows):
+            return {"status": "schema_unresolved"}, None
+        counts = Counter()
+        for row in rows:
+            for key in ("id", "auditId", "occurredOn", "occurred_on", "action", "category",
+                        "subCategory", "sub_category", "destination", "scopeInfo", "scope_info",
+                        "logDetails", "log_details"):
+                if key in row:
+                    counts[key] += 1
+            scope = row.get("scopeInfo", row.get("scope_info"))
+            if isinstance(scope, dict):
+                ids = scope.get("scopeIds", scope.get("scope_ids"))
+                if isinstance(ids, list) and ids and all(type(v) in (str, int) for v in ids):
+                    counts["scope_ids_present"] += 1
+            details = row.get("logDetails", row.get("log_details"))
+            if isinstance(details, dict):
+                for label, names in (("impact_radius_present", ("impactRadius", "impact_radius")),
+                                     ("changed_fields_present", ("changedFields", "changed_fields")),
+                                     ("changed_json_present", ("changedJson", "changed_json"))):
+                    if any(details.get(key) for key in names):
+                        counts[label] += 1
+        totals = {}
+        if isinstance(raw, dict):
+            for location, data in (("root", raw), ("metadata", raw.get("metadata"))):
+                if isinstance(data, dict):
+                    for key in ("total", "totalCount", "count", "limit", "offset"):
+                        value = data.get(key)
+                        if type(value) is int and 0 <= value <= 1000000000:
+                            totals[location + "_" + key] = value
+        return {"status": "response_received", "envelope": shape, "records": len(rows),
+                "unique_records": len({canonical(row) for row in rows}),
+                "field_presence": dict(counts), "count_metadata": totals}, rows
+
+    first, a = fetch(1)
+    result = {"schema": 1, "kind": "anonymous_change_audit_probe",
+              "window_days": 7, "page_limit": 100, "first_page": first,
+              "complete": False, "safe_to_apply": False,
+              "incremental_reuse_qualified": False}
+    if a is None:
+        return result
+    repeated, b = fetch(1)
+    second, c = fetch(101)
+    result.update(repeated_first_page=repeated, second_page=second,
+                  first_page_stable=(a == b if b is not None else None),
+                  overlapping_records=(len(set(map(canonical, a)) & set(map(canonical, c)))
+                                       if c is not None else None))
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, required=True)
@@ -428,6 +516,7 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--specialized", action="store_true", help="Bounded probe of management-server, custom-get-api, failed hierarchy scopes, assignment identities and portal assets")
     modes.add_argument("--performance", action="store_true", help="Bounded selector and page-size qualification")
+    modes.add_argument("--change-audit", action="store_true", help="Bounded tenant audit-log capability qualification")
     parser.add_argument("--output", type=Path, help="Write JSON to a new private file instead of standard output")
     args = parser.parse_args()
     if args.output is not None and (args.output.exists() or args.output.is_symlink()):
@@ -445,7 +534,9 @@ def main():
             client_id = client_id or getpass.getpass("Central client ID: ")
             secret = secret or getpass.getpass("Central client secret: ")
         client = Central(previous["region"], token, client_id, secret)
-        if args.performance:
+        if args.change_audit:
+            report = change_audit_probe(client, previous)
+        elif args.performance:
             report = performance_probe(client, previous, args.sample)
         elif args.specialized:
             report = specialized_probe(client, previous)
