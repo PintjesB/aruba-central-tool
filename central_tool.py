@@ -2386,6 +2386,40 @@ def keyed_profile_read(client, module, identity_key, identity, params, collectio
                            if isinstance(collection_profile, dict) else None}
 
 
+def observed_profile_candidates(view, identity):
+    """Keep independently recognizable profiles from partial collection evidence.
+
+    Never qualify counts, choose between contradictory bodies or modify the
+    collection's parsed status. These candidates are for inspection/GET only.
+    """
+    if view.get("status") == "list_parsed":
+        return view.get("profiles", {})
+    if view.get("status") not in ("response_received", "partial_response", "count_mismatch",
+                                  "identity_unresolved", "schema_unresolved"):
+        return {}
+    observations = {}
+    conflicts = set()
+    for raw in [view.get("raw"), *view.get("raw_pages", [])]:
+        if not isinstance(raw, dict):
+            continue
+        lists = [(key, value) for key, value in raw.items()
+                 if key != "metadata" and isinstance(value, list)]
+        if len(lists) != 1 or set(raw) - {"metadata", lists[0][0]}:
+            continue
+        envelope, batch = lists[0]
+        for row in batch:
+            if not isinstance(row, dict):
+                continue
+            parsed = module_view({envelope: [row]}, identity)
+            if parsed["status"] != "list_parsed":
+                continue
+            key, profile = next(iter(parsed["profiles"].items()))
+            if key in observations and canonical(observations[key]) != canonical(profile):
+                conflicts.add(key)
+            observations.setdefault(key, profile)
+    return {key: value for key, value in observations.items() if key not in conflicts}
+
+
 def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKERS, progress=None, *, checkpoint=None, nac_configuration=None, unadapted=None):
     """Deep survey of observed Library, local and effective profile identities.
 
@@ -2400,12 +2434,12 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
     tenant_contracts = {**NAC_TENANT_MODULES, "auth-profiles": "auth-profile-id"}
     tasks = []
     for module, view in sorted(library.get("modules", {}).items()):
-        if module in contracts and view.get("status") == "list_parsed":
-            for identity, profile in sorted(view["profiles"].items()):
+        if module in contracts:
+            for identity, profile in sorted(observed_profile_candidates(view, contracts[module]).items()):
                 tasks.append(("Library", "", module, identity, "library", profile))
     for module, view in sorted({**(nac_configuration or {}), "auth-profiles": library.get("modules", {}).get("auth-profiles", {})}.items()):
-        if module in tenant_contracts and view.get("status") == "list_parsed":
-            for identity, profile in sorted(view["profiles"].items()):
+        if module in tenant_contracts:
+            for identity, profile in sorted(observed_profile_candidates(view, tenant_contracts[module]).items()):
                 tasks.append(("NAC", "", module, identity, "tenant", profile))
     contracts.update(tenant_contracts)
     for persona, entry in sorted(results.items()):
@@ -2418,8 +2452,8 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
                 effective = view["effective_view"]
                 if not sid.isdigit():
                     continue
-                saved = local.get("profiles", {}) if local.get("status") == "list_parsed" else {}
-                applied = effective.get("profiles", {}) if effective.get("status") == "list_parsed" else {}
+                saved = observed_profile_candidates(local, contracts[module])
+                applied = observed_profile_candidates(effective, contracts[module])
                 for identity, profile in sorted(saved.items()):
                     tasks.append((persona, sid, module, identity, "local", profile))
                 for identity in sorted(saved.keys() | applied.keys()):
@@ -2437,10 +2471,7 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
             existing.add(selector)
             supplemental_count += 1
     def parsed_profiles(read, identity_key):
-        if read.get("status") != "response_received":
-            return {}
-        parsed = module_view(read.get("raw"), identity_key)
-        return parsed["profiles"] if parsed["status"] == "list_parsed" else {}
+        return observed_profile_candidates(read, identity_key)
     for module, entry in sorted((unadapted or {}).items()):
         if module not in raw_contracts or module in tenant_contracts:
             continue
@@ -2448,7 +2479,10 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
         contracts[module] = key
         for identity, profile in sorted(parsed_profiles(entry.get("library", {}), key).items()):
             add("Library", "", module, identity, "library", profile)
-        for view in entry.get("source_views", []):
+        views = entry.get("source_views", [])
+        # First collect positive typed contexts. Then query exact unfiltered
+        # contexts only for identities not observed through a typed read.
+        for view in views:
             persona, sid = view.get("persona"), str(view.get("scope", ""))
             if persona not in NETWORK_PERSONAS or not sid.isdigit():
                 continue
@@ -2462,6 +2496,15 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
                         and annotation.get("aruba-annotation:device_function", persona) == persona):
                     add(persona, sid, module, identity, "local", profile)
                     add(persona, sid, module, identity, "effective", None)
+        covered = {(sid, m, identity, kind) for p, sid, m, identity, kind in existing
+                   if p in NETWORK_PERSONAS}
+        for view in views:
+            persona, sid = view.get("persona"), str(view.get("scope", ""))
+            if persona not in ("ALL_DEVICE_FUNCTIONS", "UNFILTERED_SCOPE") or not sid.isdigit():
+                continue
+            for identity, profile in sorted(parsed_profiles(view.get("effective", {}), key).items()):
+                if (sid, module, identity, "effective") not in covered:
+                    add(persona, sid, module, identity, "effective", profile)
 
     def collect(task):
         persona, sid, module, identity, kind, profile = task
@@ -2472,6 +2515,8 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
             params = {}
         elif kind == "local":
             params["object-type"] = "LOCAL"
+        if persona in ("ALL_DEVICE_FUNCTIONS", "UNFILTERED_SCOPE"):
+            params.pop("device-function", None)
         read = lambda: keyed_profile_read(client, module, contracts[module], identity, params, profile)
         evidence = checkpoint.observe("keyed_details", [*task[:5], contracts[module], params, profile], read, lambda v: v.get("status") == "identity_observed") if checkpoint else read()
         return task[:5], evidence

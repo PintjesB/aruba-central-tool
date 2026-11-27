@@ -990,6 +990,14 @@ def library_view(workspace, query):
             body += ('<section><h2>' + e(module_label(module)) + '</h2><p>Profile count unavailable. '
                      'The collection could not be interpreted; this does not mean no profiles exist.</p>'
                      + badge(pretty(view["status"]), "warn") + raw(view, "Captured response") + '</section>')
+            from central_tool import CONFIG_MODULES, observed_profile_candidates
+            if module in CONFIG_MODULES:
+                candidates = observed_profile_candidates(view, CONFIG_MODULES[module][0])
+                if candidates:
+                    body += '<section><h2>Observed profiles (incomplete collection)</h2><p>These individual observations do not establish complete Library contents or usage.</p>' + table(("Profile", "Settings"), [
+                        tr(e(title_profile(identity, profile)), inspect(identity, property_table(profile) +
+                            keyed_profile_evidence(bundle, "Library", "", module, identity)))
+                        for identity, profile in sorted(candidates.items())], search=True) + '</section>'
             return page("Library", body, workspace.nav(name))
         comparison = library_profile_comparison(bundle, module)
         usage = library_usage(bundle, module, view["profiles"], advanced_analysis(bundle)["references"])
@@ -1334,10 +1342,10 @@ def explorer_view(workspace, query):
             elif mode == "all":
                 # Show independently parsed bodies even if the other read failed.
                 # Do not feed these incomplete views into consolidation.
-                available = {kind: view[kind + "_view"].get("profiles", {})
-                             for kind in ("local", "effective")
-                             if view[kind + "_view"].get("status") == "list_parsed"}
-                from central_tool import profile_body
+                from central_tool import CONFIG_MODULES, observed_profile_candidates, profile_body
+                available = {kind: observed_profile_candidates(view[kind + "_view"], CONFIG_MODULES[mod][0])
+                             if mod in CONFIG_MODULES else view[kind + "_view"].get("profiles", {})
+                             for kind in ("local", "effective")}
                 for identity in sorted(set().union(*(p.keys() for p in available.values()))):
                     saved = available.get("local", {}).get(identity)
                     effective = available.get("effective", {}).get(identity)
