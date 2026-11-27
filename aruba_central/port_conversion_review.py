@@ -1,8 +1,15 @@
 """Assess saved port settings independently of effective similarity."""
 from .central_tool import canonical, profile_body, field_differences
 
-def port_conversion_review(entry, ports, portable, matches):
-    views = {v["scope"]: v for v in entry["modules"].get("ethernet-interfaces", {}).get("scope_results", [])}
+def port_conversion_review(entry, ports, portable, matches, *, views=None):
+    if views is None:
+        views = {v["scope"]: v for v in entry["modules"].get("ethernet-interfaces", {}).get("scope_results", [])}
+    visibility_index = {}
+    for match in matches:
+        by_scope = {}
+        for observation in match["visibility"]:
+            by_scope.setdefault(observation["scope"], observation["status"])
+        visibility_index[match["identity"]] = by_scope
     results = []
     for port in ports:
         sid, identity = port["scope"], port["port"]
@@ -22,8 +29,7 @@ def port_conversion_review(entry, ports, portable, matches):
             state = "unsupported_settings"
         else:
             state = "exact_saved_effective_match"
-        visibility = {m["identity"]: next((v["status"] for v in m["visibility"] if v["scope"] == sid), "unknown")
-                      for m in matches}
+        visibility = {identity: by_scope.get(sid, "unknown") for identity, by_scope in visibility_index.items()}
         results.append({"scope": sid, "device": port["device"], "port": identity,
                         "status": state, "saved": body, "effective": current,
                         "proposed_shared_fields": shared_fields, "retained_local_fields": retained,
