@@ -638,8 +638,8 @@ if(panel.dataset.state==='running')poll();
                         body += property_table(item["settings"])
             body += profile_table({"Committed": view["committed"], "Effective": view["effective"]},
                                   selected_persona, selected_scope)
-            body += '<details><summary>Complete committed configuration</summary>' + settings(view["committed"]) + '</details>'
-            body += '<details><summary>Complete effective configuration</summary>' + settings(view["effective"]) + '</details></section>'
+            body += '<details><summary>Committed configuration (complete response)</summary>' + settings(view["committed"]) + '</details>'
+            body += '<details><summary>Effective configuration (complete response)</summary>' + settings(view["effective"]) + '</details></section>'
             body += individual(selected_persona, selected_scope)
         else:
             library = evidence["library"]
