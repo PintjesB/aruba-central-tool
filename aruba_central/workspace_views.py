@@ -1446,6 +1446,9 @@ def coverage_view(workspace, query):
 
 
 def explorer_view(workspace, query):
+    if query.get("mode") == "evidence":
+        from .configuration_search import evidence_view
+        return evidence_view(workspace, query)
     if query.get("mode") == "search":
         from .configuration_search import search_view
         return search_view(workspace, query)
