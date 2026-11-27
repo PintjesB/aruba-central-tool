@@ -9,6 +9,9 @@ def assessment_view(workspace, query):
     if query.get("mode") == "history":
         from .optimization_history import history_view
         return history_view(workspace, query)
+    if query.get("mode") == "customer-report":
+        from .customer_assessment import report_view
+        return report_view(workspace, query)
     if query.get("mode") == "health":
         from .configuration_health import health_view
         return health_view(workspace, query)
@@ -121,6 +124,7 @@ def assessment_view(workspace, query):
     if checkpoint.get("enabled"):
         reused = checkpoint.get("reused_pairs", 0) + sum(checkpoint.get("additional_observations_reused", {}).values())
         body += "<p>" + e(str(reused)) + " checkpoint observations reused (scope pairs and additional reads). " + ("Mixed-time evidence; not valid for remediation verification." if checkpoint.get("mixed_capture_times") else "No earlier observations reused.") + "</p>"
+    body += f'<p><a class="button" href="{url(root, "assessment", snapshot=name, mode="customer-report")}">Open customer assessment report</a></p>'
     body += private_export("configuration-assessment", {"snapshot": name, "assessment": report}) + '</section>'
     return page("Configuration assessment", body, workspace.nav(name))
 
