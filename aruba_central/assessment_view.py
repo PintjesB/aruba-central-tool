@@ -21,9 +21,7 @@ def assessment_view(workspace, query):
     if empty:
         return empty
     root, name, bundle, picker = loaded
-    from .optimization_worklist import optimization_worklist, reduction_scenario
-    findings = workspace.consolidation_snapshot(bundle)
-    analysis = workspace.advanced_snapshot(bundle)
+    from .optimization_worklist import reduction_scenario
     report = workspace.assessment_snapshot(bundle)
     coverage = report["coverage"]
     engineering, consolidation, assignments, variants = (report[k] for k in ("engineering", "consolidation", "assignments", "variants"))
@@ -63,7 +61,7 @@ def assessment_view(workspace, query):
     categories = {"remove_override": "Redundant override review", "promote_local": "Repeated local profiles",
                   "reuse_library": "Reuse Library profile", "duplicates": "Duplicate Library names",
                   "ports": "Repeated port settings"}
-    worklist = optimization_worklist(bundle, findings, analysis)
+    worklist = workspace.optimization_worklist(bundle)
     category = query.get("category", "")
     if category and category not in categories:
         raise ValueError("Unknown optimization category")
