@@ -214,7 +214,10 @@ def diagnostics(bundle):
         outcomes = {k: count(v) for k, v in row.get("outcomes", {}).items()
                     if k in ("response_received", "read_failed") or re.fullmatch(r"http_[45][0-9]{2}", k)}
         operations.append({"path": row["path"], "attempted": count(row["attempted"]),
-                           "received": count(row.get("received")), "outcomes": outcomes})
+                           "received": count(row.get("received")), "outcomes": outcomes,
+                           **({"elapsed_ms_sum": count(row.get("elapsed_ms_sum")),
+                               "elapsed_ms_max": count(row.get("elapsed_ms_max"))}
+                              if type(row.get("elapsed_ms_sum")) is int and type(row.get("elapsed_ms_max")) is int else {})})
     # Only use pinned vendor templates. Never export observed URL selectors.
     # A missing operation is not necessarily applicable to this tenant.
     groups = {}
@@ -362,6 +365,12 @@ def diagnostics(bundle):
             "strategy": strategy if strategy in ("standard", "deep", "targeted") else "unknown",
             "detail_strategy": detail_strategy if detail_strategy in ("adaptive", "exhaustive") else "unknown",
             "logical_gets": sum(row["attempted"] for row in operations),
+            "slowest_operations": [{"path": row["path"], "requests": row["attempted"],
+                                    "cumulative_seconds": round(row["elapsed_ms_sum"] / 1000, 2),
+                                    "mean_seconds": round(row["elapsed_ms_sum"] / row["attempted"] / 1000, 3),
+                                    "max_seconds": round(row["elapsed_ms_max"] / 1000, 3)}
+                                   for row in sorted((r for r in operations if "elapsed_ms_sum" in r),
+                                                     key=lambda r: (-r["elapsed_ms_sum"], r["path"]))[:20]],
             "exact_collection_gets_reused": count((bundle.get("api_read_coverage") or {}).get("exact_collection_gets_reused")),
             "detail_read_plan": [{"module": m,
                                   "candidates": count((details.get("candidate_reads_by_module") or {}).get(m)),
