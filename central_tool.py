@@ -1493,6 +1493,17 @@ def uncounted_profile_pages(client, module, params, raw, identity=None):
                 and metadata.get("offset", offset) in (offset, offset + size))
     if not valid_metadata(meta, len(initial), 0):
         return {}
+    # Vendor collection contracts ignore parameters other than detailed in
+    # LIBRARY view. Live observations also show repeated persona-mapping
+    # records despite advancing offsets. Do not probe uncounted collections
+    # with those unsupported/unreliable selectors; retain the original
+    # response, explicitly unverified. Declared truncation is handled by
+    # the separate count-driven recovery path, not by this optimization.
+    # https://developer.arubanetworks.com/new-central-config/reference/readdevicepersonamapping
+    if params.get("view-type") == "LIBRARY":
+        return {"pagination_status": "library_pagination_unavailable", "raw_pages": []}
+    if module == "device-persona-mapping":
+        return {"pagination_status": "offset_behavior_unverified", "raw_pages": []}
     pages, combined, seen, seen_ids = [], [], set(), set()
     def incomplete(reason, **extra):
         return {"pagination_status": reason, "raw_pages": pages, **extra}
