@@ -1434,6 +1434,38 @@ class Tests(unittest.TestCase):
         self.assertLessEqual(peak, AUDIT_WORKERS)
         self.assertEqual(updates, [(i, 12) for i in range(1, 13)])
 
+    def test_repeated_custom_api_500s_reduce_retries_without_skipping_gets(self):
+        from io import BytesIO
+        from urllib.error import HTTPError
+        from urllib.request import Request
+        from unittest.mock import Mock, patch
+        client = Central(EU_REGIONS[0], token="test")
+        client._http.opener = Mock()
+        custom = Request(client.base + "/network-config/v1alpha1/custom-get-api?scope-id=12")
+        other = Request(client.base + "/network-config/v1alpha1/dns")
+        def failure(request, **kwargs):
+            raise HTTPError(request.full_url, 500, "error", {}, None)
+        client._http.opener.open.side_effect = failure
+        with patch.object(client, "_wait_rate_limit"), patch("central_tool.time.sleep"):
+            for _ in range(3):
+                with self.assertRaises(APIError):
+                    client._request(custom, "custom")
+            self.assertEqual(client._http.opener.open.call_count, 12)
+            with self.assertRaises(APIError):
+                client._request(custom, "custom")
+            self.assertEqual(client._http.opener.open.call_count, 13)
+            with self.assertRaises(APIError):
+                client._request(other, "other")
+            self.assertEqual(client._http.opener.open.call_count, 17)
+            client._http.opener.open.side_effect = None
+            client._http.opener.open.return_value = BytesIO(b'{"items":[]}')
+            self.assertEqual(client._request(custom, "custom"), {"items": []})
+            self.assertEqual(client._custom_api_terminal_500s, 0)
+            client._http.opener.open.side_effect = failure
+            with self.assertRaises(APIError):
+                client._request(custom, "custom")
+            self.assertEqual(client._http.opener.open.call_count, 22)
+
     def test_concurrent_token_refresh_is_single_flight(self):
         import time
         from unittest.mock import patch
