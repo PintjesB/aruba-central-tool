@@ -58,11 +58,14 @@ class LiveProbeTests(unittest.TestCase):
         assigned = {"status": "response_received", "collection_count_verified": True, "rows": [row, row]}
         shared = {"status": "list_parsed", "profiles": {"PRIVATE-PROFILE": {
             **definition, "@": {"aruba-annotation:object_type": "SHARED"}}}, "count_confirmed": True}
-        with patch("central_tool.profile_inventory_view", return_value=assigned) as inventory, patch(
+        with patch("central_tool.profile_inventory_view", side_effect=[assigned, assigned, {"status": "response_received", "rows": []}, assigned]) as inventory, patch(
             "live_collection_probe.read_module_view", side_effect=[shared, {"status": "empty_object"}, shared]
         ) as read:
             result = assignment_context(Mock(), "snmp", scopes, library, 1)
-        self.assertEqual(inventory.call_args.kwargs, {"profile-type": "snmp"})
+        self.assertEqual(inventory.call_args_list[0].kwargs, {"profile-type": "snmp"})
+        self.assertEqual(inventory.call_args_list[1].kwargs, {})
+        self.assertEqual(inventory.call_args_list[2].kwargs, {"scope-id": "200", "device-function": "ACCESS_SWITCH"})
+        self.assertEqual(inventory.call_args_list[3].kwargs, {"scope-id": "100", "device-function": "ACCESS_SWITCH"})
         self.assertEqual(result["observed_assignments"], 1)
         self.assertEqual(result["library_profiles_without_observed_assignment"], 1)
         self.assertEqual(result["sampled_assignment_contexts"], 1)
@@ -73,3 +76,31 @@ class LiveProbeTests(unittest.TestCase):
         self.assertFalse(result["complete"])
         self.assertNotIn("PRIVATE-PROFILE", json.dumps(result))
         self.assertNotIn('"100"', json.dumps(result))
+
+
+    def test_empty_filtered_read_recovers_tenant_and_scoped_assignments(self):
+        from live_collection_probe import assignment_context
+        scopes = {"ACCESS_SWITCH": {"scopes": [{"id": "12345", "kind": "site"}]}}
+        definition = {"name": "PRIVATE-NAME"}
+        library = {"status": "list_parsed", "profiles": {"PRIVATE-NAME": definition}}
+        row = {"profile-type": "net-groups", "profile-instance": "PRIVATE-NAME",
+               "scope-id": "12345", "device-function": "ACCESS_SWITCH"}
+        other = {**row, "profile-type": "other-type", "profile-instance": "PRIVATE-OTHER"}
+        empty = {"status": "response_received", "rows": [],
+                 "raw": {"config-assignment": []}, "collection_count_verified": True}
+        tenant = {"status": "response_received", "rows": [row, other],
+                  "raw": {"config-assignment": [row, other]}}
+        with patch("central_tool.profile_inventory_view", side_effect=[empty, tenant, tenant]), patch(
+            "live_collection_probe.read_module_view", return_value={"status": "empty_object"}
+        ):
+            result = assignment_context(Mock(), "net-groups", scopes, library, 1)
+        self.assertEqual(result["observed_assignments"], 1)
+        self.assertEqual(result["tenant_only_assignments"], 1)
+        self.assertEqual(result["additional_assignments"], 1)
+        self.assertFalse(result["assignment_count_confirmed"])
+        self.assertEqual(result["assignment_reads"][1]["other_type_rows"], 1)
+        self.assertEqual(result["assignment_reads"][0]["response_shape"], "expected_list")
+        self.assertEqual(result["invalid_or_unrelated_rows"], 0)
+        self.assertFalse(result["complete"])
+        for secret in ("PRIVATE-NAME", "PRIVATE-OTHER", "12345", "other-type"):
+            self.assertNotIn(secret, json.dumps(result))
