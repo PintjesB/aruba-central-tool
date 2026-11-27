@@ -1088,6 +1088,18 @@ def comparison_view(workspace, query):
                 for d in r["differences"]:
                     detail = diff_table(d["fields"], labels[left], labels[right]) if "fields" in d else (
                         '<h3>' + e(labels[left]) + '</h3>' + property_table(d.get("left")) + '<h3>' + e(labels[right]) + '</h3>' + property_table(d.get("right")))
+                    if "individual" in d:
+                        evidence = d["individual"]
+                        detail = '<h3>Collection comparison</h3>' + detail
+                        detail += '<h3>Individual profile comparison</h3>'
+                        if evidence["fields"] is not None:
+                            detail += diff_table(evidence["fields"], labels[left], labels[right])
+                        else:
+                            detail += '<p class="note">Individual comparison unavailable. A missing or sampled response is not a configuration value.</p>'
+                        for side, device in (("left", left), ("right", right)):
+                            detail += '<h4>' + e(labels[device]) + '</h4>' + status(evidence[side + "_status"])
+                            if evidence[side] is not None:
+                                detail += property_table(evidence[side])
                     rows.append(tr(e(module_label(r["module"])), e(d["identity"]), status(d["status"]), inspect(d["identity"], detail + raw(d))))
             body += '<section><h2>Differences</h2>' + table(("Module", "Profile", "Result", ""), rows, search=True) + '</section>'
             body += raw([{k: v for k, v in r.items() if k != "differences"} for r in result], "All module comparison states")
