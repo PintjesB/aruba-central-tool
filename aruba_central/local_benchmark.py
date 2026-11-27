@@ -12,7 +12,7 @@ from .override_view import device_override_rows
 from .central_tool import write_private
 
 
-def benchmark(directory, snapshot, *, repeat=3):
+def benchmark(directory, snapshot, *, repeat=3, ui=False):
     """Measure the same saved capture with a fresh workspace cache each trial.
 
     Timings include normal Python allocation and OS filesystem caching; they
@@ -66,6 +66,32 @@ def benchmark(directory, snapshot, *, repeat=3):
                         "consolidation_findings": len(findings), "references": len(engineering["references"]),
                         "assignments": len(assignments["rows"]), "device_overrides": override_count,
                         "incomplete_override_reads": incomplete_count}
+        if ui:
+            from .configuration_search import search_configuration, grouped_search
+            from .configuration_health import configuration_health
+            from .optimization_worklist import optimization_worklist
+            worklist = measure("optimization_worklist", lambda: optimization_worklist(bundle, findings, engineering))
+            health = measure("configuration_health", lambda: configuration_health(bundle))
+            # Fixed non-private search term; only aggregate counts leave the workspace.
+            matches = measure("configuration_search", lambda: search_configuration(bundle, "vlan"))
+            grouped = measure("configuration_search_grouped", lambda: grouped_search(bundle, "vlan"))
+            trial_counts.update(optimization_worklist_rows=len(worklist), health_rows=len(health),
+                                search_observations=matches["total"], search_groups=grouped["total_groups"])
+            del worklist, health, matches, grouped
+            for label, query in (("render_assessment", {}),
+                                 ("render_health", {"mode": "health"}),
+                                 ("render_customer_report", {"mode": "customer-report"})):
+                html = measure(label, lambda: workspace.assessment({"snapshot": snapshot, **query}))
+                trial_counts[label + "_bytes"] = len(html.encode("utf-8"))
+                # Page tokens have a fixed length. Do not retain HTML or expose it.
+                del html
+            first_device = next(((persona, scope["id"]) for persona, entry in sorted(bundle["results"].items())
+                                 for scope in entry["scopes"] if scope["kind"] == "device"), None)
+            if first_device is not None:
+                persona, device = first_device
+                html = measure("render_device_review", lambda: workspace.scopes({"snapshot": snapshot, "mode": "device", "persona": persona, "device": device}))
+                trial_counts["render_device_review_bytes"] = len(html.encode("utf-8"))
+                del html
         if counts is not None and counts != trial_counts:
             raise ValueError("Aggregate results changed during benchmark")
         counts = trial_counts
@@ -86,6 +112,7 @@ def main():
     parser.add_argument("--directory", required=True, type=Path)
     parser.add_argument("--snapshot", help="Saved snapshot filename; default is latest")
     parser.add_argument("--repeat", type=int, choices=range(1, 6), default=3)
+    parser.add_argument("--ui", action="store_true", help="Include new review analysis and server-side page rendering")
     parser.add_argument("--output", type=Path, help="Write aggregate JSON to a new private file")
     args = parser.parse_args()
     if args.output is not None and (args.output.exists() or args.output.is_symlink()):
@@ -93,7 +120,7 @@ def main():
     files = audit_files(args.directory)
     if not files:
         parser.error("No configuration audit snapshots found")
-    result = benchmark(args.directory, args.snapshot or files[0].name, repeat=args.repeat)
+    result = benchmark(args.directory, args.snapshot or files[0].name, repeat=args.repeat, ui=args.ui)
     if args.output is None:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
