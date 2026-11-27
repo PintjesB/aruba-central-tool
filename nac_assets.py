@@ -16,6 +16,22 @@ def safe_image_id(value):
             and not any(ord(c) < 32 or ord(c) == 127 for c in value))
 
 
+def image_identity(row):
+    """Accept the live camelCase identity and documented legacy spelling."""
+    if not isinstance(row, dict):
+        return None
+    values = [row[key] for key in ("imageId", "imageID") if key in row]
+    if not values or any(not safe_image_id(value) for value in values):
+        return None
+    return values[0] if all(value == values[0] for value in values) else None
+
+
+def image_comparison_body(row):
+    identity = image_identity(row)
+    return {**{key: value for key, value in row.items() if key not in ("imageId", "imageID")},
+            "imageId": identity}
+
+
 def capture_portal_assets(client, workers=1, progress=None):
     result = {"list_read": evidence_read(client, ALPHA + "/cnac-image"),
               "images": [], "details": {}, "count_confirmed": False,
@@ -32,7 +48,7 @@ def capture_portal_assets(client, workers=1, progress=None):
     observed = {}
     invalid = duplicates = 0
     for row in images:
-        identity = row.get("imageID") if isinstance(row, dict) else None
+        identity = image_identity(row)
         if not safe_image_id(identity):
             invalid += 1
         elif identity in observed:
@@ -58,9 +74,9 @@ def capture_portal_assets(client, workers=1, progress=None):
                 count = body.get("count", 1)
                 body = items[0] if (isinstance(items, list) and len(items) == 1
                                     and type(count) is int and count == 1) else None
-            if isinstance(body, dict) and body.get("imageID") == identity:
+            if image_identity(body) == identity:
                 item["status"] = "identity_observed"
-                item["differences"] = field_differences(observed[identity], body)
+                item["differences"] = field_differences(image_comparison_body(observed[identity]), image_comparison_body(body))
             else:
                 item["status"] = "identity_unresolved"
         return identity, item

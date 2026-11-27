@@ -1231,9 +1231,11 @@ def coverage_view(workspace, query):
         body += '<p>Inventory: ' + status(assets.get("status", "not_collected")) + '</p>'
         rows = []
         for image in assets.get("images", []):
-            detail = assets.get("details", {}).get(image["imageID"], {})
+            from nac_assets import image_identity
+            identity = image_identity(image)
+            detail = assets.get("details", {}).get(identity, {})
             references = image.get("referencedBy")
-            rows.append(tr(e(image.get("fileName", image["imageID"])), e(image.get("mimeType", "Unavailable")),
+            rows.append(tr(e(image.get("fileName", identity or "Unresolved identity")), e(image.get("mimeType", "Unavailable")),
                 str(len(references)) if isinstance(references, list) else "Unavailable",
                 status(detail.get("status", "not_collected")),
                 inspect("Image metadata", property_table(image) + raw(detail, "Individual metadata response"), "Inspect")))

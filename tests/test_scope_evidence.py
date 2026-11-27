@@ -71,3 +71,24 @@ class ScopeEvidenceTests(unittest.TestCase):
                 raise APIError(path, 429)
         with self.assertRaises(APIError):
             hierarchy_capture(Client(), {"ACCESS_SWITCH": [{"id": "1", "kind": "global"}]})
+
+
+    def test_scope_only_assignment_response_is_not_identity_verification(self):
+        row = {"scope-id": 12, "device-function": "ACCESS_SWITCH",
+               "profile-type": "dns", "profile-instance": "example"}
+        class Client:
+            def __init__(self, raw):
+                self.raw = raw
+            def get(self, path, **params):
+                return self.raw
+        raw = {"scope-id": 12, "scope-name": "example", "other": [], "extra": {}}
+        result = keyed_assignment_capture(Client(raw), {"rows": [row]})
+        self.assertEqual(result["outcomes"], {"scope_only_observed": 1})
+        record = result["records"][0]
+        self.assertEqual(record["missing_identity_fields"], ["device-function", "profile-type", "profile-instance"])
+        self.assertNotIn("body_matches_inventory", record)
+        self.assertEqual(record["raw"], raw)
+        self.assertFalse(result["complete"])
+        for bad in ({**raw, "scope-id": 99}, {**raw, "profile-type": "ntp"}):
+            result = keyed_assignment_capture(Client(bad), {"rows": [row]})
+            self.assertEqual(result["outcomes"], {"identity_unresolved": 1})
