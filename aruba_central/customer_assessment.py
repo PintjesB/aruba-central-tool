@@ -1,5 +1,4 @@
 """Printable aggregate assessment, separate from raw engineering evidence."""
-from .assessment_review import assessment
 from .workspace_ui import e, page, intro, metrics, table, tr
 from .workspace_views import load, url
 
@@ -9,7 +8,7 @@ def report_view(workspace, query):
     if empty:
         return empty
     root, name, bundle, picker = loaded
-    report = assessment(bundle, findings=workspace.consolidation_snapshot(bundle), engineering=workspace.advanced_snapshot(bundle))
+    report = workspace.assessment_snapshot(bundle)
     coverage = report["coverage"]
     expected, parsed, confirmed = (coverage.get(key, 0) for key in ("expected", "parsed", "count_confirmed"))
     actions, engineering, assignments = (report[k] for k in ("actions", "engineering", "assignments"))

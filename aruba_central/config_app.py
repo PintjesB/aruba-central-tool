@@ -398,6 +398,7 @@ class Workspace:
         self._overview_snapshot = None
         self._advanced_snapshot = None
         self._consolidation_snapshot = None
+        self._assessment_snapshot = None
         self._vlan_summary = None
         self.state = "idle"
         self.phase = ""
@@ -570,6 +571,7 @@ class Workspace:
             self._reviewed_snapshot = None
             self._advanced_snapshot = None
             self._consolidation_snapshot = None
+            self._assessment_snapshot = None
             self._vlan_summary = None
             bundle = refresh_configuration_review(read_audit(self.directory, name))
             if before != fingerprint():
@@ -605,6 +607,18 @@ class Workspace:
                     self._consolidation_snapshot = profile_recommendations(bundle)
                 return self._consolidation_snapshot
         return profile_recommendations(bundle)
+
+    def assessment_snapshot(self, bundle):
+        """Reuse aggregate assessment only for the exact active capture."""
+        from .assessment_review import assessment
+        findings = self.consolidation_snapshot(bundle)
+        engineering = self.advanced_snapshot(bundle)
+        with self.snapshot_lock:
+            if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle:
+                if self._assessment_snapshot is None:
+                    self._assessment_snapshot = assessment(bundle, findings=findings, engineering=engineering)
+                return self._assessment_snapshot
+        return assessment(bundle, findings=findings, engineering=engineering)
 
     def vlan_summary(self, bundle):
         """Reuse snapshot-wide aggregate diagnostics for filtered override views."""
