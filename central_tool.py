@@ -178,7 +178,8 @@ class Central:
 
     def _request(self, request, label):
         if not hasattr(self._http, "opener"):
-            self._http.opener = build_opener(NoRedirect(), PersistentCentralHTTPS())
+            self._http.persistent = PersistentCentralHTTPS()
+            self._http.opener = build_opener(NoRedirect(), self._http.persistent)
         # This optional endpoint returned HTTP 500 at every observed scope
         # in the first exhaustive audit. Keep every logical GET, but avoid
         # repeated backoff on a persistently failing endpoint. Success or
@@ -195,7 +196,13 @@ class Central:
                         self._get_metrics["http_get_retries"] += 1
             try:
                 with self._http.opener.open(request, timeout=30) as response:
-                    payload = json.load(response)
+                    try:
+                        payload = json.load(response)
+                    except BaseException:
+                        persistent = getattr(self._http, "persistent", None)
+                        if persistent is not None:
+                            persistent.close()
+                        raise
                     self._observe_config_validators(request, response)
                 if custom_get:
                     with self._rate_lock:
