@@ -1020,6 +1020,39 @@ class Tests(unittest.TestCase):
         self.assertEqual(partial["scope_read_outcomes"], {"partial_response": 1})
         self.assertFalse(partial["coverage_verified"])
 
+    def test_profile_failures_preserve_other_collection_work(self):
+        from central_tool import read_module_view, read_raw_profile_collection
+        class Client:
+            def __init__(self, failure):
+                self.failure = failure
+            def get(self, path, **params):
+                raise self.failure
+        for read in (lambda c: read_module_view(c, "dns", "name", {}),
+                     lambda c: read_raw_profile_collection(c, "dns", {})):
+            for failure in (APIError("test", 500), OSError("offline"), ValueError("invalid json")):
+                result = read(Client(failure))
+                self.assertEqual(result["status"], "read_failed")
+            for code in (401, 429):
+                with self.assertRaises(APIError):
+                    read(Client(APIError("test", code)))
+
+    def test_partial_assignment_pages_and_mixed_responses_retain_exact_matches(self):
+        from central_tool import collect_scoped_assignments
+        def record(sid, name):
+            return {"scope-id": sid, "device-function": "ACCESS_SWITCH",
+                    "profile-type": "dns", "profile-instance": name}
+        a, b, wrong = record("1", "a"), record("1", "b"), record("2", "wrong")
+        def page(items, offset):
+            return {"metadata": {"total": 4, "count": len(items), "offset": offset},
+                    "config-assignment": items}
+        fake = Fake([page([a], 0), page([a, b], 0), page([wrong], 2), {}])
+        result = collect_scoped_assignments(fake, {"status": "response_received", "rows": []},
+                                            {"ACCESS_SWITCH": [{"id": "1"}]})
+        self.assertEqual(result["rows"], [a, b])
+        self.assertEqual(result["scope_reads"]["ACCESS_SWITCH"]["1"]["rejected_rows"], 1)
+        self.assertEqual(result["scope_read_outcomes"], {"selector_mismatch": 1})
+        self.assertFalse(result["coverage_verified"])
+
     def test_profile_type_discovery_keeps_unknown_and_scope_map_evidence(self):
         from central_tool import discover_profile_types
         assignments = {"rows": [{"profile-type": "layer2-vlan", "device-function": "ACCESS_SWITCH"},
