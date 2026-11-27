@@ -2,6 +2,7 @@
 from collections import Counter, defaultdict, OrderedDict
 from concurrent.futures import Future
 import json
+import hashlib
 from pathlib import Path
 import re
 import threading
@@ -45,6 +46,10 @@ class ReadCoverage:
         self.cache_bytes = 0
         self.inflight = {}
         self.reused = 0
+        self.empty_reused = 0
+        self.seen_selectors = set()
+        self.duplicate_attempts = Counter()
+        self.selector_accounting_truncated = False
 
     def __getattr__(self, name):
         return getattr(self.client, name)
@@ -63,8 +68,9 @@ class ReadCoverage:
     def get(self, path, **params):
         """Coalesce identical configuration collection GETs within this audit.
 
-        Do not reuse polling, inventory, health, keyed reads, errors or empty
-        responses. Exact filters and pagination selectors are part of the key.
+        Do not reuse polling, inventory, health, keyed reads, errors or
+        unqualified empty responses. An explicit, consistent zero count for
+        an identical collection selector is eligible within this audit only.
         """
         if (path not in self.exact
                 or not re.fullmatch(r"/network-config/v1alpha1/[a-z][a-z0-9-]*", path)
@@ -77,7 +83,10 @@ class ReadCoverage:
                 if key in self.cache:
                     self.cache.move_to_end(key)
                     self.reused += 1
-                    return json.loads(self.cache[key])
+                    value = json.loads(self.cache[key])
+                    if self._counted_empty_collection(value):
+                        self.empty_reused += 1
+                    return value
                 future = self.inflight.get(key)
                 if future is None:
                     future = self.inflight[key] = Future()
@@ -87,7 +96,7 @@ class ReadCoverage:
             future.result()
         try:
             result = self._get(path, **params)
-            if self._complete_positive_collection(result, params):
+            if self._complete_collection(result, params):
                 payload = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                 if len(payload) <= 64 * 1024 * 1024:
                     with self.lock:
@@ -103,7 +112,7 @@ class ReadCoverage:
                 future.set_result(None)
 
     @staticmethod
-    def _complete_positive_collection(result, params):
+    def _complete_collection(result, params):
         if not isinstance(result, dict):
             return False
         meta = result.get("metadata")
@@ -112,7 +121,7 @@ class ReadCoverage:
             return False
         rows = lists[0][1]
         counts = meta.get("count_objects_in_module", {})
-        if not rows or not isinstance(counts, dict) or not all(isinstance(v, dict) for v in rows):
+        if not isinstance(counts, dict) or not all(isinstance(v, dict) for v in rows):
             return False
         expected = counts.get(params.get("object-type", "ANY"))
         total = meta.get("total", expected)
@@ -122,9 +131,26 @@ class ReadCoverage:
                 and type(meta.get("offset", 0)) is int and meta.get("offset", 0) in (0, total)
                 and len({json.dumps(row, sort_keys=True) for row in rows}) == total)
 
+    @staticmethod
+    def _counted_empty_collection(result):
+        # Only called for a response already qualified by _complete_collection.
+        return any(isinstance(v, list) and not v for k, v in result.items() if k != "metadata")
+
     def _get(self, path, **params):
         from .central_tool import APIError
         template = self.resolve(path)
+        # Count actual duplicate configuration GET attempts (including keyed
+        # and paginated selectors) without retaining identifiers in the report.
+        if template is not None and path.startswith("/network-config/"):
+            fingerprint = hashlib.sha256(json.dumps(
+                [path, params], sort_keys=True, separators=(",", ":")).encode()).digest()
+            with self.lock:
+                if fingerprint in self.seen_selectors:
+                    self.duplicate_attempts[template] += 1
+                elif len(self.seen_selectors) < 100000:
+                    self.seen_selectors.add(fingerprint)
+                else:
+                    self.selector_accounting_truncated = True
         started = time.monotonic()
         try:
             result = self.client.get(path, **params)
@@ -164,4 +190,9 @@ class ReadCoverage:
                              "elapsed_ms_max": self.timing[path][1]})
             return {"revision": self.revision, "operations": rows,
                     "unmatched_get_outcomes": dict(self.unmatched),
-                    "exact_collection_gets_reused": self.reused, "complete": False}
+                    "exact_collection_gets_reused": self.reused,
+                    "exact_counted_empty_gets_reused": self.empty_reused,
+                    "duplicate_config_get_attempts": [
+                        {"path": path, "duplicates": n} for path, n in sorted(self.duplicate_attempts.items())],
+                    "duplicate_accounting_truncated": self.selector_accounting_truncated,
+                    "complete": False}
