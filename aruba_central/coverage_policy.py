@@ -1,6 +1,7 @@
 """Separate observed API coverage from current endpoint handling policy."""
 from .nac_service_probe import ENDPOINTS
-from .central_tool import ALPHA
+from .central_tool import ALPHA, keyed_profile_contracts
+import re
 
 NAC_CAPTURE = {"cnac-mac-reg": "MAC registration inventory",
                "cnac-image": "Portal image inventory",
@@ -36,3 +37,33 @@ def coverage_action(row):
     """Current handling guidance, not proof of applicability or a historical read."""
     return {"handling": operation_handling(row["path"]),
             "read_state": row.get("status", "not_attempted")}
+
+
+def keyed_gap_context(bundle):
+    """Use the actual saved detail plan, not a guessed reason for absence."""
+    return {"contracts": keyed_profile_contracts(include_raw=True),
+            "plan": bundle.get("keyed_profile_details") or {}}
+
+
+def gap_handling(row, context):
+    path = row["path"]
+    base = operation_handling(path)
+    if row.get("attempted"):
+        return base
+    match = re.fullmatch(re.escape(ALPHA) + r"/([a-z][a-z0-9-]*)/:([a-z][a-z0-9-]*)", path)
+    if not match or context["contracts"].get(match[1]) != match[2]:
+        return base
+    plan = context["plan"]
+    if not plan:
+        return "Single-key adapter available; detail plan not recorded"
+    if match[1] not in plan.get("supported_modules", []):
+        return "Single-key adapter available now; not in saved supported modules"
+    candidates = plan.get("candidate_reads_by_module")
+    if not isinstance(candidates, dict):
+        return "Single-key adapter available; candidate counts not recorded"
+    count = candidates.get(match[1], 0)
+    if type(count) is not int or count < 0:
+        return "Single-key adapter available; candidate count unqualified"
+    if count == 0:
+        return "No individual candidates planned; absence not established"
+    return f"{count} individual candidates planned; no matching GET attempt recorded"
