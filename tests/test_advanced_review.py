@@ -233,3 +233,23 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(groups[0]["suggested_keep"], "a")
         self.assertEqual(groups[1]["suggested_keep"], "c")
         self.assertEqual(library_usage(bundle, "sw-port-profiles", [], []), {})
+
+
+    def test_policy_named_objects_are_context_specific_dependencies(self):
+        from advanced_review import explicit_references
+        body = {"security-policy": {"policy-rule": [
+            {"condition": {"services": {"net-service": "dns-service"},
+                           "transport-fields": {"destination-port-net-group": "ports"},
+                           "source": {"role-options": {"net-group": "source-group"}},
+                           "destination": {"role-options": {"net-group": "destination-group"},
+                                           "address-group": "unqualified-family"}}},
+            {"condition": {"services": {"net-service": None}}}
+        ]}, "net-service": "unrelated"}
+        refs = list(explicit_references(body, module="policies"))
+        self.assertEqual({(m, v) for m, v, _ in refs}, {
+            ("net-services", "dns-service"), ("net-groups", "ports"),
+            ("net-groups", "source-group"), ("net-groups", "destination-group"),
+            ("net-services", None)})
+        self.assertIn(("net-services", "dns-service",
+                       ("security-policy", "policy-rule", 0, "condition", "services", "net-service")), refs)
+        self.assertFalse(list(explicit_references(body, module="unqualified")))
