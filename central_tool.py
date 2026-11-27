@@ -1619,10 +1619,15 @@ def recover_local_view(client, module, identity, params, local, effective=None, 
     fallback = read_module_view(client, module, identity,
                                 {**params, "effective": "false", "detailed": "true"}, paginate_uncounted=paginate_uncounted)
     recovered = annotated_committed_local(fallback["raw"], identity) if "raw" in fallback else {}
+    # Preserve the exact fallback GET independently of the local-only recovery.
+    # A later supplemental survey can reuse this response and its page evidence.
+    alternate = {"alternate_raw": fallback["raw"],
+                 "alternate_evidence": {k: fallback[k] for k in
+                     ("status", "count_confirmed", "pagination_status", "raw_pages",
+                      "initial_raw", "http_error") if k in fallback}} if "raw" in fallback else {}
     if recovered.get("status") == "list_parsed":
-        return {**recovered, "raw": local["raw"], "alternate_raw": fallback["raw"]}
-    return {**local, "fallback_status": fallback["status"],
-            **({"alternate_raw": fallback["raw"]} if "raw" in fallback else {})}
+        return {**recovered, "raw": local["raw"], **alternate}
+    return {**local, "fallback_status": fallback["status"], **alternate}
 
 
 def profile_inventory_view(client, endpoint, envelope, *, paginate_uncounted=False, **params):
@@ -2088,6 +2093,10 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
                 params = {"view-type": "LOCAL", "scope-id": str(scope["scope"]), "device-function": persona,
                           "effective": "true", "detailed": "true"}
                 exact_reads[(module, canonical(params))] = scope["effective_view"]
+                local = scope.get("local_view", {})
+                if "alternate_raw" in local and isinstance(local.get("alternate_evidence"), dict):
+                    exact_reads[(module, canonical({**params, "effective": "false"}))] = {
+                        **local["alternate_evidence"], "raw": local["alternate_raw"]}
     for module, view in (structured_library or {}).get("modules", {}).items():
         if module != "auth-profiles":
             exact_reads[(module, canonical({"view-type": "LIBRARY", "detailed": "true"}))] = view
@@ -2317,14 +2326,21 @@ def read_vlan_instance(client, persona, scope, vid, effective):
     try:
         raw = client.get(VLAN + "/" + quote(vid, safe=""), **params)
     except APIError as exc:
+        if exc.status in (401, 429):
+            raise
         return {"status": "permission_denied" if exc.status == 403 else "request_rejected",
                 "http_error": exc.status}
     except (RuntimeError, OSError, ValueError):
         return {"status": "read_failed"}
+    return interpret_vlan_instance(raw, vid, effective)
+
+
+def interpret_vlan_instance(raw, vid, effective):
+    """Apply VLAN-specific source validation to an exact individual response."""
     result = {"status": "schema_unresolved", "raw": raw}
     if not isinstance(raw, dict):
         return result
-    parsed = module_view(raw, "vlan", params.get("object-type", "ANY"))
+    parsed = module_view(raw, "vlan", "ANY" if effective else "LOCAL")
     if parsed["status"] == "list_parsed":
         if set(parsed["profiles"]) != {vid}:
             return {**result, "status": "identity_unresolved"}
@@ -2646,7 +2662,7 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
             "complete": False, "safe_to_apply": False}
 
 
-def capture_vlan_instance_details(client, results, workers=AUDIT_WORKERS, progress=None):
+def capture_vlan_instance_details(client, results, workers=AUDIT_WORKERS, progress=None, *, keyed_details=None):
     """Target only local switch VLANs with missing name/admin-state evidence."""
     tasks = []
     for persona, entry in sorted(results.items()):
@@ -2667,6 +2683,14 @@ def capture_vlan_instance_details(client, results, workers=AUDIT_WORKERS, progre
                         tasks.append((persona, scope["scope"], row["identity"], kind))
     def collect(task):
         persona, scope, vid, kind = task
+        # Deep mode already issued precisely the same GET for this scope,
+        # VLAN and local/effective selector. Reapply the stronger VLAN parser;
+        # never substitute a sampled observation or another scope's response.
+        previous = ((keyed_details or {}).get("profiles", {}).get(persona, {})
+                    .get(str(scope), {}).get("layer2-vlan", {}).get(vid, {}).get(kind, {}))
+        if previous.get("status") == "identity_observed" and "raw" in previous:
+            return task, {**interpret_vlan_instance(previous["raw"], vid, kind == "effective"),
+                          "reused_exact_individual": True}
         return task, read_vlan_instance(client, persona, scope, vid, kind == "effective")
     audit_progress(progress, "VLAN details", 0, len(tasks), "Checking omitted VLAN settings by ID")
     evidence = {}
@@ -3539,7 +3563,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     from scope_evidence import hierarchy_capture, keyed_assignment_capture
     hierarchy_evidence = hierarchy_capture(client, scopes_by_persona, workers, progress) if deep_catalog else None
     assignment_details = keyed_assignment_capture(client, assignments, workers, progress) if deep_catalog else None
-    details = capture_vlan_instance_details(client, results, workers, progress)
+    details = capture_vlan_instance_details(client, results, workers, progress, keyed_details=keyed_details)
     operational = capture_configuration_operational_vlans(client, results, workers, progress)
     cli = capture_switch_vlan_cli(client, results, details, workers, progress)
     print(f"Configuration audit coverage: personas reviewed={len(results)}; "
