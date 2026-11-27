@@ -4,7 +4,7 @@ No private names, serials, scopes, identities, raw values or credentials are pri
 The original workspace is not modified. This is a diagnostic, not a new snapshot.
 """
 import argparse
-from collections import Counter
+from collections import Counter, defaultdict
 import getpass
 import json
 import os
@@ -564,7 +564,114 @@ def audit_detail_samples(client, combined):
             "field_presence": dict(fields), "complete": False}
 
 
-def change_window_probe(client, previous, *, now=None):
+# Fixed vendor category labels, not a claim that every configuration change
+# is categorized this way. Unknown events must never be discarded for reuse.
+CONFIG_CHANGE_CATEGORIES = frozenset({
+    "configuration", "configuration distribution", "configuration import",
+    "configuration validation", "configuration health", "service config bridge",
+    "central nac", "certificate management", "firmware management", "system management",
+})
+
+
+def audit_impact_qualification(client, combined, scopes):
+    """Measure configuration-event mapping without treating hints as invalidation.
+
+    Only allowlisted category labels and aggregate field counts leave the
+    function. An exact scope-ID match is a candidate mapping, not proof that
+    all dependencies or changed profiles were identified.
+    """
+    import uuid
+    def category(value):
+        if not isinstance(value, str):
+            return "other"
+        name = " ".join(value.lower().replace("_", " ").replace("-", " ").split())
+        return name if name in CONFIG_CHANGE_CATEGORIES else "other"
+
+    scope_ids = {str(scope["id"]) for entry in scopes.values()
+                 for scope in entry.get("scopes", []) if type(scope.get("id")) in (str, int)}
+    def audit_id(row):
+        value = row.get("auditId", row.get("id"))
+        if not isinstance(value, str) or len(value) != 36:
+            return None
+        try:
+            return str(uuid.UUID(value))
+        except ValueError:
+            return None
+
+    def fields(row, counter):
+        counter["events"] += 1
+        scope = row.get("scopeInfo", row.get("scope_info"))
+        detail = row.get("logDetails", row.get("log_details"))
+        if isinstance(scope, dict):
+            ids = scope.get("scopeIds", scope.get("scope_ids"))
+            if isinstance(ids, list) and ids:
+                counter["scope_ids_present"] += 1
+                if all(type(v) in (str, int) and str(v) in scope_ids for v in ids):
+                    counter["all_scope_ids_match_inventory"] += 1
+        if isinstance(detail, dict):
+            impacts = detail.get("impactRadius", detail.get("impact_radius"))
+            if isinstance(impacts, list) and impacts:
+                counter["impact_radius_present"] += 1
+                values = [v for impact in impacts if isinstance(impact, dict)
+                          and isinstance(impact.get("values"), list) for v in impact["values"]
+                          if type(v) in (str, int)]
+                if values:
+                    counter["impact_values_present"] += 1
+                    if any(str(v) in scope_ids for v in values):
+                        counter["impact_has_inventory_id_candidate"] += 1
+            if detail.get("changedFields", detail.get("changed_fields")):
+                counter["changed_fields_present"] += 1
+            if detail.get("changedJson", detail.get("changed_json")):
+                counter["changed_json_present"] += 1
+
+    list_counts, detail_counts, outcomes = defaultdict(Counter), defaultdict(Counter), Counter()
+    candidates = {}
+    for signature in combined.values():
+        row = json.loads(signature)
+        cat = category(row.get("category"))
+        subcat = category(row.get("subCategory", row.get("sub_category")))
+        label = cat if cat != "other" else subcat
+        fields(row, list_counts[label])
+        key = audit_id(row)
+        if key and label != "other":
+            detail = row.get("logDetails", row.get("log_details"))
+            impact = isinstance(detail, dict) and bool(detail.get("impactRadius", detail.get("impact_radius")))
+            # Prefer diverse categories and actions, including missing impact.
+            candidates.setdefault((label, str(row.get("action")), impact), (key, label))
+    selected = []
+    # Round-robin categories; prefer Configuration, then related categories.
+    per_category = defaultdict(list)
+    for (label, _, _), pair in sorted(candidates.items()):
+        if pair not in per_category[label]:
+            per_category[label].append(pair)
+    order = sorted(per_category, key=lambda value: (value != "configuration", value))
+    for _ in range(12):
+        for label in order:
+            if per_category[label] and len(selected) < 12:
+                selected.append(per_category[label].pop(0))
+    for key, label in selected:
+        try:
+            raw = client.get(AUDIT_LOG_PATH + "/" + key)
+        except APIError as exc:
+            if exc.status in (401, 429):
+                raise
+            outcomes["http_" + str(exc.status)] += 1
+            continue
+        except (RuntimeError, OSError, ValueError):
+            outcomes["read_failed"] += 1
+            continue
+        if not isinstance(raw, dict) or audit_id(raw) != key:
+            outcomes["identity_unqualified"] += 1
+            continue
+        outcomes["identity_observed"] += 1
+        fields(raw, detail_counts[label])
+    return {"attempted": len(selected), "outcomes": dict(outcomes),
+            "list_categories": {key: dict(value) for key, value in sorted(list_counts.items())},
+            "detail_categories": {key: dict(value) for key, value in sorted(detail_counts.items())},
+            "complete": False, "incremental_reuse_qualified": False}
+
+
+def change_window_probe(client, previous, *, now=None, impact_qualification=False):
     """Check a fixed seven-day interval using overlapping daily windows.
 
     Nine list requests for ordinary windows; at most 107 list requests for busy windows, plus six details.
@@ -573,7 +680,7 @@ def change_window_probe(client, previous, *, now=None):
     """
     from datetime import datetime, timedelta, timezone
     from .central_tool import canonical
-    qualified_scopes(client, previous)
+    scopes = qualified_scopes(client, previous)
     end = (now or datetime.now(timezone.utc)) - timedelta(minutes=5)
     end = end.replace(microsecond=0)
     start = end - timedelta(days=7)
@@ -608,9 +715,10 @@ def change_window_probe(client, previous, *, now=None):
     reconciled = (stable and all(w.get("complete_window") for w in windows)
                   and not conflicts and broad_matches
                   and broad.get("declared_total") == len(combined))
-    details = audit_detail_samples(client, combined)
+    details = (audit_impact_qualification(client, combined, scopes) if reconciled else
+               {"attempted": 0, "complete": False, "incremental_reuse_qualified": False}) if impact_qualification else audit_detail_samples(client, combined)
     return {"schema": 1, "kind": "anonymous_change_window_probe", "window_days": 7,
-            "audit_detail_samples": details,
+            "audit_impact_qualification" if impact_qualification else "audit_detail_samples": details,
             "page_limit": 1000, "broad_read": broad, "daily_windows": windows,
             "repeated_broad_read": repeated, "broad_read_stable": stable,
             "unique_daily_events": len(combined), "overlapping_events": overlaps,
@@ -630,6 +738,7 @@ def main():
     modes.add_argument("--performance", action="store_true", help="Bounded selector and page-size qualification")
     modes.add_argument("--change-audit", action="store_true", help="Bounded tenant audit-log capability qualification")
     modes.add_argument("--change-windows", action="store_true", help="Reconcile audit logs across overlapping daily windows")
+    modes.add_argument("--change-impact", action="store_true", help="Qualify configuration-specific event impact and inventory-ID hints")
     parser.add_argument("--output", type=Path, help="Write JSON to a new private file instead of standard output")
     args = parser.parse_args()
     if args.output is not None and (args.output.exists() or args.output.is_symlink()):
@@ -647,7 +756,9 @@ def main():
             client_id = client_id or getpass.getpass("Central client ID: ")
             secret = secret or getpass.getpass("Central client secret: ")
         client = Central(previous["region"], token, client_id, secret)
-        if args.change_windows:
+        if args.change_impact:
+            report = change_window_probe(client, previous, impact_qualification=True)
+        elif args.change_windows:
             report = change_window_probe(client, previous)
         elif args.change_audit:
             report = change_audit_probe(client, previous)
