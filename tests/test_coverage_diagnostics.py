@@ -47,6 +47,38 @@ class DiagnosticsTests(unittest.TestCase):
                          [{"module": "dns", "scope_views": 1, "library_view": True}])
         self.assertNotIn("PRIVATE", json.dumps(report))
 
+    def test_effective_projection_requires_count_and_source_evidence(self):
+        from aruba_central.coverage_diagnostics import committed_effective_projection_evidence
+        a = {"name": "PRIVATE-NAME", "value": 1}
+        annotated = {**a, "@": {"aruba-annotation:object_type": "LOCAL",
+                               "aruba-annotation:inherited": False}}
+        inherited = {"name": "PRIVATE-INHERITED", "@": {"aruba-annotation:object_type": "SHARED",
+                                                       "aruba-annotation:inherited": True}}
+        def view(rows, local, status="list_parsed"):
+            return {"status": status, "raw": {"profiles": rows, "metadata": {
+                "total": len(rows), "count_objects_in_module": {"LOCAL": local, "ANY": len(rows)}}}}
+        def scope(i, committed, effective):
+            return {"scope": str(i), "scope_kind": "device", "local_view": committed,
+                    "effective_view": effective}
+        bundle = {"results": {"ACCESS_SWITCH": {"modules": {"dns": {"scope_results": [
+            scope(1, view([a], 1), view([annotated, inherited], 1)),
+            scope(2, view([a], 1), view([annotated, inherited], 0)),
+            scope(3, view([a], 1), view([a], 1)),
+            scope(4, view([{"name": "PRIVATE-NAME", "value": 2}], 1), view([annotated], 1)),
+            scope(5, {"status": "empty_object", "raw": {}}, {"status": "empty_object", "raw": {}})
+        ]}}}}}
+        result = committed_effective_projection_evidence(bundle, {"dns"})
+        row = result["groups"][0]
+        self.assertEqual(row["pairs"], 5)
+        self.assertEqual(row["local_projection_matches"], 1)
+        self.assertEqual(row["local_projection_positive"], 1)
+        self.assertEqual(row["effective_local_count_disagrees"], 1)
+        self.assertEqual(row["source_annotations_missing"], 1)
+        self.assertEqual(row["local_projection_differs"], 1)
+        self.assertEqual(row["both_empty_unqualified"], 1)
+        self.assertFalse(result["projection_qualified"])
+        self.assertNotIn("PRIVATE", json.dumps(result))
+
     def test_supplemental_footprint_counts_scope_kind_and_selector_without_leaking_values(self):
         bundle = {"schema": 1, "kind": "configuration_audit",
                   "results": {"ACCESS_SWITCH": {"scopes": [{"id": "PRIVATE-A", "kind": "device"},
