@@ -83,7 +83,7 @@ def module_coverage(bundle):
     return result
 
 
-def credential_refresh(client_id, client_secret, region, *, deep_catalog=False, exhaustive_details=False, checkpoint_path=None, resume=False, identity_guard=None):
+def credential_refresh(client_id, client_secret, region, *, deep_catalog=False, exhaustive_details=False, targeted_catalog=False, checkpoint_path=None, resume=False, identity_guard=None):
     """One-shot credentials captured in a worker closure, not a workspace or file."""
     from central_tool import Central, EU_REGIONS, detect_region, configuration_audit, audit_progress
     if region and region not in EU_REGIONS:
@@ -95,7 +95,7 @@ def credential_refresh(client_id, client_secret, region, *, deep_catalog=False, 
         try:
             audit_progress(progress, "Connection", 0, 0, "Authenticating and detecting region")
             detect_region(client, region or None)
-            return configuration_audit(client, progress=progress, deep_catalog=deep_catalog, exhaustive_details=exhaustive_details,
+            return configuration_audit(client, progress=progress, deep_catalog=deep_catalog, exhaustive_details=exhaustive_details, targeted_catalog=targeted_catalog,
                                        checkpoint_path=checkpoint_path, resume=resume, identity_guard=identity_guard)
         finally:
             client.client_id = None
@@ -280,7 +280,7 @@ class Workspace:
                    + options([("", "Detect EU region")] + [(r, urlsplit(r).hostname.split(".")[0].upper()) for r in EU_REGIONS])
                    + '</select></label><label>Client ID<input name="client_id" type="text" required maxlength="1024" autocomplete="off"></label>'
                    '<label>Client secret<input name="client_secret" type="password" required maxlength="4096" autocomplete="new-password"></label>'
-                   '<label>Collection depth<select name="depth"><option value="deep">Deep catalog (optimized individual verification)</option><option value="exhaustive">Deep catalog (exhaustive individual verification)</option><option value="standard">Standard (observed functions and Global)</option></select></label>'
+                   '<label>Collection depth<select name="depth"><option value="deep">Deep catalog (optimized individual verification)</option><option value="fast">Fast catalog (observed modules; limited discovery)</option><option value="exhaustive">Deep catalog (exhaustive individual verification)</option><option value="standard">Standard (observed functions and Global)</option></select></label>'
                    '<label>Collection recovery<select name="checkpoint">' + checkpoint_options + '</select></label>'
                    f'<button type="submit"{disabled}>Connect and refresh</button></form>'
                    '<p><small>Deep collection can take substantially longer on large tenants. API coverage gaps and rejected reads remain visible.</small></p>'
@@ -703,7 +703,7 @@ def handler_for(workspace):
                 if self.path == root + "credentials":
                     depth = values.pop("depth", ["standard"])[0]
                     recovery = values.pop("checkpoint", ["fresh"])[0]
-                    if set(values) != {"client_id", "client_secret", "region"} or depth not in ("standard", "deep", "exhaustive"):
+                    if set(values) != {"client_id", "client_secret", "region"} or depth not in ("standard", "deep", "exhaustive", "fast"):
                         raise ValueError("Invalid credential form")
                     from collection_checkpoint import available_checkpoints
                     import uuid
@@ -719,6 +719,8 @@ def handler_for(workspace):
                     kwargs = {"deep_catalog": depth != "standard"}
                     if depth == "exhaustive":
                         kwargs["exhaustive_details"] = True
+                    if depth == "fast":
+                        kwargs["targeted_catalog"] = True
                     if checkpoint_path is not None:
                         kwargs.update(checkpoint_path=checkpoint_path, resume=resume)
                     if audit_files(workspace.directory):
