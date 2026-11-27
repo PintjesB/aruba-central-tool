@@ -6,7 +6,7 @@ Only discovered scope IDs and observed assignment selectors are queried.
 import re
 from collections import Counter
 from urllib.parse import quote
-from central_tool import ALPHA, CONFIG, APIError, NETWORK_PERSONAS, audit_progress, ordered_parallel, canonical
+from central_tool import ALPHA, CONFIG, APIError, audit_progress, ordered_parallel, canonical
 
 SCOPE_TYPES = {"global": "org", "collection": "site-collection", "site": "site",
                "group": "device-groups", "device": "device"}
@@ -73,7 +73,12 @@ def assignment_selector_rejection(row):
     sid, persona, module, instance = assignment_identity(row)
     if not re.fullmatch(r"[0-9]+", sid):
         return "invalid_scope_id"
-    if persona not in NETWORK_PERSONAS | {"HYBRID_NAC"}:
+    # Assignment inventory can contain device functions outside the
+    # network-device inventory adapter. Read only exact observed safe
+    # enum-like selectors; never normalize or guess a different persona.
+    # This does not expand persona support for device configuration or writes.
+    if (not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", persona)
+            or persona in {"UNKNOWN", "OTHER", "NONE", "NULL"}):
         return "unsupported_persona"
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,127}", module):
         return "invalid_module"
@@ -133,13 +138,10 @@ def keyed_assignment_capture(client, assignments, workers=1, progress=None):
         tasks.setdefault(identity, row)
     def read(identity):
         path = ALPHA + "/config-assignments/" + "/".join(quote(v, safe="") for v in identity)
-        # The keyed GET publishes the same view selectors as the collection.
-        # Explicitly request the committed mapping at its observed context.
-        # https://www.postman.com/hpe-aruba-networking/new-hpe-aruba-networking-central/request/32717089-299748d9-7ce9-432e-9f84-c55c093fa38f
-        sid, persona, _, _ = identity
-        result = evidence_read(client, path, **{"view-type": "LOCAL", "scope-id": sid,
-                                                "device-function": persona,
-                                                "effective": "false", "detailed": "true"})
+        # Live evidence: 209 bare keyed requests matched their full
+        # assignment identities. Four sampled requests with explicit LOCAL
+        # selectors returned empty objects. Use the proven path-only contract.
+        result = evidence_read(client, path)
         raw = result.get("raw")
         if result["status"] == "response_received":
             rows = None
