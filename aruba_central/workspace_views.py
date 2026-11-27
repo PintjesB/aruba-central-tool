@@ -1533,6 +1533,9 @@ def coverage_view(workspace, query):
 
 
 def explorer_view(workspace, query):
+    if query.get("mode") == "entities":
+        from .entity_search import entity_search_view
+        return entity_search_view(workspace, query)
     if query.get("mode") == "evidence":
         from .configuration_search import evidence_view
         return evidence_view(workspace, query)
@@ -1561,6 +1564,9 @@ def explorer_view(workspace, query):
     mode = query.get("view", "diagnostics" if query.get("diagnostics") else "all" if scope else "local")
     if mode not in ("all", "local", "diagnostics"):
         raise ValueError("Unknown view")
+    identity_filter = query.get("identity")
+    if identity_filter is not None and (not module or not scope or mode == "diagnostics"):
+        raise ValueError("An exact profile filter requires a scope and module")
     controls = scope_filter_form(root, "report", name, bundle, persona, (
         ("module", "Module", module, module_options),
         ("scope", "Scope", scope, lambda entry: [("", "All scopes")] + sorted(
@@ -1583,6 +1589,8 @@ def explorer_view(workspace, query):
                              if mod in CONFIG_MODULES else view[kind + "_view"].get("profiles", {})
                              for kind in ("local", "effective")}
                 for identity in sorted(set().union(*(p.keys() for p in available.values()))):
+                    if identity_filter is not None and identity != identity_filter:
+                        continue
                     saved = available.get("local", {}).get(identity)
                     effective = available.get("effective", {}).get(identity)
                     title = title_profile(identity, saved or effective)
@@ -1598,6 +1606,8 @@ def explorer_view(workspace, query):
         if mode == "diagnostics":
             continue
         for r in review["profiles"]:
+            if identity_filter is not None and r["identity"] != identity_filter:
+                continue
             if mode == "local" and (r["local"] is None or r["status"] == "default_profile"):
                 continue
             title = title_profile(r["identity"], r["local"] or r["effective"])
@@ -1608,6 +1618,10 @@ def explorer_view(workspace, query):
     q = sum(v["review"]["qualified"] for _, _, _, v in records)
     body = intro("Configuration", "Inspect captured profiles at a selected scope or module.", picker) + '<section class="filter-section">' + controls + '</section>'
     body += f'<p><a class="button" href="{url(root, "report", snapshot=name, mode="search")}">Search all captured configuration</a></p>'
+    body += f'<p><a class="button" href="{url(root, "report", snapshot=name, mode="entities")}">Find devices and profiles</a></p>'
+    if identity_filter is not None:
+        body += '<p>Exact profile: <strong>' + e(identity_filter) + '</strong> · '
+        body += f'<a href="{url(root, "report", snapshot=name, persona=persona, scope=scope, module=module, view=mode)}">Show all profiles at this scope</a></p>'
     body += f'<section><h2>{len(rows)} records</h2><p class="muted">{q}/{len(records)} selected scope views qualified.</p>' + table(("Scope", "Module", "Profile", "Source / state", ""), rows, search=True) + '</section>'
     body += f'<p class="note">For grouped consolidation recommendations, open <a href="{url(root, "advisor", snapshot=name)}">Consolidation</a>. Global comparison does not establish inheritance or safe removal.</p>'
     # Preserve the standalone report and CSV export through a separate optional route.
