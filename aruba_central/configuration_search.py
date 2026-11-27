@@ -28,12 +28,19 @@ def configuration_sources(bundle, *, persona="", module="", scope=None):
     def emit(persona, module, scope, side, identity, value, source, state):
         return {"persona": persona, "module": module, "scope": str(scope), "name": names.get((persona, str(scope)), str(scope)),
                 "view": side, "identity": identity, "body": value, "source": source, "state": state}
+    def partial_pages(persona, module, scope, side, view, source):
+        # A complete merged collection already represents its successful pages.
+        # For incomplete collections, later pages can contain otherwise invisible settings.
+        if view.get("pagination_status") not in (None, "complete"):
+            for index, payload in enumerate(view.get("raw_pages") or [], 1):
+                yield emit(persona, module, scope, side, "", payload, source, view.get("status", "unknown"))
     def structured(persona, module, scope, side, view):
         if view.get("status") == "list_parsed":
             for identity, body in view.get("profiles", {}).items():
                 yield emit(persona, module, scope, side, identity, body, "structured", view["status"])
         elif "raw" in view:
             yield emit(persona, module, scope, side, "", view["raw"], "structured_raw", view.get("status", "unknown"))
+        yield from partial_pages(persona, module, scope, side, view, "structured_page")
         if "alternate_raw" in view:
             yield emit(persona, module, scope, side, "", view["alternate_raw"], "structured_alternate", view.get("status", "unknown"))
     for persona, entry in bundle["results"].items():
@@ -51,6 +58,10 @@ def configuration_sources(bundle, *, persona="", module="", scope=None):
         for module, view in (bundle.get("library") or {}).get("modules", {}).items():
             if accepts("Library", module, ""):
                 yield from structured("Library", module, "", "library", view)
+    if accepts("NAC", sid=""):
+        for module, view in (bundle.get("nac_configuration") or {}).items():
+            if accepts("NAC", module, ""):
+                yield from structured("NAC", module, "", "tenant", view)
     for module, data in (bundle.get("unadapted_profiles") or {}).items():
         if selected_module and module != selected_module:
             continue
@@ -61,9 +72,12 @@ def configuration_sources(bundle, *, persona="", module="", scope=None):
                 view = scope.get(side, {})
                 if "raw" in view:
                     yield emit(scope.get("persona", ""), module, scope.get("scope", ""), side, "", view["raw"], "supplemental", view.get("status", "unknown"))
+                yield from partial_pages(scope.get("persona", ""), module, scope.get("scope", ""), side, view, "supplemental_page")
         view = data.get("library", {})
         if accepts("Library", module, "") and "raw" in view:
             yield emit("Library", module, "", "library", "", view["raw"], "supplemental", view.get("status", "unknown"))
+        if accepts("Library", module, ""):
+            yield from partial_pages("Library", module, "", "library", view, "supplemental_page")
     for persona, scopes in (bundle.get("keyed_profile_details") or {}).get("profiles", {}).items():
         if not accepts(persona):
             continue
@@ -77,6 +91,8 @@ def configuration_sources(bundle, *, persona="", module="", scope=None):
                     for side, view in views.items():
                         if view.get("status") == "identity_observed" and isinstance(view.get("profile"), dict):
                             yield emit(persona, module, scope, side, identity, view["profile"], "individual", view["status"])
+                        elif view.get("status") != "collection_only_sampled" and "raw" in view:
+                            yield emit(persona, module, scope, side, identity, view["raw"], "individual_raw", view.get("status", "unknown"))
 
 
 def evidence_id(record):
@@ -163,9 +179,16 @@ def search_view(workspace, query):
         return empty
     root, name, bundle, picker = loaded
     text, module, persona = (query.get(k, "") for k in ("q", "module", "persona"))
+    raw_modules = bundle.get("unadapted_profiles") or {}
+    keyed = (bundle.get("keyed_profile_details") or {}).get("profiles") or {}
     modules = sorted({m for entry in bundle["results"].values() for m in entry["modules"]}
-                     | set((bundle.get("library") or {}).get("modules", {})) | set(bundle.get("unadapted_profiles") or {}))
-    personas = sorted(set(bundle["results"]) | {"Library"})
+                     | set((bundle.get("library") or {}).get("modules", {})) | set(raw_modules)
+                     | set(bundle.get("nac_configuration") or {})
+                     | {m for scopes in keyed.values() for data in scopes.values() for m in data})
+    personas = sorted(set(bundle["results"]) | {"Library"} | set(keyed)
+                      | ({"NAC"} if bundle.get("nac_configuration") else set())
+                      | {v.get("persona") for data in raw_modules.values() for v in data.get("source_views", [])
+                         if isinstance(v.get("persona"), str) and v["persona"]})
     if (module and module not in modules) or (persona and persona not in personas):
         raise ValueError("Unknown search filter")
     body = intro("Configuration search", "Find captured profile names, scope names, field paths and values across the tenant.", picker)
@@ -176,7 +199,7 @@ def search_view(workspace, query):
              + select("module", [("", "All modules")] + [(m, m) for m in modules], module, "Module")
              + select("persona", [("", "All functions")] + [(p, p) for p in personas], persona, "Device function")
              + '<button type="submit">Search configuration</button></form>'
-             '<p class="note">Search is local and includes parsed structured profiles, unparsed structured responses, supplemental raw responses and directly observed individual profiles. Sampled markers, operational telemetry and uncaptured configuration are not searched. Repeated observations may appear independently.</p></section>')
+             '<p class="note">Search is local and includes parsed structured profiles, unparsed structured responses, supplemental raw responses, incomplete collection pages, NAC configuration and individual responses (including unresolved raw evidence). Sampled markers, NAC registrations, operational telemetry and uncaptured configuration are not searched. Repeated observations may appear independently.</p></section>')
     presentation = query.get("presentation", "fields")
     group = query.get("group", "")
     if presentation not in ("fields", "grouped"):
