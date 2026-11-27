@@ -826,6 +826,17 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(client.calls), 6)
         self.assertEqual(result["detail_strategy"], "exhaustive")
 
+    def test_parseable_first_page_does_not_hide_later_positive_observations(self):
+        from central_tool import observed_profile_candidates
+        a, b, c = ({"name": name, "enable": False} for name in ("a", "b", "c"))
+        view = {"status": "list_parsed", "count_confirmed": False,
+                "profiles": {"a": a, "b": b}, "raw": {"profiles": [a, b]},
+                "pagination_status": "request_failed",
+                "raw_pages": [{"profiles": [c, {**b, "enable": True}]}]}
+        self.assertEqual(observed_profile_candidates(view, "name"), {"a": a, "c": c})
+        self.assertEqual(view["profiles"], {"a": a, "b": b})
+        self.assertFalse(view["count_confirmed"])
+
     def test_partial_profile_candidates_keep_valid_rows_and_exclude_conflicts(self):
         from central_tool import observed_profile_candidates, capture_keyed_profile_details
         a, b, c = ({"name": name, "enable": False} for name in ("a", "b", "c"))
