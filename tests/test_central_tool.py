@@ -1000,6 +1000,49 @@ class Tests(unittest.TestCase):
         self.assertEqual(data["unresolved_records"], 1)
         self.assertFalse(data["complete"])
 
+    def test_deep_uncounted_profile_pagination_preserves_all_records_without_proof(self):
+        from central_tool import read_module_view, read_raw_profile_collection
+        a, b, c = ({"name": name} for name in ("a", "b", "c"))
+        initial = {"profiles": [a]}
+        pages = [initial, {"profiles": [a, b]}, {"profiles": [c]}, {"profiles": []}]
+        fake = Fake(pages)
+        view = read_module_view(fake, "dns", "name", {"view-type": "LIBRARY"}, paginate_uncounted=True)
+        self.assertEqual(set(view["profiles"]), {"a", "b", "c"})
+        self.assertFalse(view["count_confirmed"])
+        self.assertEqual(view["pagination_status"], "pagination_exhausted")
+        self.assertEqual(view["initial_raw"], initial)
+        self.assertEqual([call[1]["offset"] for call in fake.calls[1:]], [0, 2, 3])
+        raw = read_raw_profile_collection(Fake(pages), "dns", {}, paginate_uncounted=True)
+        self.assertEqual(raw["raw"]["profiles"], [a, b, c])
+        self.assertFalse(raw["collection_count_verified"])
+
+    def test_uncounted_pages_reject_ignored_offsets_and_conflicting_identities(self):
+        from central_tool import read_module_view, read_raw_profile_collection
+        a, b = {"name": "a"}, {"name": "b"}
+        initial = {"profiles": [a]}
+        for page, reason in (({"profiles": [a]}, "duplicate_records"),
+                             ({"profiles": [{"name": "a", "enable": True}]}, "duplicate_or_invalid_identity"),
+                             ({"metadata": {"offset": 10}, "profiles": [b]}, "count_or_offset_changed"),
+                             ({}, "schema_changed")):
+            view = read_module_view(Fake([initial, initial, page]), "dns", "name", {}, paginate_uncounted=True)
+            self.assertEqual(view["pagination_status"], reason)
+            self.assertFalse(view["count_confirmed"])
+            self.assertEqual(view["raw"], initial)
+            self.assertEqual(len(view["raw_pages"]), 2)
+        raw = read_raw_profile_collection(Fake([initial, initial, initial]), "dns", {}, paginate_uncounted=True)
+        self.assertEqual(raw["status"], "partial_response")
+        self.assertEqual(raw["raw"], initial)
+        self.assertFalse(raw["collection_count_verified"])
+
+    def test_uncounted_pagination_is_opt_in_and_requires_documented_path(self):
+        from central_tool import read_module_view
+        initial = {"profiles": [{"name": "a"}]}
+        for module, enabled in (("dns", False), ("undocumented", True)):
+            fake = Fake([initial])
+            view = read_module_view(fake, module, "name", {}, paginate_uncounted=enabled)
+            self.assertEqual(len(fake.calls), 1)
+            self.assertNotIn("pagination_status", view)
+
     def test_raw_profile_collection_recovers_explicitly_truncated_pages(self):
         from central_tool import read_raw_profile_collection
         def page(total, offset, items):
