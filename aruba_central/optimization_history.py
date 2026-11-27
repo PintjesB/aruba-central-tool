@@ -27,9 +27,10 @@ def workload(bundle, *, findings=None, engineering=None):
             "mixed_time": bool((bundle.get("collection_checkpoint") or {}).get("mixed_capture_times"))}
 
 
-def compare_workload(previous, current):
+def compare_workload(previous, current, *, current_findings=None, current_engineering=None):
     identity = snapshot_identity_checks(previous, current)
-    before, after = workload(previous), workload(current)
+    before = workload(previous)
+    after = workload(current, findings=current_findings, engineering=current_engineering)
     common = before["views"].keys() & after["views"].keys()
     same_reads = before["views"] == after["views"]
     same_devices = before["devices"] == after["devices"]
@@ -62,7 +63,8 @@ def history_view(workspace, query):
         if previous not in dict(others):
             raise ValueError("Invalid baseline")
         prior = refresh_configuration_review(read_audit(workspace.directory, previous))
-        result = compare_workload(prior, bundle)
+        result = compare_workload(prior, bundle, current_findings=workspace.consolidation_snapshot(bundle),
+                                  current_engineering=workspace.advanced_snapshot(bundle))
         body += metrics([("Baseline devices", result["before_devices"], "Device/function pairs"),
                          ("Current devices", result["after_devices"], "Device/function pairs"),
                          ("Common structured views", result["common_views"], "Same capture selectors")])
