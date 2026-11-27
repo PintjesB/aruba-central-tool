@@ -61,6 +61,32 @@ class WorkspaceTests(unittest.TestCase):
         profiles["b"] = scope(detail(True))
         self.assertEqual(compare_devices(bundle, "ACCESS_SWITCH", "a", "b")[0]["status"], "exact_match")
 
+    def test_reviewed_snapshot_cache_is_bounded_and_invalidated_by_file_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            one = Path(directory) / "config-audit-one.json"
+            two = Path(directory) / "config-audit-two.json"
+            one.write_text(json.dumps(self.fixture()), encoding="utf-8")
+            two.write_text(json.dumps(self.fixture()), encoding="utf-8")
+            with patch("central_tool.refresh_configuration_review", side_effect=lambda data: data) as review:
+                first = workspace.reviewed_snapshot(one.name)
+                self.assertIs(first, workspace.reviewed_snapshot(one.name))
+                self.assertEqual(review.call_count, 1)
+                changed = self.fixture()
+                changed["extra"] = "changed snapshot"
+                one.write_text(json.dumps(changed), encoding="utf-8")
+                self.assertEqual(workspace.reviewed_snapshot(one.name)["extra"], "changed snapshot")
+                self.assertEqual(review.call_count, 2)
+                workspace.reviewed_snapshot(two.name)
+                workspace.reviewed_snapshot(one.name)
+                self.assertEqual(review.call_count, 4)
+                one.unlink()
+                with self.assertRaises(ValueError):
+                    workspace.reviewed_snapshot(one.name)
+                with self.assertRaises(ValueError):
+                    workspace.reviewed_snapshot("../outside.json")
+                self.assertEqual(review.call_count, 4)
+
     def test_snapshot_selection_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
