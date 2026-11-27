@@ -79,6 +79,13 @@ class Central:
         self._next_request_at = 0.0
         self._request_interval = 1 / 9
         self._custom_api_terminal_500s = 0
+        self._get_metrics_lock = threading.Lock()
+        self._get_metrics = Counter()
+
+    def get_transport_metrics(self):
+        """Cumulative GET transport attempts, not identifiers or query values."""
+        with self._get_metrics_lock:
+            return dict(self._get_metrics)
 
     def _wait_rate_limit(self):
         # HPE documents 10 requests/s per account across all credentials.
@@ -101,9 +108,14 @@ class Central:
         # another terminal response restores the normal retry budget.
         custom_get = (request.get_method() == "GET"
                       and urlsplit(request.full_url).path == ALPHA + "/custom-get-api")
+        is_get = request.get_method() == "GET"
         for attempt in range(4):
-            if request.get_method() == "GET":
+            if is_get:
                 self._wait_rate_limit()
+                with self._get_metrics_lock:
+                    self._get_metrics["http_get_attempts"] += 1
+                    if attempt:
+                        self._get_metrics["http_get_retries"] += 1
             try:
                 with self._http.opener.open(request, timeout=30) as response:
                     payload = json.load(response)
@@ -112,11 +124,20 @@ class Central:
                         self._custom_api_terminal_500s = 0
                 return payload
             except HTTPError as exc:
+                if is_get:
+                    with self._get_metrics_lock:
+                        if exc.code == 429:
+                            self._get_metrics["http_get_429"] += 1
+                        elif 500 <= exc.code <= 599:
+                            self._get_metrics["http_get_5xx"] += 1
                 with self._rate_lock:
                     repeated_custom_500 = (custom_get and exc.code == 500
                                            and self._custom_api_terminal_500s >= 3)
                 retry_hint = exc.headers.get("Retry-After", "")
-                if (request.get_method() == "GET" and exc.code in (429, 500, 502, 503, 504)
+                if repeated_custom_500 and not retry_hint and attempt < 3:
+                    with self._get_metrics_lock:
+                        self._get_metrics["custom_500_retry_sequences_suppressed"] += 1
+                if (is_get and exc.code in (429, 500, 502, 503, 504)
                         and attempt < 3 and (not repeated_custom_500 or bool(retry_hint))):
                     delay = exc.headers.get("Retry-After", "")
                     if delay.isdigit() and int(delay) > 60:
@@ -3460,6 +3481,8 @@ def configuration_operational_vlan(bundle, persona, sid, vid):
 def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None, deep_catalog=False, exhaustive_details=False, targeted_catalog=False, checkpoint_path=None, resume=False, identity_guard=None):
     """Inventory-driven read-only audit with bounded parallel scope reads."""
     from api_coverage import ReadCoverage
+    transport = client if isinstance(client, Central) else None
+    transport_before = transport.get_transport_metrics() if transport is not None else {}
     client = ReadCoverage(client)
     audit_progress(progress, "Discovery", 0, 0, "Reading device inventory and assignments")
     devices = inventory(client)
@@ -3625,6 +3648,12 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             "collection_checkpoint": checkpoint.evidence() if checkpoint else {"enabled": False, "mixed_capture_times": False},
             "catalog_exhaustive": False, "safe_to_apply": False}
 
+    if transport is not None:
+        after = transport.get_transport_metrics()
+        bundle["http_get_transport"] = {key: after.get(key, 0) - transport_before.get(key, 0)
+                                       for key in ("http_get_attempts", "http_get_retries",
+                                                   "http_get_429", "http_get_5xx",
+                                                   "custom_500_retry_sequences_suppressed")}
     coverage_counts = Counter(row["status"] for row in bundle["api_read_coverage"]["operations"])
     print("Documented GET operation outcomes: " + canonical(dict(coverage_counts)), flush=True)
     print("VLAN evidence coverage: " + canonical(vlan_evidence_summary(bundle)), flush=True)
