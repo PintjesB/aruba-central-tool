@@ -2021,7 +2021,7 @@ def read_raw_profile_collection(client, module, params, *, paginate_uncounted=Fa
     return incomplete("page_limit_reached")
 
 
-def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, workers=1, progress=None, *, scopes_by_persona=None, deep_catalog=False, checkpoint=None, structured_results=None, structured_library=None):
+def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, workers=1, progress=None, *, scopes_by_persona=None, deep_catalog=False, checkpoint=None, structured_results=None, structured_library=None, targeted_catalog=False):
     """Inspect observed source scopes for modules without an explicit adapter.
 
     These are raw read-only diagnostics, not qualified local/effective views.
@@ -2075,7 +2075,7 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
         planned = sum(len(all_scope_ids) * 2 for module in unknown
                       if documented.get(module, {}).get("all_function_scope")
                       or documented.get(module, {}).get("source") == "vendor_collection")
-        print(f"Deep catalog survey: up to {planned} additional unfiltered scope reads before pagination; "
+        print(f"{'Targeted' if targeted_catalog else 'Deep'} catalog survey: up to {planned} additional unfiltered scope reads before pagination; "
               "rejected and incomplete reads remain visible.", flush=True)
 
     # These requests are identical to the earlier structured collection GETs.
@@ -2133,13 +2133,34 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
         survey_ids = all_scope_ids if deep_catalog and (all_functions or documented_scope) else (
             global_ids if all_functions else [])
         survey_label = "ALL_DEVICE_FUNCTIONS" if all_functions else "UNFILTERED_SCOPE"
-        if survey_ids:
-            for sid in survey_ids:
-                base = {"view-type": "LOCAL", "scope-id": sid, "detailed": "true"}
-                catalog_views.append({"persona": survey_label, "scope": sid,
-                                      "observed_instances": [],
-                                      "committed": capture(module, {**base, "effective": "false"}),
-                                      "effective": capture(module, {**base, "effective": "true"})})
+        library_read = capture(module, {"view-type": "LIBRARY", "detailed": "true"}) if targeted_catalog else None
+        def read_catalog_scope(sid):
+            base = {"view-type": "LOCAL", "scope-id": sid, "detailed": "true"}
+            return {"persona": survey_label, "scope": sid, "observed_instances": [],
+                    "committed": capture(module, {**base, "effective": "false"}),
+                    "effective": capture(module, {**base, "effective": "true"})}
+        def has_settings(read):
+            raw = read.get("raw")
+            return isinstance(raw, dict) and any(
+                key not in ("metadata", "@") and value is not None and value != {} and value != []
+                for key, value in raw.items())
+        if targeted_catalog and deep_catalog and survey_ids:
+            # A fast refresh uses current positive evidence, not an old snapshot.
+            # Missing evidence does not prove absence. Keep skipped scopes explicit.
+            candidate_ids = set(survey_ids)
+            initial_ids = sorted(candidate_ids & set(global_ids))
+            catalog_views.extend(read_catalog_scope(sid) for sid in initial_ids)
+            observed = (bool(discovery["modules"].get(module)) or bool(evidence)
+                        or has_settings(library_read)
+                        or any(has_settings(v[side]) for v in catalog_views for side in ("committed", "effective"))
+                        or any(has_settings(scope[side + "_view"])
+                               for entry in (structured_results or {}).values()
+                               for scope in entry["modules"].get(module, {}).get("scope_results", [])
+                               for side in ("local", "effective")))
+            survey_ids = sorted(candidate_ids) if observed else initial_ids
+            catalog_views.extend(read_catalog_scope(sid) for sid in survey_ids if sid not in initial_ids)
+        else:
+            catalog_views.extend(read_catalog_scope(sid) for sid in survey_ids)
         # Discover functions from explicit Global annotations. Positive data
         # warrants targeted scope reads even if the assignment inventory missed
         # the module. An empty Global response is never proof of no local data.
@@ -2178,11 +2199,12 @@ def inspect_unadapted_profiles(client, discovery, assignments, scope_maps, worke
         result = {"status": "supplemental_raw" if module in CONFIG_MODULES else "unqualified_adapter",
                   "source_views": evidence + catalog_views,
                   "scope_read_outcomes": dict(Counter(v[k]["status"] for v in evidence + catalog_views for k in ("committed", "effective"))),
-                  "library": capture(module, {"view-type": "LIBRARY", "detailed": "true"}),
+                  "library": library_read if targeted_catalog else capture(module, {"view-type": "LIBRARY", "detailed": "true"}),
                   "catalog_scope_coverage": {"global_scopes_attempted": sum(v["scope"] in global_ids for v in catalog_views),
                        "global_observed_functions": sorted(global_functions),
                        "observed_functions": sorted(observed_functions),
                        "deep_catalog_requested": deep_catalog,
+                       "targeted_catalog": targeted_catalog,
                        "unfiltered_scopes_attempted": len(catalog_views),
                        "unfiltered_scopes_not_surveyed": len(set(all_scope_ids) - set(survey_ids)),
                        "discovered_scopes": len(all_scope_ids),
@@ -3368,7 +3390,7 @@ def configuration_operational_vlan(bundle, persona, sid, vid):
             "may_be_truncated": len(lists[0]) >= 1000}
 
 
-def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None, deep_catalog=False, exhaustive_details=False, checkpoint_path=None, resume=False, identity_guard=None):
+def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS, progress=None, deep_catalog=False, exhaustive_details=False, targeted_catalog=False, checkpoint_path=None, resume=False, identity_guard=None):
     """Inventory-driven read-only audit with bounded parallel scope reads."""
     from api_coverage import ReadCoverage
     client = ReadCoverage(client)
@@ -3430,6 +3452,8 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     if checkpoint_path is not None:
         from collection_checkpoint import ScopeCheckpoint, qualification_manifest
         revision = [client.revision, deep_catalog, selected_persona, "exhaustive" if exhaustive_details else "adaptive"] if deep_catalog else [client.revision, deep_catalog, selected_persona]
+        if targeted_catalog:
+            revision.append("targeted_catalog")
         manifest = qualification_manifest(client.base, plans, records, revision)
         legacy = [qualification_manifest(client.base, plans, records, revision, legacy=True)] if resume else []
         checkpoint = ScopeCheckpoint(checkpoint_path, manifest, resume=resume, compatible_manifests=legacy)
@@ -3501,7 +3525,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress, checkpoint=checkpoint, paginate_uncounted=deep_catalog)
     unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress,
                                            scopes_by_persona=scopes_by_persona, deep_catalog=deep_catalog, checkpoint=checkpoint,
-                                           structured_results=results, structured_library=library)
+                                           structured_results=results, structured_library=library, targeted_catalog=targeted_catalog)
     from nac_authorization import capture_nac_configuration
     nac_configuration = capture_nac_configuration(client, progress, checkpoint=checkpoint)
     from nac_review import read_mac_registrations
@@ -3528,6 +3552,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             "configuration_health": health, "nac_registrations": nac_registrations, "nac_configuration": nac_configuration,
             "nac_portal_assets": nac_assets,
             "keyed_profile_details": keyed_details,
+            "collection_strategy": "targeted" if targeted_catalog else "deep" if deep_catalog else "standard",
             "scope_hierarchy_evidence": hierarchy_evidence, "keyed_assignment_details": assignment_details,
             "api_read_coverage": client.report(),
             "collection_checkpoint": checkpoint.evidence() if checkpoint else {"enabled": False, "mixed_capture_times": False},
@@ -3861,6 +3886,7 @@ def main():
     config.add_argument("--output", required=True, type=Path)
     config.add_argument("--region-file", type=Path)
     config.add_argument("--deep-catalog", action="store_true", help="Survey documented unadapted collections at every discovered scope; may take substantially longer")
+    config.add_argument("--targeted-catalog", action="store_true", help="Fast Deep refresh: expand supplemental scope surveys only with current positive evidence")
     config.add_argument("--exhaustive-details", action="store_true", help="Individually verify every profile in Deep collection; disables adaptive verification")
     config.add_argument("--checkpoint", type=Path, help="Private interrupted scope-read checkpoint file")
     config.add_argument("--resume", action="store_true", help="Explicitly reuse a matching checkpoint less than 24 hours old; mixed capture times")
@@ -3874,6 +3900,7 @@ def main():
     app.add_argument("--enable-refresh", action="store_true", help="Enable read-only Central refresh using environment credentials")
     app.add_argument("--no-browser", action="store_true")
     app.add_argument("--deep-catalog", action="store_true", help="Use deep catalog scope surveys for environment-credential refreshes")
+    app.add_argument("--targeted-catalog", action="store_true", help="Fast Deep refresh for environment-credential collection")
     app.add_argument("--exhaustive-details", action="store_true", help="Use exhaustive individual detail reads with --deep-catalog")
     inv = commands.add_parser("inventory", help="Discover every device and its known compatibility")
     inv.add_argument("--output", required=True, type=Path)
@@ -3905,7 +3932,7 @@ def main():
                 def refresh(progress=None):
                     audit_progress(progress, "Connection", 0, 0, "Authenticating and detecting region")
                     detect_region(client, preferred)
-                    return configuration_audit(client, progress=progress, deep_catalog=args.deep_catalog, exhaustive_details=args.exhaustive_details,
+                    return configuration_audit(client, progress=progress, deep_catalog=args.deep_catalog or args.targeted_catalog, exhaustive_details=args.exhaustive_details, targeted_catalog=args.targeted_catalog,
                                                identity_guard=lambda incoming: verify_workspace_identity(args.directory, incoming))
             serve(args.directory, refresh=refresh, open_browser=not args.no_browser)
             return 0
@@ -3942,7 +3969,7 @@ def main():
             elif args.command == "audit":
                 data = audit(client)
             elif args.command == "config-audit":
-                data = configuration_audit(client, args.persona, deep_catalog=args.deep_catalog, exhaustive_details=args.exhaustive_details,
+                data = configuration_audit(client, args.persona, deep_catalog=args.deep_catalog or args.targeted_catalog, exhaustive_details=args.exhaustive_details, targeted_catalog=args.targeted_catalog,
                                            checkpoint_path=args.checkpoint, resume=args.resume)
             elif args.command == "inventory":
                 records = inventory_capabilities(inventory(client))

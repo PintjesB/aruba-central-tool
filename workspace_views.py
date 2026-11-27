@@ -1305,7 +1305,7 @@ def coverage_view(workspace, query):
                              f"{captured}/{len(reads)}", str(counted),
                              str(gap) if gap is not None else "Unavailable",
                              f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Inspect settings</a>'))
-        body += '<section><h2>Additional scoped configuration</h2><p class="filter-hint">These reads preserve returned data without assuming profile identity or scope applicability. Remaining unfiltered surveys are not necessarily missing configuration; targeted reads may already exist. Rejected or incomplete reads remain visible.</p>' + table(
+        body += '<section><h2>Additional scoped configuration</h2><p class="filter-hint">These reads preserve returned data without assuming profile identity or scope applicability. Scopes not surveyed are not verified empty. Fast catalog may miss previously unobserved local-only configuration; use Deep catalog for all supplemental scope surveys. Rejected or incomplete reads remain visible.</p>' + table(
             ("Profile type", "Scope views attempted", "Responses captured", "Count-confirmed reads", "Unfiltered scopes not surveyed", ""), scoped, search=True) + '</section>'
 
     return page("Module coverage", body, workspace.nav(name))

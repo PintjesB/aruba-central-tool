@@ -214,6 +214,7 @@ def diagnostics(bundle):
     # The keys below are allowlisted; resource identities are never exported.
     keyed = Counter()
     keyed_differences = Counter()
+    keyed_skipped = Counter()
     selector_shapes = Counter()
     for persona, scopes in (bundle.get("keyed_profile_details") or {}).get("profiles", {}).items():
         function = persona if persona in NETWORK_PERSONAS or persona in ("Library", "NAC", "ALL_DEVICE_FUNCTIONS", "UNFILTERED_SCOPE") else "other"
@@ -223,6 +224,9 @@ def diagnostics(bundle):
                 for identity, views in identities.items():
                     for kind, result in views.items():
                         side = kind if kind in ("local", "effective", "library", "tenant") else "other"
+                        if result.get("status") == "collection_only_sampled":
+                            keyed_skipped[(name, side)] += 1
+                            continue
                         state = safe_status(result.get("status"))
                         keyed[(function, name, side, state)] += 1
                         differences = result.get("differences")
@@ -260,8 +264,20 @@ def diagnostics(bundle):
         if name == "portal-assets":
             specialized[name].update(status=safe_status(entry.get("status", "not_collected")),
                                      images=len(entry.get("images", [])), count_confirmed=entry.get("count_confirmed") is True)
+    strategy = bundle.get("collection_strategy")
+    details = bundle.get("keyed_profile_details") or {}
+    detail_strategy = details.get("detail_strategy")
     return {
         "schema": 1, "kind": "anonymous_collection_diagnostics",
+        "collection_performance": {
+            "strategy": strategy if strategy in ("standard", "deep", "targeted") else "unknown",
+            "detail_strategy": detail_strategy if detail_strategy in ("adaptive", "exhaustive") else "unknown",
+            "logical_gets": sum(row["attempted"] for row in operations),
+            "individual_reads": sum(keyed.values()),
+            "collection_only": sum(keyed_skipped.values()),
+            "collection_only_by_module": [{"module": m, "view": v, "observations": n}
+                                          for (m, v), n in sorted(keyed_skipped.items())],
+        },
         "specialized_reads": specialized,
         "pagination_evidence": pagination_evidence(bundle, modules | {"config-assignments", "scope-maps"}),
         "keyed_comparison_counts": [{"module": m, "view": v, "comparison": c, "reads": n}
