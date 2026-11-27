@@ -1225,9 +1225,9 @@ def handler_for(workspace):
                     from .filter_presets import save_preset, delete_preset
                     form = {key: value[0] for key, value in values.items()}
                     if self.path == root + "save-filter":
-                        if set(form) != {"snapshot", "route", "params", "name"}:
+                        if set(form) != {"snapshot", "route", "params", "name", "binding"}:
                             raise ValueError("Invalid filter form")
-                        save_preset(workspace, form["snapshot"], form["route"], json.loads(form["params"]), form["name"])
+                        save_preset(workspace, form["snapshot"], form["route"], json.loads(form["params"]), form["name"], form["binding"])
                     else:
                         if set(form) != {"snapshot", "id"}:
                             raise ValueError("Invalid filter form")
