@@ -1392,9 +1392,10 @@ def report(snapshot):
             "warning": "Exact equality is not proof of safe inheritance; verify annotations, authority, dependencies and all affected devices."}
 
 
-def write_private(path, data):
+def write_private(path, data, *, compact=False):
     # Exclusive creation prevents accidental replacement; restrictive mode on POSIX.
-    payload = json.dumps(data, indent=2, allow_nan=False) + "\n"
+    payload = (json.dumps(data, separators=(",", ":"), allow_nan=False) if compact else
+               json.dumps(data, indent=2, allow_nan=False)) + "\n"
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as file:
         file.write(payload)
