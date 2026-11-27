@@ -59,17 +59,39 @@ def assessment_view(workspace, query):
     if category and category not in categories:
         raise ValueError("Unknown optimization category")
     from .workspace_views import select
+    from .workspace_ui import inspect
+    from .review_dispositions import STATES, snapshot_binding, finding_key, read_disposition
+    binding = snapshot_binding(workspace, name, bundle)
+    state_filter = query.get("state", "")
+    if state_filter and state_filter not in STATES:
+        raise ValueError("Unknown review state")
+    def review_row(row):
+        key = finding_key(binding, row)
+        disposition = read_disposition(workspace.directory, key)
+        if state_filter and disposition["state"] != state_filter:
+            return None
+        form = (f'<form method="post" action="{e(root + "review-disposition")}">'
+                f'<input type="hidden" name="csrf" value="{e(workspace.csrf)}">'
+                f'<input type="hidden" name="snapshot" value="{e(name)}">'
+                f'<input type="hidden" name="key" value="{e(key)}">'
+                + select("state", list(STATES.items()), disposition["state"], "Review status")
+                + f'<label>Review note<input name="note" maxlength="500" value="{e(disposition["note"])}"></label>'
+                + '<button type="submit">Save review status</button></form>'
+                '<p class="note">Local review record only. It is not approval or change authorization. A changed snapshot requires review again.</p>')
+        return tr(e(categories[row["category"]]), f'<strong>{e(row["profile"])}</strong><small>{e(module_label(row["module"]))}</small>',
+           e(persona_label(row["persona"])), str(row["instances"]), e(row["unit"]), str(row["known"]),
+           str(row["unknown"]) if row["unknown"] is not None else "Not assessed", e(row["next_step"]),
+           e(STATES[disposition["state"]]),
+           f'<a href="{url(root, row["route"], snapshot=name, **row["params"])}">Review finding</a> · ' + inspect("Review disposition", form, "Set status"))
     body += '<section><h2>Prioritized optimization worklist</h2>'
     body += '<p>Review larger groups first within each category. Counts describe observed review workload, not proven safe removals or a risk score. Recipient counts mean source recipients for local copies, observed shared deployments for Library names, and captured devices for ports. Unknown impact is not zero.</p>'
     body += (f'<form class="filter-bar" method="get" action="{e(root + "assessment")}"><input type="hidden" name="snapshot" value="{e(name)}">'
              + select("category", [("", "All categories")] + list(categories.items()), category, "Category")
+             + select("state", [("", "All review statuses")] + list(STATES.items()), state_filter, "Review status")
              + '<button type="submit">Filter worklist</button></form>')
-    body += table(("Opportunity", "Profile / configuration", "Function", "Count", "Unit", "Observed device/function pairs", "Unknown device/function pairs", "Next step", ""), [
-        tr(e(categories[row["category"]]), f'<strong>{e(row["profile"])}</strong><small>{e(module_label(row["module"]))}</small>',
-           e(persona_label(row["persona"])), str(row["instances"]), e(row["unit"]), str(row["known"]),
-           str(row["unknown"]) if row["unknown"] is not None else "Not assessed", e(row["next_step"]),
-           f'<a href="{url(root, row["route"], snapshot=name, **row["params"])}">Review finding</a>')
-        for row in worklist if not category or row["category"] == category], search=True)
+    review_rows = [review_row(row) for row in worklist if not category or row["category"] == category]
+    body += table(("Opportunity", "Profile / configuration", "Function", "Count", "Unit", "Observed device/function pairs", "Unknown device/function pairs", "Next step", "Review status", ""),
+                  [row for row in review_rows if row is not None], search=True)
     body += '</section>'
     body += '<section><h2>Evidence to resolve</h2>' + table(("Review queue", "Observed count", "Next step", ""), evidence) + '</section>'
     body += '<section><h2>Optimization opportunities</h2>' + table(("Review queue", "Observed count", "Next step", ""), opportunities) + '</section>'
