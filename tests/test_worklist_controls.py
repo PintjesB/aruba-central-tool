@@ -47,3 +47,32 @@ class WorklistControlsTests(unittest.TestCase):
                 self.assertTrue(tab.locator("[data-table-empty]").is_visible())
             finally:
                 browser.close()
+
+    @unittest.skipUnless(sync_playwright, "Browser test dependency unavailable")
+    def test_large_grid_paging_updates_only_visible_rows_and_retains_selection(self):
+        rows = [tr("Switch " + str(i), '<input type="checkbox" aria-label="Select">')
+                for i in range(1, 1001)]
+        html = page("Scale test", table(("Device", ""), rows, search=True))
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(executable_path=shutil.which("google-chrome") or shutil.which("chromium"), args=["--no-sandbox"])
+            try:
+                tab = browser.new_page()
+                tab.set_content(html)
+                tab.locator("tbody > tr:visible input").first.check()
+                tab.evaluate("""() => {
+                    window.changes = 0;
+                    new MutationObserver(records => { window.changes += records.length; }).observe(
+                        document.querySelector('tbody'), {subtree:true, attributes:true, attributeFilter:['hidden']});
+                }""")
+                tab.locator("[data-next]").click()
+                self.assertEqual(tab.locator("tbody > tr:visible").count(), 30)
+                self.assertEqual(tab.evaluate("window.changes"), 60)
+                tab.locator("[data-prev]").click()
+                self.assertTrue(tab.locator("tbody > tr:visible input").first.is_checked())
+                tab.locator("[data-sort-column='0']").click()
+                tab.locator("[data-sort-column='0']").click()
+                self.assertEqual(tab.locator("tbody > tr:visible").first.locator("td").first.inner_text(), "Switch 1000")
+                tab.locator("[data-table-search]").fill("Switch 1")
+                self.assertGreater(tab.locator("tbody > tr:visible").count(), 0)
+            finally:
+                browser.close()
