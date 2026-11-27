@@ -49,6 +49,15 @@ class PreviewDecisionTests(unittest.TestCase):
                     self.assertIn("Review export available", tab.locator(".preview-decision").inner_text())
                     self.assertIn("Library / exact source scopes", tab.locator(".preview-transition").inner_text())
                     self.assertTrue(tab.locator("#export-plan").is_enabled())
+                    with tab.expect_download() as pending:
+                        tab.locator("#export-plan").click()
+                    exported = json.loads(Path(pending.value.path()).read_text(encoding="utf-8"))
+                    from aruba_central.review_manifest import validate_selection
+                    validated = validate_selection(Workspace(directory), exported["selection_manifest"])
+                    self.assertTrue(validated["review_export_gates_passed"])
+                    self.assertFalse(validated["safe_to_apply"])
+                    self.assertEqual(validated["observed_recipient_pairs"], len(exported["bulk_review"]["known_recipients"]))
+                    self.assertEqual(validated["uncertain_recipient_pairs"], len(exported["bulk_review"]["unknown_recipients"]))
                     self.assertEqual(errors, [])
                 finally:
                     browser.close()

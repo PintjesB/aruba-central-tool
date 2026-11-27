@@ -187,3 +187,22 @@ After a fresh Deep collection, use `python -m aruba_central.coverage_diagnostics
 ### Tenant snapshot names
 
 Optionally enter a tenant/customer name in the connection form. New snapshots include a filesystem-safe version of that label in the filename, and the exact display label in private snapshot metadata. The label is operator supplied (not an authenticated tenant identifier), is not included in anonymous diagnostics, and does not replace the existing workspace identity guard. Previously saved snapshots are unchanged. Keep one workspace directory per customer.
+
+
+### Validate an exported consolidation preview offline
+
+New consolidation preview exports include a selection manifest bound to the exact
+saved snapshot file in the local workspace. To independently re-derive the selected
+proposals, recipient counts, destination choices and review export gates:
+
+```shell
+python -m aruba_central.review_manifest --directory <private-workspace> --preview <consolidation-preview.json>
+```
+
+Use the original, unchanged snapshot in the same workspace. Older exports
+without a manifest must be exported again. The validator ignores client-provided
+proposal bodies and bulk summaries; it reconstructs the selection from the
+capture. A passing result qualifies the local review selection only, not the
+contents of every exported field, live state, authorization, deployment,
+or permission to execute. Do not transfer these private exports to the public
+repository.
