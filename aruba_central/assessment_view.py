@@ -74,6 +74,8 @@ def assessment_view(workspace, query):
     state_filter = query.get("state", "")
     if state_filter and state_filter not in STATES:
         raise ValueError("Unknown review state")
+    return_fields = (f'<input type="hidden" name="return_category" value="{e(category)}">'
+                     f'<input type="hidden" name="return_state" value="{e(state_filter)}">')
     def review_row(row):
         key = finding_key(binding, row)
         disposition = read_disposition(workspace.directory, key)
@@ -86,6 +88,7 @@ def assessment_view(workspace, query):
                 f'<input type="hidden" name="csrf" value="{e(workspace.csrf)}">'
                 f'<input type="hidden" name="snapshot" value="{e(name)}">'
                 f'<input type="hidden" name="key" value="{e(key)}">'
+                + return_fields
                 + '<label>Review status<select name="state">' + "".join(
                     f'<option value="{e(value)}"{" selected" if value == disposition["state"] else ""}>{e(label)}</option>' for value, label in STATES.items()) + '</select></label>'
                 + f'<label>Review note<input name="note" maxlength="500" value="{e(disposition["note"])}"></label>'
@@ -111,12 +114,13 @@ def assessment_view(workspace, query):
              f'<form id="bulk-review-form" method="post" action="{e(root + "bulk-review-disposition")}">'
              f'<input type="hidden" name="csrf" value="{e(workspace.csrf)}"><input type="hidden" name="snapshot" value="{e(name)}">'
              '<input type="hidden" name="keys" value="[]">'
+             + return_fields
              + select("state", list(STATES.items()), "reviewed", "New review status").replace('id="state"', 'id="bulk-state"')
              + '<label>Notes<select name="replace_notes"><option value="no">Preserve existing notes</option><option value="yes">Replace with shared note</option></select></label>'
              '<label>Shared note<input name="note" maxlength="500"></label>'
              '<label><input type="checkbox" name="confirmed" value="yes" required>Confirm local status update only</label>'
              '<button type="submit" id="bulk-review-submit" disabled>Update selected findings</button></form>'
-             '<p class="note">Maximum 200 findings per update. Selections persist across table pages and searches. Existing notes are preserved by default. No Central changes or approvals.</p>')
+             '<p class="note">Maximum 200 findings per update. Selections persist across table pages and searches. Existing notes are preserved by default. Category and review-status filters remain active after saving; updated findings may leave the filtered list. No Central changes or approvals.</p>')
     body += '</section><script>' + BULK_REVIEW_JS + '</script>'
     body += '<section><h2>Evidence to resolve</h2>' + table(("Review queue", "Observed count", "Next step", ""), evidence) + '</section>'
     body += '<section><h2>Optimization opportunities</h2>' + table(("Review queue", "Observed count", "Next step", ""), opportunities) + '</section>'
