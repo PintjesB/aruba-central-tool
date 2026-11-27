@@ -68,7 +68,7 @@ def device_view(workspace, query):
         c = row["override_counts"]
         actions = f'<a href="{url(root, "report", **params, scope=device, module=module, view="all")}">Configuration</a>'
         if not row["device_only"]:
-            actions += f' · <a href="{url(root, "overrides", **params, device=device, module=module, result="")}">Overrides</a>'
+            actions += f' · <a href="{url(root, "overrides", **params, device=device, module=module, result="all")}">Overrides</a>'
         rows.append(tr(e(module_label(module)), e(row["local"]), e(row["effective"]),
                        "Qualified" if row["qualified"] else "Unqualified", str(row["profiles"]) if row["qualified"] else "Unknown",
                        str(c.get("local_review", 0)) if not row["device_only"] and row["qualified"] else "Not assessed",

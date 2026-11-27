@@ -7,10 +7,11 @@ from pathlib import Path
 from .workspace_ui import e, page, intro, table, tr, badge
 
 ROUTES = {
-    "assessment": {"mode", "category", "state", "persona", "group_by", "parent_kind", "drill"},
+    "assessment": {"mode", "category", "state", "persona", "group_by", "parent_kind", "drill", "previous", "confirmed"},
     "overrides": {"persona", "device", "module", "result", "readiness"},
-    "report": {"mode", "persona", "module", "scope", "view", "q", "evidence"},
+    "report": {"mode", "persona", "module", "scope", "view", "q", "evidence", "presentation", "group"},
     "compare": {"mode", "persona", "module", "left", "right", "view", "identity", "fields", *("scope" + str(i) for i in range(1, 6))},
+    "scopes": {"mode", "persona", "device"},
     "library": {"module"},
     "advanced": {"workflow", "group"},
     "assignments": {"module", "persona", "identity"},
@@ -18,8 +19,8 @@ ROUTES = {
 }
 LABELS = {"assessment": "Configuration assessment", "overrides": "Device overrides",
           "report": "Configuration explorer", "compare": "Compare", "library": "Library",
-          "advanced": "Engineering", "assignments": "Library assignments", "advisor": "Consolidation"}
-TARGET_FIELDS = {"device", "scope", "left", "right", "identity", "group", "drill", "evidence", *("scope" + str(i) for i in range(1, 6))}
+          "scopes": "Inventory", "advanced": "Engineering", "assignments": "Library assignments", "advisor": "Consolidation"}
+TARGET_FIELDS = {"device", "scope", "left", "right", "identity", "group", "drill", "evidence", "previous", *("scope" + str(i) for i in range(1, 6))}
 ID = re.compile(r"[0-9a-f]{32}")
 
 
