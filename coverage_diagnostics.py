@@ -36,6 +36,68 @@ def view_summary(view):
     }
 
 
+def raw_shape(payload, identity_keys=()):
+    """Aggregate response structure without emitting tenant keys or values."""
+    if not isinstance(payload, dict):
+        return "non_object", 0, 0
+    if not payload:
+        return "empty_object", 0, 0
+    fields = {k: v for k, v in payload.items() if k not in ("metadata", "@")}
+    if not fields:
+        return "metadata_only", 0, 0
+    lists = [v for v in fields.values() if isinstance(v, list)]
+    if len(fields) == 1 and len(lists) == 1:
+        records = lists[0]
+        if not records:
+            return "empty_list", 0, 0
+        if not all(isinstance(r, dict) for r in records):
+            return "non_record_list", 0, 0
+        shape = "record_list"
+    elif len(fields) == 1 and isinstance(next(iter(fields.values())), dict):
+        records = [next(iter(fields.values()))]
+        shape = "object_envelope"
+    elif any(k in fields for k in identity_keys):
+        records = [fields]
+        shape = "direct_object"
+    else:
+        return "other_object", 0, 0
+    matched = sum(any(type(row.get(key)) in (str, int) and str(row[key]).strip()
+                      for key in identity_keys) for row in records)
+    return shape, len(records), matched
+
+
+def raw_profile_shapes(bundle, catalog, modules):
+    keys = {}
+    for request in catalog["get_requests"]:
+        match = re.fullmatch(r"/network-config/v1alpha1/([a-z][a-z0-9-]*)/:([a-z][a-z0-9-]*)",
+                             request["path"])
+        if request["method"] == "GET" and match:
+            module, key = match.groups()
+            keys.setdefault(module, set()).add(key)
+    counts = Counter()
+    records = Counter()
+    matches = Counter()
+    for module, entry in (bundle.get("unadapted_profiles") or {}).items():
+        if module not in modules:
+            continue
+        views = [("library", entry.get("library", {}))]
+        for source in entry.get("source_views", []):
+            views.extend((side, source.get(side, {})) for side in ("committed", "effective"))
+        for side, view in views:
+            if "raw" not in view:
+                continue
+            shape, n, m = raw_shape(view["raw"], keys.get(module, ()))
+            if shape == "empty_object":
+                continue
+            group = (module, side, shape)
+            counts[group] += 1
+            records[group] += n
+            matches[group] += m
+    return [{"module": m, "view": v, "shape": s, "responses": n,
+             "records": records[(m, v, s)], "records_with_documented_key": matches[(m, v, s)]}
+            for (m, v, s), n in sorted(counts.items())]
+
+
 def diagnostics(bundle):
     if bundle.get("schema") != 1 or bundle.get("kind") != "configuration_audit":
         raise ValueError("Expected a configuration audit")
@@ -146,6 +208,7 @@ def diagnostics(bundle):
         "scoped_views": [{"persona": p, "module": m, "scope_kind": k, "view": v, "status": s,
                           "count_confirmed": c, "http_error": h, "views": n}
                          for (p, m, k, v, s, c, h), n in sorted(scoped.items(), key=lambda row: str(row[0]))],
+        "raw_profile_shapes": raw_profile_shapes(bundle, catalog, modules),
         "raw_scope_outcomes": [{"module": m, "status": s, "views": n}
                                for (m, s), n in sorted(raw.items())],
         "nac": nac, "attempted_operations": sorted(operations, key=lambda row: row["path"]),
