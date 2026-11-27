@@ -38,3 +38,16 @@ class OptimizationWorklistTests(unittest.TestCase):
             advisor = workspace.advisor({"snapshot": name, "group": finding["id"], "finding": "promote_local"})
             self.assertEqual(advisor.count('data-action="promote_local"'), 1)
             self.assertNotIn('data-action="remove_override"', advisor)
+
+
+    def test_reduction_scenarios_are_conditional_and_exclude_ports(self):
+        from aruba_central.optimization_worklist import reduction_scenario
+        def estimate(category, instances=4, next_step="Inspect change preview"):
+            return reduction_scenario({"category": category, "instances": instances, "next_step": next_step})
+        self.assertEqual(estimate("remove_override")["count"], 4)
+        self.assertIsNone(estimate("remove_override", next_step="Evidence blocks preview")["count"])
+        self.assertEqual(estimate("promote_local")["count"], 3)
+        self.assertEqual(estimate("reuse_library")["count"], 4)
+        self.assertEqual(estimate("duplicates")["count"], 3)
+        self.assertEqual(estimate("duplicates")["unit"], "Library names")
+        self.assertIsNone(estimate("ports")["count"])

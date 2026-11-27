@@ -48,3 +48,25 @@ def optimization_worklist(bundle, findings, engineering):
                      "next_step": "Review saved settings and profile mapping",
                      "route": "advanced", "params": {"workflow": "ports", "group": engineering_group_id("ports", g)}})
     return sorted(rows, key=lambda r: (r["category"], -r["instances"], -r["known"], r["persona"], r["module"], r["profile"]))
+
+
+def reduction_scenario(row):
+    """Conditional definition-count scenario, never a forecast of safe deletes.
+
+    Keep this separate from the stable review disposition row identity.
+    """
+    count = row["instances"]
+    action = row["category"]
+    if action == "remove_override":
+        if row["next_step"] == "Evidence blocks preview":
+            return {"count": None, "unit": "definitions", "reason": "Removal preview blocked; no reduction estimated."}
+        return {"count": count, "unit": "definitions", "reason": "If all listed local copies can be removed and the inherited definitions remain unchanged."}
+    if action == "reuse_library":
+        return {"count": count, "unit": "definitions", "reason": "If the existing Library definition can replace every listed local copy; excludes assignment objects."}
+    if action == "promote_local":
+        return {"count": max(0, count - 1), "unit": "definitions", "reason": "If one new shared definition replaces all listed local copies; excludes assignment objects."}
+    if action == "duplicates":
+        return {"count": max(0, count - 1), "unit": "Library names", "reason": "If one name is retained and all other names can be retired after migrating references and assignments."}
+    if action == "ports":
+        return {"count": None, "unit": "definitions", "reason": "Port identities remain; shared field reduction depends on saved settings and the chosen profile."}
+    raise ValueError("Unknown optimization category")
