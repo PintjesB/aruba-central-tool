@@ -78,6 +78,7 @@ class Central:
         self._retry_at = 0.0
         self._next_request_at = 0.0
         self._request_interval = 1 / 9
+        self._custom_api_terminal_500s = 0
 
     def _wait_rate_limit(self):
         # HPE documents 10 requests/s per account across all credentials.
@@ -94,14 +95,29 @@ class Central:
     def _request(self, request, label):
         if not hasattr(self._http, "opener"):
             self._http.opener = build_opener(NoRedirect())
+        # This optional endpoint returned HTTP 500 at every observed scope
+        # in the first exhaustive audit. Keep every logical GET, but avoid
+        # repeated backoff on a persistently failing endpoint. Success or
+        # another terminal response restores the normal retry budget.
+        custom_get = (request.get_method() == "GET"
+                      and urlsplit(request.full_url).path == ALPHA + "/custom-get-api")
         for attempt in range(4):
             if request.get_method() == "GET":
                 self._wait_rate_limit()
             try:
                 with self._http.opener.open(request, timeout=30) as response:
-                    return json.load(response)
+                    payload = json.load(response)
+                if custom_get:
+                    with self._rate_lock:
+                        self._custom_api_terminal_500s = 0
+                return payload
             except HTTPError as exc:
-                if request.get_method() == "GET" and exc.code in (429, 500, 502, 503, 504) and attempt < 3:
+                with self._rate_lock:
+                    repeated_custom_500 = (custom_get and exc.code == 500
+                                           and self._custom_api_terminal_500s >= 3)
+                retry_hint = exc.headers.get("Retry-After", "")
+                if (request.get_method() == "GET" and exc.code in (429, 500, 502, 503, 504)
+                        and attempt < 3 and (not repeated_custom_500 or bool(retry_hint))):
                     delay = exc.headers.get("Retry-After", "")
                     if delay.isdigit() and int(delay) > 60:
                         raise RuntimeError(f"{label}: rate-limit delay exceeds retry budget") from None
@@ -113,6 +129,10 @@ class Central:
                     else:
                         time.sleep(seconds)
                     continue
+                if custom_get:
+                    with self._rate_lock:
+                        self._custom_api_terminal_500s = (min(3, self._custom_api_terminal_500s + 1)
+                                                         if exc.code == 500 else 0)
                 raise APIError(label, exc.code) from None
 
     def _token(self):
