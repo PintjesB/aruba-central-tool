@@ -73,7 +73,13 @@ def keyed_assignment_capture(client, assignments, workers=1, progress=None):
         tasks.setdefault(identity, row)
     def read(identity):
         path = ALPHA + "/config-assignments/" + "/".join(quote(v, safe="") for v in identity)
-        result = evidence_read(client, path)
+        # The keyed GET publishes the same view selectors as the collection.
+        # Explicitly request the committed mapping at its observed context.
+        # https://www.postman.com/hpe-aruba-networking/new-hpe-aruba-networking-central/request/32717089-299748d9-7ce9-432e-9f84-c55c093fa38f
+        sid, persona, _, _ = identity
+        result = evidence_read(client, path, **{"view-type": "LOCAL", "scope-id": sid,
+                                                "device-function": persona,
+                                                "effective": "false", "detailed": "true"})
         raw = result.get("raw")
         if result["status"] == "response_received":
             rows = None
@@ -88,8 +94,15 @@ def keyed_assignment_capture(client, assignments, workers=1, progress=None):
             elif len(rows) != 1 or assignment_identity(rows[0]) != identity:
                 result["status"] = "identity_unresolved"
             else:
-                result["status"] = "identity_observed"
-                result["body_matches_inventory"] = canonical(rows[0]) == canonical(tasks[identity])
+                metadata = raw.get("metadata", {})
+                counts = metadata.get("count_objects_in_module", {}) if isinstance(metadata, dict) else None
+                if (not isinstance(counts, dict)
+                        or any(type(value) is not int or value != 1 for value in
+                               (metadata.get("count", 1), metadata.get("total", 1), counts.get("ANY", 1)))):
+                    result["status"] = "count_mismatch"
+                else:
+                    result["status"] = "identity_observed"
+                    result["body_matches_inventory"] = canonical(rows[0]) == canonical(tasks[identity])
         return {"selector": dict(zip(ASSIGNMENT_KEYS, identity)), **result}
     records = ordered_parallel(sorted(tasks), read, workers, completed=lambda done, total:
         audit_progress(progress, "Individual assignments", done, total, "Reading observed assignment identities"))
