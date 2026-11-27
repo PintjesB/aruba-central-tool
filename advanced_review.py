@@ -86,6 +86,10 @@ def explicit_references(value, path=(), module=None):
                         yield list_target, member if isinstance(member, str) and member else None, here + (i,)
                 else:
                     yield list_target, None, here
+            # HPE net-group schema: a root exclude points to another netdestination.
+            # https://developer.arubanetworks.com/new-central-config/reference/createnetgroupsnetgroupbyid
+            elif module == "net-groups" and not path and key == "exclude":
+                yield "net-groups", item if isinstance(item, str) and item.strip() else None, here
             elif module == "policies" and (target := policy_named_target(path, key)):
                 yield target, item if isinstance(item, str) and item else None, here
             elif key in named:
