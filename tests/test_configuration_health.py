@@ -44,3 +44,10 @@ class ConfigurationHealthTests(unittest.TestCase):
             self.assertIn("device=4", html)
             with self.assertRaises(ValueError):
                 workspace.assessment({**query, "drill": "scope:999"})
+
+    def test_filtered_device_counts_match_full_rollup(self):
+        bundle = fixture()
+        full = configuration_health(bundle, persona="ACCESS_SWITCH", group_by="device")
+        selected = configuration_health(bundle, persona="ACCESS_SWITCH", group_by="device", device_ids={"3"})
+        self.assertEqual(selected, [row for row in full if row["scope"] == "3"])
+        self.assertEqual(configuration_health(bundle, group_by="device", device_ids=set()), [])

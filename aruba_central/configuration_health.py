@@ -5,7 +5,7 @@ from .workspace_ui import e, page, intro, table, tr, metrics, persona_label
 from .workspace_views import load, select, url
 
 
-def configuration_health(bundle, *, persona="", group_by="site"):
+def configuration_health(bundle, *, persona="", group_by="site", device_ids=None):
     if group_by not in ("site", "group", "collection", "device"):
         raise ValueError("Unknown grouping")
     result = []
@@ -14,6 +14,8 @@ def configuration_health(bundle, *, persona="", group_by="site"):
             continue
         members = scope_memberships(entry["scopes"])
         scopes = {s["id"]: s for s in entry["scopes"]}
+        if device_ids is not None:
+            members = {sid: membership for sid, membership in members.items() if sid in device_ids}
         counts = {sid: Counter() for sid in members}
         for module, data in entry["modules"].items():
             views = {row["scope"]: row for row in data["scope_results"]}
@@ -61,22 +63,24 @@ def health_view(workspace, query):
     persona, grouping = query.get("persona", ""), query.get("group_by", "site")
     if persona and persona not in bundle["results"]:
         raise ValueError("Unknown persona")
-    records = configuration_health(bundle, persona=persona, group_by=grouping)
     drill = query.get("drill", "")
     parent_kind = query.get("parent_kind", "")
+    selected = None
+    allowed = None
     if drill or parent_kind:
         if not persona or grouping != "device" or parent_kind not in ("site", "group", "collection"):
             raise ValueError("Invalid scope drilldown")
-        groups = configuration_health(bundle, persona=persona, group_by=parent_kind)
-        selected = next((row for row in groups if
-                         (drill == "unknown" and row["membership_unknown"]) or
-                         (not row["membership_unknown"] and drill == "scope:" + str(row["scope"]))), None)
-        if selected is None:
+        entry = bundle["results"][persona]
+        members = scope_memberships(entry["scopes"])
+        scopes = {s["id"]: s for s in entry["scopes"]}
+        allowed = {sid for sid, membership in members.items()
+                   if (drill == "unknown" and membership[parent_kind] is None)
+                   or (membership[parent_kind] is not None and drill == "scope:" + str(membership[parent_kind]))}
+        if not allowed:
             raise ValueError("Unknown parent scope")
-        allowed = set(selected["device_ids"])
-        records = [row for row in records if row["scope"] in allowed]
-    else:
-        selected = None
+        target = members[next(iter(allowed))][parent_kind]
+        selected = {"name": (scopes[target].get("name") or target) if target is not None else "Membership not established"}
+    records = configuration_health(bundle, persona=persona, group_by=grouping, device_ids=allowed)
     body = intro("Configuration health and evidence", "Review captured configuration consistency and evidence gaps by scope.", picker)
     body += f'<p><a href="{url(root, "assessment", snapshot=name)}">Return to optimization worklist</a></p>'
     body += (f'<section><form class="filter-bar" method="get" action="{e(root + "assessment")}">'
