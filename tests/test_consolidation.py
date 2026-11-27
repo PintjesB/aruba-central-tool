@@ -321,6 +321,28 @@ class ConsolidationTests(unittest.TestCase):
             self.assertIn("if(!check.disabled)", html)
             self.assertNotIn(">Default differences<", html)
 
+    def test_filtered_override_analysis_matches_full_results(self):
+        from unittest.mock import patch
+        from aruba_central.override_view import device_override_rows
+        from aruba_central.inheritance_review import nearest_fallback
+        data = fixture()
+        before = copy.deepcopy(data)
+        full, missing = device_override_rows(data, "ACCESS_SWITCH")
+        for device, module in (("3", "layer2-vlan"), ("5", ""), ("", "layer2-vlan"), ("3", "")):
+            with self.subTest(device=device, module=module):
+                def selected(row):
+                    return (not device or row["device"] == device) and (not module or row["module"] == module)
+                with patch("aruba_central.override_view.nearest_fallback", wraps=nearest_fallback) as fallback:
+                    actual, incomplete = device_override_rows(data, "ACCESS_SWITCH", device=device, module_filter=module)
+                self.assertEqual(actual, [row for row in full if selected(row)])
+                self.assertEqual(incomplete, [row for row in missing if selected(row)])
+                self.assertEqual(fallback.call_count, len(actual))
+                indexes = {}
+                for call in fallback.call_args_list:
+                    index = call.kwargs["index"]
+                    self.assertIs(indexes.setdefault(call.args[1], index), index)
+        self.assertEqual(data, before)
+
     def test_device_override_comparison_and_deep_links(self):
         from aruba_central.override_view import device_override_rows
         from aruba_central.config_app import Workspace
