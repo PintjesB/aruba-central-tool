@@ -62,9 +62,12 @@ def find_entities(bundle, text, *, category="", offset=0, limit=150):
     counts, rows, total = Counter(), [], 0
     if terms:
         for item in entities(bundle):
-            haystack = " ".join(str(v) for v in (item["label"], item.get("alternate_label", ""), item["identity"], item["scope_name"], item["scope"],
-                                item["persona"], persona_label(item["persona"]), item["module"], module_label(item["module"]))).casefold()
-            if not all(term in haystack for term in terms):
+            fields = [str(v).casefold() for v in (item["label"], item.get("alternate_label", ""), item["identity"],
+                                item["scope_name"], item["scope"], item["persona"], persona_label(item["persona"]),
+                                item["module"], module_label(item["module"]))]
+            # Exact phrases cannot straddle unrelated fields (e.g. a device
+            # function code followed by its friendly label).
+            if not all(any(term in field for field in fields) for term in terms):
                 continue
             counts[item["category"]] += 1
             if category and item["category"] != category:
