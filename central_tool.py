@@ -2705,6 +2705,12 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
     scope_kinds = {(persona, str(scope["scope"])): scope.get("scope_kind")
                    for persona, entry in results.items() for data in entry["modules"].values()
                    for scope in data["scope_results"]}
+    # The complete scope inventory also identifies scopes seen only in raw
+    # supplemental modules. Do not infer a scope kind from a profile ID.
+    for persona, entry in results.items():
+        for scope in entry.get("scopes", []):
+            if scope.get("kind"):
+                scope_kinds.setdefault((persona, str(scope["id"])), scope["kind"])
     # Individual Ethernet reads are the only source of additional fields in
     # the first live exhaustive validation. Keep device-specific interface
     # reads and the effective counterpart of every saved local profile direct.
@@ -2719,12 +2725,15 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
         annotation = profile.get("@") if isinstance(profile, dict) else None
         if (adaptive and kind == "effective" and persona in NETWORK_PERSONAS
                 and module not in direct_modules and (persona, sid, module, identity) not in saved_selectors
-                and scope_kind == "device" and isinstance(profile, dict)
+                and scope_kind in {"device", "site", "collection", "group"} and isinstance(profile, dict)
                 and isinstance(annotation, dict)
                 and (annotation.get("aruba-annotation:inherited") is True
-                     or annotation.get("aruba-annotation:object_type") == "SHARED"
-                     or annotation.get("aruba-annotation:is_default") is True)):
-            groups[(persona, module, identity, canonical(profile_body(profile)),
+                     or (scope_kind == "device"
+                         and (annotation.get("aruba-annotation:object_type") == "SHARED"
+                              or annotation.get("aruba-annotation:is_default") is True)))):
+            # Higher-scope groups require explicit inheritance, and never
+            # mix different scope kinds, personas or source annotations.
+            groups[(persona, scope_kind, module, identity, canonical(profile_body(profile)),
                     canonical(annotation))].append(task)
         else:
             direct.append(task)
@@ -2781,6 +2790,9 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
             "supplemental_raw_reads": supplemental_count,
             "detail_strategy": "adaptive" if adaptive else "exhaustive",
             "candidate_reads": len(tasks), "actual_reads": len(initial) + len(expanded),
+            "candidate_reads_by_module": dict(Counter(t[2] for t in tasks)),
+            "initial_reads_by_module": dict(Counter(t[2] for t in initial)),
+            "expanded_reads_by_module": dict(Counter(t[2] for t in expanded)),
             "collection_only_by_module": dict(skipped), "sample_groups": len(pending_groups),
             "expanded_groups_reads": len(expanded),
             "complete": False, "safe_to_apply": False}
