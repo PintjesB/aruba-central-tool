@@ -387,6 +387,7 @@ class Workspace:
         # the collection status endpoint.
         self.snapshot_lock = threading.Lock()
         self._reviewed_snapshot = None
+        self._overview_snapshot = None
         self.state = "idle"
         self.phase = ""
         self.detail = ""
@@ -569,11 +570,57 @@ class Workspace:
     def nav(self, snapshot=None):
         return navigation("/" + self.token + "/", snapshot)
 
+    def snapshot_overview(self, name):
+        """Cache only the small dashboard summary, never another full capture."""
+        from .consolidation import profile_recommendations
+        from collections import Counter
+        from .central_tool import refresh_configuration_review
+        with self.snapshot_lock:
+            path = next((p for p in audit_files(self.directory) if p.name == name), None)
+            if path is None:
+                raise ValueError("Unknown snapshot")
+            def fingerprint():
+                if path.is_symlink():
+                    raise ValueError("Unknown snapshot")
+                stat = path.stat()
+                return (path.name, stat.st_dev, stat.st_ino, stat.st_size,
+                        stat.st_mtime_ns, stat.st_ctime_ns)
+            before = fingerprint()
+            if self._overview_snapshot is not None and self._overview_snapshot[0] == before:
+                return self._overview_snapshot[1]
+            self._overview_snapshot = None
+            bundle = read_audit(self.directory, name)
+            coverage = module_coverage(bundle)
+            devices = {s["id"] for entry in bundle["results"].values() for s in entry["scopes"] if s["kind"] == "device"}
+            scopes = {s["id"] for entry in bundle["results"].values() for s in entry["scopes"] if s["kind"] != "device"}
+            library = (bundle.get("library") or {}).get("modules", {})
+            complete_structure = all(
+                {"scope_kind", "local_view", "effective_view"} <= scope.keys()
+                for entry in bundle["results"].values() for data in entry["modules"].values()
+                for scope in data["scope_results"])
+            # Coverage and inventory are based on the saved evidence, as before.
+            # Only the recommendation calculation reparses adapter evidence.
+            summary = {"device_count": len(devices), "scope_count": len(scopes),
+                       "library_count": sum(len(v["profiles"]) for v in library.values() if v["status"] == "list_parsed"),
+                       "coverage_count": len(coverage),
+                       "qualified_count": sum(r["status"] == "qualified" for r in coverage),
+                       "tenant_name": bundle.get("tenant_name"),
+                       "captured_at": bundle.get("captured_at", "unknown"),
+                       "findings_available": complete_structure, "counts": {}}
+            if complete_structure:
+                reviewed = (self._reviewed_snapshot[1] if self._reviewed_snapshot is not None
+                            and self._reviewed_snapshot[0] == before else refresh_configuration_review(bundle))
+                summary["counts"] = dict(Counter(f["action"] for f in profile_recommendations(reviewed)))
+            if before != fingerprint():
+                raise ValueError("Snapshot changed while loading; open it again")
+            self._overview_snapshot = (before, summary)
+            return summary
+
     def home(self, query=None):
         root = "/" + self.token + "/"
         files = audit_files(self.directory)
         name = (query or {}).get("snapshot", files[0].name if files else None)
-        bundle = read_audit(self.directory, name) if name else None
+        bundle = self.snapshot_overview(name) if name else None
         status = self.status()
         state = status["state"]
         from .central_tool import EU_REGIONS
@@ -691,29 +738,18 @@ if(panel.dataset.state==='running')poll();
 </script>"""
         summary = ""
         if bundle:
-            coverage = module_coverage(bundle)
-            devices = {s["id"] for entry in bundle["results"].values() for s in entry["scopes"] if s["kind"] == "device"}
-            qualified = sum(r["status"] == "qualified" for r in coverage)
-            library = (bundle.get("library") or {}).get("modules", {})
-            observed = sum(len(v["profiles"]) for v in library.values() if v["status"] == "list_parsed")
-            scopes = {s["id"] for entry in bundle["results"].values() for s in entry["scopes"] if s["kind"] != "device"}
-            summary = metrics([("Devices", len(devices), "Captured inventory"),
-                               ("Configuration scopes", len(scopes), "Non-device scopes"),
-                               ("Library profiles", observed, "Observed definitions")])
-            from .consolidation import profile_recommendations
+            coverage_count = bundle["coverage_count"]
+            qualified = bundle["qualified_count"]
+            summary = metrics([("Devices", bundle["device_count"], "Captured inventory"),
+                               ("Configuration scopes", bundle["scope_count"], "Non-device scopes"),
+                               ("Library profiles", bundle["library_count"], "Observed definitions")])
             from collections import Counter
-            from .central_tool import refresh_configuration_review
-            complete_structure = all(
-                {"scope_kind", "local_view", "effective_view"} <= scope.keys()
-                for entry in bundle["results"].values() for data in entry["modules"].values()
-                for scope in data["scope_results"])
-            findings = profile_recommendations(refresh_configuration_review(bundle)) if complete_structure else None
-            counts = Counter(f["action"] for f in findings or [])
+            counts = Counter(bundle["counts"])
             opportunities = counts["remove_override"] + counts["promote_local"] + counts["reuse_library"]
             advisor_href = root + "advisor?" + urlencode({"snapshot": name})
             overrides_href = root + "overrides?" + urlencode({"snapshot": name})
             coverage_href = root + "coverage?" + urlencode({"snapshot": name})
-            if findings is None:
+            if not bundle["findings_available"]:
                 summary += '<section><h2>Consolidation analysis unavailable</h2><p>This snapshot lacks the saved configuration evidence needed for review. Collect a new snapshot to calculate recommendations.</p></section>'
             else:
                 from .workspace_ui import icon
@@ -726,7 +762,7 @@ if(panel.dataset.state==='running')poll();
                     f'<div class="opportunity-meter"><span style="width:{100 * counts[key] / max(1, opportunities):.2f}%"></span></div>'
                     f'<b>{counts[key]}</b>{icon("chevron")}</a>'
                     for key, label, description in categories)
-                gap = len(coverage) - qualified
+                gap = coverage_count - qualified
                 summary = (f'<div class="overview-layout"><section class="overview-focus"><div class="focus-lead">'
                            '<div class="focus-kicker">' + icon("advisor") + ' Consolidation opportunities</div>'
                            f'<div class="focus-number">{opportunities}</div>'
@@ -735,10 +771,10 @@ if(panel.dataset.state==='running')poll();
                            f'<a class="button primary" href="{e(advisor_href)}">Review opportunities {icon("arrow")}</a></div>'
                            '<div class="overview-breakdown"><h3>Review by recommendation</h3>' + breakdown + '</div></section>'
                            '<section class="coverage-focus"><div class="focus-kicker">' + icon("coverage") + ' Data readiness</div>'
-                           f'<div class="coverage-number">{qualified}<small> / {len(coverage)}</small></div>'
+                           f'<div class="coverage-number">{qualified}<small> / {coverage_count}</small></div>'
                            '<h3>Fully qualified module reads</h3>'
-                           f'<div class="coverage-meter" role="img" aria-label="{qualified} of {len(coverage)} module reads fully qualified">'
-                           f'<span style="width:{100 * qualified / max(1, len(coverage)):.2f}%"></span></div>'
+                           f'<div class="coverage-meter" role="img" aria-label="{qualified} of {coverage_count} module reads fully qualified">'
+                           f'<span style="width:{100 * qualified / max(1, coverage_count):.2f}%"></span></div>'
                            f'<p>{gap} incomplete or unavailable module reads.</p><a href="{e(coverage_href)}">Inspect coverage {icon("arrow")}</a></section></div>'
                            + summary
                            + '<section class="overview-links"><div><h3>Review device overrides</h3><p>Inspect the actual differences between a device and Global before removing local definitions.</p>'
