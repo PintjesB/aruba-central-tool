@@ -89,13 +89,17 @@ def status(value):
 
 
 def table(headers, rows, *, search=False, label="Search", style=""):
-    header = "".join(f"<th scope=\"col\">{e(h)}</th>" for h in headers)
+    header = "".join(
+        f'<th scope="col"><button type="button" class="table-sort" data-sort-column="{index}">{e(h)}<span aria-hidden="true" class="sort-indicator"></span></button></th>'
+        if search and h else f'<th scope="col">{e(h)}</th>'
+        for index, h in enumerate(headers))
     table_class = f' class="{e(style)}"' if style else ""
     controls = ""
     if search:
         controls = (f'<div class="table-toolbar"><label class="searchbox table-search"><span class="sr-only">{e(label)}</span>'
                     + icon("search") + '<input type="search" data-table-search placeholder="Search records"></label>'
-                    '<span data-table-count class="muted" aria-live="polite"></span></div>')
+                    '<div class="table-options"><span data-table-count class="muted" aria-live="polite"></span>'
+                    '<label>Rows per page<select data-page-size><option>30</option><option>50</option><option>100</option></select></label></div></div>')
     pager = ('<div class="table-toolbar paging"><button type="button" data-prev aria-label="Previous page">Previous</button>'
              '<span data-page class="muted"></span><button type="button" data-next aria-label="Next page">Next</button></div>') if search else ""
     empty = '<p data-table-empty class="empty" hidden>No matching records.</p>' if search else ""
@@ -470,6 +474,16 @@ tbody tr:last-child td { border-bottom: 0; } td strong { font-weight: 650; } td 
 .group-usage td:first-child { min-width: 100px; } .retain-mark { font-size: 10px; color: var(--accent); font-weight: 650; }
 .table-toolbar { align-items: center; justify-content: space-between; margin: 0 0 12px; }
 .paging { margin: 12px 0 0; justify-content: flex-end; }
+.table-options { display:flex;align-items:center;gap:12px;flex-wrap:wrap; }
+.table-options label { display:flex;align-items:center;gap:6px;font-size:12px; }
+.table-options select { min-width:0;width:auto; }
+.table-sort { display:inline-flex;align-items:center;gap:6px;background:transparent;border:0;padding:0;color:inherit;font:inherit;text-align:left;cursor:pointer; }
+.table-sort:hover { color:var(--accent);background:transparent; }
+.sort-indicator { opacity:.55; }
+.sort-indicator::after { content:"↕"; }
+th[aria-sort=ascending] .sort-indicator::after { content:"↑";opacity:1; }
+th[aria-sort=descending] .sort-indicator::after { content:"↓";opacity:1; }
+
 .searchbox { flex: 1; max-width: 340px; } .searchbox input { width: 100%; }
 .table-search { position: relative; display: block; }
 .table-search .ui-icon { position: absolute; left: 10px; top: 9px; color: var(--muted); width: 16px; height: 16px; }
@@ -718,23 +732,43 @@ for(const form of document.querySelectorAll('[data-scope-filters]')){
 }
 function initGrid(grid){
  const rows=Array.from(grid.querySelectorAll(':scope > .table-scroll > table > tbody > tr'));
- const paging=grid.querySelector('.paging');
+ const tbody=grid.querySelector(':scope > .table-scroll > table > tbody');
+ const paging=grid.querySelector(':scope > .paging');
  const search=grid.querySelector('[data-table-search]');
  const count=grid.querySelector('[data-table-count]');
  const prev=grid.querySelector('[data-prev]'),next=grid.querySelector('[data-next]');
  const pageLabel=grid.querySelector('[data-page]'),empty=grid.querySelector('[data-table-empty]');
- let page=0;const size=30;
+ const sizeControl=grid.querySelector('[data-page-size]');
+ const headers=Array.from(grid.querySelectorAll(':scope > .table-scroll > table > thead [data-sort-column]'));
+ const indexed=rows.map((row,index)=>({row,index,search:row.textContent.toLowerCase(),values:Array.from(row.cells,c=>c.textContent.trim())}));
+ const collator=new Intl.Collator(undefined,{numeric:true,sensitivity:'base'});
+ let page=0,size=30,ordered=indexed,sortColumn=-1,direction=1;
  function update(reset=false){
   if(reset)page=0;
-  const term=search.value.toLowerCase().trim();
-  const filtered=rows.filter(r=>r.textContent.toLowerCase().includes(term));
+  const terms=search.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const filtered=ordered.filter(record=>terms.every(term=>record.search.includes(term)));
   const pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.min(page,pages-1);
-  const visible=new Set(filtered.slice(page*size,(page+1)*size));
+  const visible=new Set(filtered.slice(page*size,(page+1)*size).map(record=>record.row));
   for(const row of rows)row.hidden=!visible.has(row);
   count.textContent=filtered.length.toLocaleString()+' of '+rows.length.toLocaleString()+' records';pageLabel.textContent='Page '+(page+1)+' / '+pages;
   if(paging)paging.hidden=pages<=1;
   prev.disabled=page===0;next.disabled=page+1>=pages;empty.hidden=filtered.length!==0;
  }
+ for(const button of headers)button.addEventListener('click',()=>{
+  const column=Number(button.dataset.sortColumn);
+  if(sortColumn===column)direction=-direction;else{sortColumn=column;direction=1;}
+  for(const header of headers)header.closest('th').removeAttribute('aria-sort');
+  button.closest('th').setAttribute('aria-sort',direction===1?'ascending':'descending');
+  ordered=indexed.slice().sort((a,b)=>{
+   const left=a.values[column]||'',right=b.values[column]||'';
+   if(!left||!right)return left? -1:right?1:a.index-b.index;
+   return direction*collator.compare(left,right)||a.index-b.index;
+  });
+  const fragment=document.createDocumentFragment();
+  for(const record of ordered)fragment.append(record.row);
+  tbody.append(fragment);update(true);
+ });
+ sizeControl.addEventListener('change',()=>{size=Number(sizeControl.value);update(true);});
  search.addEventListener('input',()=>update(true));prev.addEventListener('click',()=>{page--;update();});
  next.addEventListener('click',()=>{page++;update();});update();
 }
