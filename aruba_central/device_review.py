@@ -28,8 +28,20 @@ def device_review(bundle, persona, device):
                         "effective": view.get("effective_view", {}).get("status", "not_collected"),
                         "qualified": bool(review.get("qualified")), "device_only": bool(data.get("device_scope_only")),
                         "profiles": sum(counts.values()), "states": dict(counts), "override_counts": dict(by_module.get(module, {}))})
+    # Unfiltered requests describe the scope without selecting a device
+    # function. Show those independently from typed observations.
+    supplemental = []
+    for module, data in sorted((bundle.get("unadapted_profiles") or {}).items()):
+        for source in data.get("source_views", []):
+            if str(source.get("scope")) != str(device) or source.get("persona") not in (persona, "UNFILTERED_SCOPE", "ALL_DEVICE_FUNCTIONS"):
+                continue
+            views = [source.get(side, {}) for side in ("committed", "effective")]
+            supplemental.append({"module": module, "selector": source["persona"],
+                                 "committed": views[0].get("status", "not_collected"),
+                                 "effective": views[1].get("status", "not_collected"),
+                                 "count_confirmed": sum(v.get("collection_count_verified") is True for v in views)})
     return {"device": scopes[device], "membership": {kind: scopes.get(sid) for kind, sid in membership.items()},
-            "modules": modules, "incomplete": len(incomplete), "safe_to_apply": False}
+            "modules": modules, "supplemental": supplemental, "incomplete": len(incomplete), "safe_to_apply": False}
 
 
 def device_view(workspace, query):
@@ -76,6 +88,14 @@ def device_view(workspace, query):
                        str(c.get("verification_required", 0)) if not row["device_only"] and row["qualified"] else "Not assessed",
                        actions))
     body += '<section><h2>Configuration by module</h2>' + table(("Module", "Saved read", "Effective read", "Comparison", "Profiles", "Local review", "Matching fallback", "Needs validation", ""), rows, search=True) + '</section>'
-    body += '<p class="note">Structured configuration only. Unknown membership and unqualified reads are not evidence of absence. Device-only modules are not assessed for reusable profile cleanup. No live changes.</p>'
+    supplemental = report["supplemental"]
+    if supplemental:
+        body += '<section><h2>Supplemental configuration evidence</h2><p>Additional raw observations at this exact device scope. Unfiltered reads do not establish device-function applicability.</p>'
+        body += table(("Module", "Request selector", "Committed read", "Effective read", "Count-confirmed reads", ""), [
+            tr(e(module_label(row["module"])), e(persona_label(row["selector"])), e(row["committed"]), e(row["effective"]),
+               str(row["count_confirmed"]) + "/2",
+               f'<a href="{url(root, "report", snapshot=name, mode="search", persona=row["selector"], module=row["module"], scope=device, q=device)}">Search captured settings</a>')
+            for row in supplemental], search=True) + '</section>'
+    body += '<p class="note">Structured module counts only. Unknown membership and unqualified reads are not evidence of absence. Device-only modules are not assessed for reusable profile cleanup. No live changes.</p>'
     body += '<details><summary>Captured device inventory metadata</summary>' + property_table(report["device"].get("metadata") or {}) + '</details>'
     return page("Scopes", body, workspace.nav(name))
