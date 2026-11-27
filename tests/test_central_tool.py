@@ -703,13 +703,31 @@ class Tests(unittest.TestCase):
                 return {"portal-id": path.rsplit("/", 1)[-1]}
         fake = Client()
         result = capture_keyed_profile_details(fake, {}, {}, workers=1, unadapted=extra)
-        self.assertEqual(result["supplemental_raw_reads"], 5)
-        self.assertEqual(result["outcomes"], {"identity_observed": 5})
-        self.assertEqual(len(fake.calls), 5)
+        self.assertEqual(result["supplemental_raw_reads"], 6)
+        self.assertEqual(result["outcomes"], {"identity_observed": 6})
+        self.assertEqual(len(fake.calls), 6)
         self.assertEqual(sum(p.get("object-type") == "LOCAL" for _, p in fake.calls), 1)
-        self.assertFalse(any(p.get("scope-id") == "13" for _, p in fake.calls))
+        unfiltered = [p for _, p in fake.calls if p.get("scope-id") == "13"]
+        self.assertEqual(len(unfiltered), 1)
+        self.assertNotIn("device-function", unfiltered[0])
+        self.assertIn("portal", result["profiles"]["ALL_DEVICE_FUNCTIONS"]["13"]["portals"])
         self.assertEqual(set(result["profiles"]["CAMPUS_AP"]["12"]["portals"]["local"]), {"local", "effective"})
         self.assertEqual(set(result["profiles"]["CAMPUS_AP"]["12"]["portals"]["shared"]), {"effective"})
+        self.assertFalse(result["safe_to_apply"])
+
+    def test_partial_profile_candidates_keep_valid_rows_and_exclude_conflicts(self):
+        from central_tool import observed_profile_candidates, capture_keyed_profile_details
+        a, b, c = ({"name": name, "enable": False} for name in ("a", "b", "c"))
+        partial = {"status": "count_mismatch", "profiles": {}, "raw": {"profiles": [a, b]},
+                   "raw_pages": [{"profiles": [a, c, {"invalid": True}]},
+                                 {"profiles": [{**b, "enable": True}]}]}
+        self.assertEqual(observed_profile_candidates(partial, "name"), {"a": a, "c": c})
+        self.assertEqual(partial["profiles"], {})
+        self.assertEqual(partial["status"], "count_mismatch")
+        result = capture_keyed_profile_details(Fake([a, c]), {},
+                     {"modules": {"dns": partial}}, workers=1)
+        self.assertEqual(result["outcomes"], {"identity_observed": 2})
+        self.assertEqual(set(result["profiles"]["Library"][""]["dns"]), {"a", "c"})
         self.assertFalse(result["safe_to_apply"])
 
     def test_keyed_singleton_metadata_is_validated_without_discarding_fields(self):
