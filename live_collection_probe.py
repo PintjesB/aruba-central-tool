@@ -58,22 +58,66 @@ def assignment_context(client, module, scopes, library, sample):
     directly observed matching definitions from unknown effective visibility.
     """
     from central_tool import profile_inventory_view, canonical, profile_body
-    result = observed_read(lambda: profile_inventory_view(
-        client, "config-assignments", "config-assignment", **{"profile-type": module}))
-    records = result.get("rows", [])
+    reads = []
     identities = set()
     contexts = {}
     unknown = 0
-    for row in records:
-        if (not isinstance(row, dict) or row.get("profile-type") != module
-                or type(row.get("profile-instance")) not in (str, int)
-                or type(row.get("scope-id")) not in (str, int)
-                or not isinstance(row.get("device-function"), str)):
-            unknown += 1
-            continue
-        identity = str(row["profile-instance"])
-        persona, sid = row["device-function"], str(row["scope-id"])
-        identities.add((identity, persona, sid))
+
+    def inspect(source, params, persona=None, sid=None):
+        nonlocal unknown
+        result = observed_read(lambda: profile_inventory_view(
+            client, "config-assignments", "config-assignment", **params))
+        raw = result.get("raw")
+        records = result.get("rows", [])
+        matched, invalid, unrelated, other_types = set(), 0, 0, 0
+        for row in records:
+            if (not isinstance(row, dict)
+                    or not isinstance(row.get("profile-type"), str)
+                    or type(row.get("profile-instance")) not in (str, int)
+                    or type(row.get("scope-id")) not in (str, int)
+                    or not isinstance(row.get("device-function"), str)):
+                invalid += 1
+                continue
+            row_persona, row_sid = row["device-function"], str(row["scope-id"])
+            if ((persona is not None and row_persona != persona)
+                    or (sid is not None and row_sid != sid)
+                    or ("profile-type" in params and row["profile-type"] != module)):
+                unrelated += 1
+                continue
+            if row["profile-type"] != module:
+                other_types += 1
+                continue
+            matched.add((str(row["profile-instance"]), row_persona, row_sid))
+        unknown += invalid + unrelated
+        identities.update(matched)
+        shape = ("missing" if raw is None else "non_object" if not isinstance(raw, dict)
+                 else "empty_object" if not raw else
+                 "expected_list" if isinstance(raw.get("config-assignment"), list)
+                 else "unexpected_envelope")
+        reads.append({"source": source, "status": safe_status(result.get("status")),
+                      "http_error": result.get("http_error"), "response_shape": shape,
+                      "rows": len(records), "matching_assignments": len(matched),
+                      "other_type_rows": other_types, "invalid_rows": invalid,
+                      "selector_mismatches": unrelated,
+                      "count_confirmed": result.get("collection_count_verified") is True
+                                         and not invalid and not unrelated})
+        return result, matched
+
+    result, filtered = inspect("profile_type", {"profile-type": module})
+    _, tenant = inspect("tenant", {})
+    # Sample every known scope kind rather than only scopes returned by a
+    # potentially incomplete profile-type query. Keep the request count bounded.
+    for persona, entry in sorted(scopes.items()):
+        by_kind = {}
+        for scope in sorted(entry["scopes"], key=lambda s: str(s["id"])):
+            if str(scope["id"]).isdigit():
+                by_kind.setdefault(scope["kind"], []).append(scope)
+        for kind, candidates in sorted(by_kind.items()):
+            for scope in candidates[:sample]:
+                sid = str(scope["id"])
+                inspect("scope_" + kind, {"scope-id": sid, "device-function": persona},
+                        persona, sid)
+    for identity, persona, sid in identities:
         scope = next((s for s in scopes.get(persona, {}).get("scopes", [])
                       if str(s["id"]) == sid), None)
         if scope:
@@ -102,7 +146,10 @@ def assignment_context(client, module, scopes, library, sample):
                     outcome = "matching_shared" if isinstance(ann, dict) and ann.get("aruba-annotation:object_type") == "SHARED" else "matching_source_unverified"
                 visibility[(persona, kind, side, safe_status(view.get("status")), outcome)] += 1
     return {"module": module, "assignment_read": safe_status(result.get("status")),
-            "assignment_count_confirmed": result.get("collection_count_verified") is True and not unknown,
+            "assignment_count_confirmed": reads[0]["count_confirmed"] and identities == filtered,
+            "assignment_reads": reads,
+            "tenant_only_assignments": len(tenant - filtered),
+            "additional_assignments": len(identities - filtered),
             "observed_assignments": len(identities), "invalid_or_unrelated_rows": unknown,
             "library_profiles_with_observed_assignment": len({i for i, _, _ in identities} & set(expected)),
             "library_profiles_without_observed_assignment": len(set(expected) - {i for i, _, _ in identities}),
