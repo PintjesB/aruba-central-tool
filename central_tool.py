@@ -2741,6 +2741,13 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
         for scope in entry.get("scopes", []):
             if scope.get("kind"):
                 scope_kinds.setdefault((persona, str(scope["id"])), scope["kind"])
+    # Unfiltered reads have no persona selector. Resolve their scope kind
+    # from the inventory only when every observed context agrees.
+    kinds_by_scope = defaultdict(set)
+    for (_, sid), scope_kind in scope_kinds.items():
+        if scope_kind:
+            kinds_by_scope[sid].add(scope_kind)
+    unfiltered_personas = {"ALL_DEVICE_FUNCTIONS", "UNFILTERED_SCOPE"}
     # Individual Ethernet reads are the only source of additional fields in
     # the first live exhaustive validation. Keep device-specific interface
     # reads and the effective counterpart of every saved local profile direct.
@@ -2748,13 +2755,21 @@ def capture_keyed_profile_details(client, results, library, workers=AUDIT_WORKER
     direct_modules = {"ethernet-interfaces", "vlan-interfaces", "portchannels", "layer2-vlan", "server-groups"}
     saved_selectors = {(p, sid, m, identity) for p, sid, m, identity, kind, _ in tasks
                        if kind == "local"}
+    saved_by_scope = {(sid, m, identity) for _, sid, m, identity in saved_selectors}
     direct, groups = [], defaultdict(list)
     for task in tasks:
         persona, sid, module, identity, kind, profile = task
         scope_kind = scope_kinds.get((persona, sid))
         annotation = profile.get("@") if isinstance(profile, dict) else None
-        if (adaptive and kind == "effective" and persona in NETWORK_PERSONAS
+        mixed = persona in unfiltered_personas
+        if mixed and len(kinds_by_scope[sid]) == 1:
+            scope_kind = next(iter(kinds_by_scope[sid]))
+        # Keep mixed and typed requests in separate groups. Only positive
+        # inherited/shared/default annotation evidence is eligible; an
+        # unfiltered selector must not sample a known saved local counterpart.
+        if (adaptive and kind == "effective" and (persona in NETWORK_PERSONAS or mixed)
                 and module not in direct_modules and (persona, sid, module, identity) not in saved_selectors
+                and (not mixed or (sid, module, identity) not in saved_by_scope)
                 and scope_kind in {"device", "site", "collection", "group"} and isinstance(profile, dict)
                 and isinstance(annotation, dict)
                 and (annotation.get("aruba-annotation:inherited") is True
