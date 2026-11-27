@@ -961,6 +961,7 @@ def library_view(workspace, query):
     if module and module not in modules:
         raise ValueError("Unknown module")
     assignments = library.get("assignments") or {}
+    additional = bundle.get("unadapted_profiles") or {}
     rows = []
     for key, view in sorted(modules.items()):
         if module and key != module:
@@ -974,7 +975,9 @@ def library_view(workspace, query):
     if not module:
         body += f'<p><a class="button" href="{url(root, "advanced", snapshot=name, workflow="duplicates")}">Review duplicate Library profiles</a></p>'
     if not module:
-        for key, evidence in sorted((bundle.get("unadapted_profiles") or {}).items()):
+        for key, evidence in sorted(additional.items()):
+            if key in modules:
+                continue
             read = evidence.get("library", {})
             link = url(root, "unadapted", snapshot=name, module=key)
             rows.append(tr(f'<a href="{link}">{e(module_label(key))}</a><small>Additional collection</small>',
@@ -986,6 +989,8 @@ def library_view(workspace, query):
                  + select("module", [(k, module_label(k)) for k in sorted(modules)], module, "Collection")
                  + '<noscript><button type="submit">Open</button></noscript></form></div>')
         view = modules[module]
+        if module in additional:
+            body += f'<p><a href="{url(root, "unadapted", snapshot=name, module=module)}">Inspect supplemental collection evidence</a></p>'
         if view["status"] != "list_parsed":
             body += ('<section><h2>' + e(module_label(module)) + '</h2><p>Profile count unavailable. '
                      'The collection could not be interpreted; this does not mean no profiles exist.</p>'
@@ -1110,7 +1115,7 @@ def coverage_view(workspace, query):
     body += metrics([("Scoped reads parsed", f"{parsed}/{len(scoped_reads)}", f"{counted} with explicit count evidence"),
                      ("Qualified modules", f"{counts['qualified']}/{len(records)}", "All requested scopes interpretable"),
                      ("Observed types without adapter", len(unknown), "Raw evidence only"),
-                     ("Library collections attempted", len(library.get("modules", {})) + len(additional), "Includes additional raw reads")])
+                     ("Distinct Library collections", len(set(library.get("modules", {})) | set(additional)), "Structured and supplemental evidence deduplicated")])
     health = bundle.get("configuration_health")
     if health:
         from central_tool import health_serial
@@ -1274,7 +1279,7 @@ def coverage_view(workspace, query):
                        str(len(v.get("profiles", {}))) if v.get("status") == "list_parsed" else "Unavailable",
                        e("Count confirmed" if v.get("count_confirmed") else "Count unverified"),
                        f'<a href="{url(root, "library", snapshot=name, module=m)}">Open collection</a>'))
-    for m in sorted(unknown | survey | set(additional)):
+    for m in sorted((unknown | survey | set(additional)) - set(library.get("modules", {}))):
         v = additional.get(m, {})
         read = v.get("library", {})
         source = "Observed type" if m in unknown else "Documented survey"
@@ -1282,7 +1287,7 @@ def coverage_view(workspace, query):
                        status(read.get("status", "not_collected")), "Unavailable",
                        e("Count confirmed" if read.get("collection_count_verified") else "Count unverified"),
                        f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Inspect evidence</a>'))
-    body += '<section><h2>Library and additional profile collections</h2>' + table(
+    body += '<section><h2>Distinct Library profile collections</h2><p>Modules with both structured and supplemental reads appear once. Supplemental evidence remains available from the collection or the scoped evidence table.</p>' + table(
         ("Profile type", "Interpretation", "Library read", "Parsed profiles", "Collection count", ""), rows, search=True) + '</section>'
     if additional:
         scoped = []
