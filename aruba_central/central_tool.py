@@ -2815,6 +2815,13 @@ def keyed_profile_read(client, module, identity_key, identity, params, collectio
         return {"status": "invalid_selector", "safe_to_apply": False}
     if module == "layer2-vlan" and (identity_key != "vlan" or parse_reference_ids(identity) != {identity}):
         return {"status": "invalid_selector", "safe_to_apply": False}
+    # Published Central NAC contracts explicitly require UUID identifiers.
+    # Never substitute a display name, invent an ID, or normalize the exact
+    # observed identity before sending the individual GET.
+    nac_uuid_keys = {"message-providers": "provider-id", "skins": "skin-id", "overrides": "override-id"}
+    if module in nac_uuid_keys and (identity_key != nac_uuid_keys[module] or
+            re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", identity) is None):
+        return {"status": "invalid_selector", "safe_to_apply": False}
     try:
         raw = client.get(ALPHA + "/" + module + "/" + quote(identity, safe=""), **params)
     except APIError as exc:
