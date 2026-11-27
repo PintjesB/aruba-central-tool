@@ -6,6 +6,7 @@ import re
 import secrets
 import threading
 import time
+import unicodedata
 import webbrowser
 from datetime import datetime, timezone
 from html import escape
@@ -20,6 +21,25 @@ CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline
 
 def e(value):
     return escape(str(value), quote=True)
+
+
+def tenant_label(value):
+    """Optional operator-supplied display label, not an authenticated tenant ID."""
+    if value is None:
+        return ""
+    if not isinstance(value, str) or len(value) > 100 or any(not c.isprintable() for c in value):
+        raise ValueError("Invalid tenant name")
+    return value.strip()
+
+
+def snapshot_filename(stamp, name):
+    # Never use untrusted labels directly as filesystem paths.
+    name = tenant_label(name)
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", unicodedata.normalize("NFKD", name)
+                  .encode("ascii", "ignore").decode()).strip("-")[:64].rstrip("-")
+    if name and not slug:
+        slug = "tenant-" + hashlib.sha256(name.encode()).hexdigest()[:10]
+    return f"config-audit-{slug + '-' if slug else ''}{stamp}.json"
 
 
 def audit_files(directory):
@@ -425,7 +445,8 @@ class Workspace:
                     "done": self.done, "total": self.total, "elapsed": int(elapsed),
                     "snapshot": self.snapshot, "live_module_count": len(self.live_modules)}
 
-    def start_refresh(self, one_shot=None, *, checkpoint_path=None):
+    def start_refresh(self, one_shot=None, *, checkpoint_path=None, tenant_name=None):
+        label = tenant_label(tenant_name)
         with self.lock:
             refresh = one_shot if one_shot is not None else self.refresh
             if refresh is None or self.state == "running":
@@ -456,9 +477,19 @@ class Workspace:
                     kwargs["module_completed"] = self.publish_module_preview
                 bundle = refresh(**kwargs)
                 verify_workspace_identity(self.directory, bundle)
+                # Inherit the last label only after the existing continuity
+                # check passed. The label itself never authorizes a refresh.
+                saved_label = label
+                if tenant_name is None:
+                    files = audit_files(self.directory)
+                    if files:
+                        saved_label = tenant_label(read_audit(self.directory, files[0].name).get("tenant_name"))
+                if saved_label:
+                    bundle["tenant_name"] = saved_label
+                    bundle["tenant_name_source"] = "operator_label"
                 self.update_progress("Saving snapshot", 0, 0, "Publishing the completed audit")
                 stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
-                target = self.directory / f"config-audit-{stamp}.json"
+                target = self.directory / snapshot_filename(stamp, saved_label)
                 temporary = target.with_suffix(".partial")
                 try:
                     with self.lock:
@@ -547,6 +578,7 @@ class Workspace:
         state = status["state"]
         from .central_tool import EU_REGIONS
         disabled = " disabled" if state == "running" else ""
+        name_label = tenant_label(bundle.get("tenant_name")) if bundle else ""
         hidden = f'<input type="hidden" name="csrf" value="{e(self.csrf)}">'
         from .collection_checkpoint import available_checkpoints
         checkpoints = available_checkpoints(self.directory) if state != "running" else []
@@ -556,6 +588,7 @@ class Workspace:
                    + options([("", "Detect EU region")] + [(r, urlsplit(r).hostname.split(".")[0].upper()) for r in EU_REGIONS])
                    + '</select></label><label>Client ID<input name="client_id" type="text" required maxlength="1024" autocomplete="off"></label>'
                    '<label>Client secret<input name="client_secret" type="password" required maxlength="4096" autocomplete="new-password"></label>'
+                   f'<label>Tenant name (optional)<input name="tenant_name" type="text" maxlength="100" value="{e(name_label)}" placeholder="Customer or tenant name"></label>'
                    '<label>Collection depth<select name="depth"><option value="deep">Deep catalog (optimized individual verification)</option><option value="fast">Fast catalog (observed modules; limited discovery)</option><option value="exhaustive">Deep catalog (exhaustive individual verification)</option><option value="standard">Standard (observed functions and Global)</option></select></label>'
                    '<label>Collection recovery<select name="checkpoint">' + checkpoint_options + '</select></label>'
                    f'<button type="submit"{disabled}>Connect and refresh</button></form>'
@@ -1108,7 +1141,7 @@ def handler_for(workspace):
                 self.connection.settimeout(10)
                 values = parse_qs(self.rfile.read(length).decode("utf-8"),
                                   keep_blank_values=True, strict_parsing=True,
-                                  max_num_fields=512 if self.path == root + "save-standard" else 12 if self.path in (root + "save-standard", root + "approve-exception", root + "revoke-exception") else 6)
+                                  max_num_fields=512 if self.path == root + "save-standard" else 12 if self.path in (root + "save-standard", root + "approve-exception", root + "revoke-exception") else 7)
                 fields = values.pop("field_selection", []) if self.path == root + "save-standard" else []
                 if any(len(v) != 1 for v in values.values()):
                     raise ValueError("Invalid form")
@@ -1148,6 +1181,7 @@ def handler_for(workspace):
                 if self.path == root + "credentials":
                     depth = values.pop("depth", ["standard"])[0]
                     recovery = values.pop("checkpoint", ["fresh"])[0]
+                    label = tenant_label(values.pop("tenant_name", [""])[0])
                     if set(values) != {"client_id", "client_secret", "region"} or depth not in ("standard", "deep", "exhaustive", "fast"):
                         raise ValueError("Invalid credential form")
                     from .collection_checkpoint import available_checkpoints
@@ -1172,7 +1206,7 @@ def handler_for(workspace):
                         kwargs["identity_guard"] = lambda incoming: verify_workspace_identity(workspace.directory, incoming)
                     refresh = credential_refresh(values["client_id"][0], values["client_secret"][0], values["region"][0], **kwargs)
                     values.clear()
-                    started = workspace.start_refresh(refresh, checkpoint_path=checkpoint_path)
+                    started = workspace.start_refresh(refresh, checkpoint_path=checkpoint_path, tenant_name=label or None)
                 else:
                     if values:
                         raise ValueError("Invalid refresh form")
