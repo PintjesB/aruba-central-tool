@@ -1162,6 +1162,25 @@ class Tests(unittest.TestCase):
         bad = {**payload, "metadata": {"count_objects_in_module": {"ANY": 2, "LOCAL": 0}}}
         self.assertEqual(annotated_committed_local(bad, "name")["status"], "annotation_recovery_unverified")
 
+    def test_explicit_initial_page_avoids_replaying_offset_zero(self):
+        from central_tool import read_module_view, read_raw_profile_collection
+        a, b, c = ({"name": name} for name in ("a", "b", "c"))
+        for reader in (lambda client, deep: read_module_view(client, "dns", "name", {"view-type": "LOCAL"}, paginate_uncounted=deep),
+                       lambda client, deep: read_raw_profile_collection(client, "dns", {"view-type": "LOCAL"}, paginate_uncounted=deep)):
+            for total in (3, None):
+                def page(rows, offset):
+                    return {"metadata": {"offset": offset, "count": len(rows), "limit": 2,
+                                         **({"total": total} if total is not None else {})},
+                            "profiles": rows}
+                initial = page([a, b], 0)
+                fake = Fake([initial, page([c], 2)] + ([page([], 3)] if total is None else []))
+                result = reader(fake, total is None)
+                self.assertEqual(result["raw"]["profiles"], [a, b, c])
+                self.assertEqual(result["initial_raw"], initial)
+                self.assertEqual([p["offset"] for _, p in fake.calls[1:]], [2, 3] if total is None else [2])
+                self.assertEqual(result["pagination_status"], "pagination_exhausted" if total is None else "complete")
+                self.assertEqual(result.get("count_confirmed", result.get("collection_count_verified")), total is not None)
+
     def test_generic_module_recovers_truncated_collection(self):
         from central_tool import read_module_view
         def page(names):
