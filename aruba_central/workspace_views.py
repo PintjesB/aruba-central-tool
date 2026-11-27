@@ -1398,14 +1398,17 @@ def coverage_view(workspace, query):
         body += '<p class="note">Search by endpoint or category to identify collection gaps. Path parameters and query values are not recorded. A received response may still be empty, partial or uninterpretable. Not attempted includes endpoints outside the collection scope.</p>'
         labels = {"not_attempted": "Not attempted", "no_response": "No successful response",
                   "mixed_outcomes": "Mixed outcomes", "response_received": "Response received"}
+        from .coverage_policy import operation_handling
         operation_rows = []
         for row in sorted(operations, key=lambda r: ({"no_response": 0, "mixed_outcomes": 1, "not_attempted": 2,
                                                       "response_received": 3}.get(r["status"], 4), r["path"])):
             outcomes = ", ".join(f"{pretty(k)}: {v}" for k, v in sorted(row["outcomes"].items()))
             operation_rows.append(tr(e(", ".join(row["groups"])), e(row["path"]),
                                      e(labels.get(row["status"], row["status"])),
-                                     str(row["attempted"]), str(row["received"]), e(outcomes or "None")))
-        body += table(("Category", "GET path", "Read result", "Attempts", "Responses", "Outcomes"), operation_rows, search=True)
+                                     str(row["attempted"]), str(row["received"]), e(outcomes or "None"),
+                                     e(operation_handling(row["path"]))))
+        body += table(("Category", "GET path", "Read result", "Attempts", "Responses", "Outcomes", "Current handling / next step"), operation_rows, search=True)
+        body += '<p class="note">Current handling describes tool policy, not whether the saved capture attempted or qualified the endpoint. A path selector is not the only possible required parameter.</p>'
         body += '<p>Other or ambiguous GET paths: ' + str(sum(ledger.get("unmatched_get_outcomes", {}).values())) + ' calls. These are not attributed to a documented path.</p></section>'
     else:
         body += '<section><h2>Documented API operation coverage</h2><p class="muted">Not recorded in this snapshot. Collect a fresh audit.</p></section>'
