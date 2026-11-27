@@ -4,6 +4,49 @@ from aruba_central.coverage_diagnostics import diagnostics
 
 
 class DiagnosticsTests(unittest.TestCase):
+    def test_compare_coverage_matches_exact_selectors_without_exporting_values(self):
+        from copy import deepcopy
+        from aruba_central.coverage_diagnostics import compare_coverage
+        old = {"schema": 1, "kind": "configuration_audit", "region": "PRIVATE-REGION",
+               "collection_strategy": "deep",
+               "results": {"ACCESS_SWITCH": {"modules": {"dns": {"scope_results": [
+                   {"scope": "PRIVATE-1", "local_view": {"status": "list_parsed", "count_confirmed": True},
+                    "effective_view": {"status": "list_parsed", "count_confirmed": True}},
+                   {"scope": "PRIVATE-2", "local_view": {"status": "list_parsed"},
+                    "effective_view": {"status": "list_parsed"}}
+               ]}}}},
+               "keyed_profile_details": {"profiles": {"ACCESS_SWITCH": {"PRIVATE-1": {
+                   "dns": {"PRIVATE-NAME": {"effective": {"status": "identity_observed"}}}
+               }}}}}
+        new = deepcopy(old)
+        scopes = new["results"]["ACCESS_SWITCH"]["modules"]["dns"]["scope_results"]
+        scopes[0]["effective_view"] = {"status": "read_failed"}
+        scopes[1]["scope"] = "PRIVATE-3"
+        new["keyed_profile_details"]["profiles"]["ACCESS_SWITCH"]["PRIVATE-1"]["dns"]["PRIVATE-NAME"]["effective"] = {
+            "status": "collection_only_sampled"}
+        report = compare_coverage(old, new)
+        structured = report["selectors"]["structured"]
+        self.assertEqual(structured["matched"], 2)
+        self.assertEqual(structured["previous_only"], 2)
+        self.assertEqual(structured["current_only"], 2)
+        self.assertEqual(structured["previous_positive_now_missing"], 2)
+        self.assertEqual(structured["previous_positive_now_unqualified"], 1)
+        self.assertEqual(structured["previous_count_confirmed_now_unqualified"], 1)
+        self.assertEqual(report["selectors"]["keyed"]["direct_to_sampled"], 1)
+        self.assertTrue(report["same_region"])
+        self.assertFalse(report["complete"])
+        self.assertNotIn("PRIVATE", json.dumps(report))
+
+    def test_supplemental_exact_reuse_is_counted_separately(self):
+        bundle = {"schema": 1, "kind": "configuration_audit", "unadapted_profiles": {
+            "dns": {"library": {"reused_exact_collection": True},
+                    "source_views": [{"committed": {"reused_exact_collection": True},
+                                      "effective": {"raw": {"PRIVATE": True}}}]}}}
+        report = diagnostics(bundle)
+        self.assertEqual(report["collection_performance"]["supplemental_exact_reuse"],
+                         [{"module": "dns", "scope_views": 1, "library_view": True}])
+        self.assertNotIn("PRIVATE", json.dumps(report))
+
     def test_no_customer_values_in_diagnostics(self):
         private = "CUSTOMER-PRIVATE-IDENTITY"
         bundle = {
