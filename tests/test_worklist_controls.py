@@ -1,4 +1,5 @@
 import unittest
+import shutil
 
 from aruba_central.workspace_ui import page, table, tr
 
@@ -23,7 +24,7 @@ class WorklistControlsTests(unittest.TestCase):
                 for i in range(1, 61)]
         html = page("Test", table(("Device", "Count", "Site"), rows, search=True))
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
+            browser = playwright.chromium.launch(executable_path=shutil.which("google-chrome") or shutil.which("chromium"), args=["--no-sandbox"])
             try:
                 tab = browser.new_page()
                 tab.set_content(html)
