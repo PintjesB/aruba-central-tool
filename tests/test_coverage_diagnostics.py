@@ -120,3 +120,18 @@ class DiagnosticsTests(unittest.TestCase):
         comparisons = {row["comparison"]: row["reads"] for row in report["keyed_comparison_counts"]}
         self.assertEqual(comparisons, {"additional_fields_in_detail": 1, "different": 1})
         self.assertNotIn(private, json.dumps(report))
+
+
+    def test_adaptive_collection_only_is_not_counted_as_an_individual_read(self):
+        bundle = {"schema": 1, "kind": "configuration_audit", "collection_strategy": "deep",
+                  "keyed_profile_details": {"detail_strategy": "adaptive",
+                    "profiles": {"ACCESS_SWITCH": {"PRIVATE-SCOPE": {"dns": {
+                        "PRIVATE-PROFILE": {"effective": {"status": "collection_only_sampled"},
+                                            "local": {"status": "identity_observed"}}}}}}}
+        report = diagnostics(bundle)
+        performance = report["collection_performance"]
+        self.assertEqual(performance["individual_reads"], 1)
+        self.assertEqual(performance["collection_only"], 1)
+        self.assertEqual(performance["detail_strategy"], "adaptive")
+        self.assertEqual(len(report["keyed_read_outcomes"]), 1)
+        self.assertNotIn("PRIVATE-", json.dumps(report))
