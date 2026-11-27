@@ -316,9 +316,9 @@ def diagnostics(bundle):
             legacy = Counter()
             for record in entry.get("records", []):
                 identity = assignment_identity(record.get("selector"))
-                raw = record.get("raw")
-                if identity and isinstance(raw, dict) and "persona" in raw and "resource" in raw:
-                    legacy[legacy_assignment_status(raw, identity)] += 1
+                response_body = record.get("raw")
+                if identity and isinstance(response_body, dict) and "persona" in response_body and "resource" in response_body:
+                    legacy[legacy_assignment_status(response_body, identity)] += 1
             specialized[name]["retained_legacy_identity_matches"] = dict(legacy)
         if name == "hierarchy":
             by_kind = Counter()
