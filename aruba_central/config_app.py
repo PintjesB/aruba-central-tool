@@ -397,6 +397,7 @@ class Workspace:
         self._reviewed_snapshot = None
         self._overview_snapshot = None
         self._advanced_snapshot = None
+        self._vlan_summary = None
         self.state = "idle"
         self.phase = ""
         self.detail = ""
@@ -567,6 +568,7 @@ class Workspace:
             # Release the previous large bundle before parsing another file.
             self._reviewed_snapshot = None
             self._advanced_snapshot = None
+            self._vlan_summary = None
             bundle = refresh_configuration_review(read_audit(self.directory, name))
             if before != fingerprint():
                 raise ValueError("Snapshot changed while loading; open it again")
@@ -587,6 +589,16 @@ class Workspace:
                     self._advanced_snapshot = advanced_analysis(bundle)
                 return self._advanced_snapshot
         return advanced_analysis(bundle)
+
+    def vlan_summary(self, bundle):
+        """Reuse snapshot-wide aggregate diagnostics for filtered override views."""
+        from .central_tool import vlan_evidence_summary
+        with self.snapshot_lock:
+            if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle:
+                if self._vlan_summary is None:
+                    self._vlan_summary = vlan_evidence_summary(bundle)
+                return self._vlan_summary
+        return vlan_evidence_summary(bundle)
 
     def nav(self, snapshot=None):
         return navigation("/" + self.token + "/", snapshot)
