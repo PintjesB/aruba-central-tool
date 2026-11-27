@@ -97,3 +97,22 @@ class ConfigurationSearchTests(unittest.TestCase):
             html = Workspace(directory).report({"snapshot": name, "mode": "search", "q": "test-needle", "presentation": "grouped"})
             self.assertIn("distinct field/value groups", html)
             self.assertIn("Inspect matching observations", html)
+
+
+    def test_source_filters_preserve_observations_and_skip_other_modules(self):
+        from aruba_central.configuration_search import configuration_sources
+        bundle = fixture()
+        bundle["unadapted_profiles"] = {"raw-example": {"source_views": [{
+            "persona": "ACCESS_SWITCH", "scope": "3", "committed": {"status": "response_received", "raw": {"value": "example"}}}],
+            "library": {"status": "response_received", "raw": {"value": "library"}}}}
+        all_sources = list(configuration_sources(bundle))
+        for persona, module, scope in (("ACCESS_SWITCH", "layer2-vlan", "3"), ("Library", "", ""), ("", "raw-example", None)):
+            expected = [r for r in all_sources if (not persona or r["persona"] == persona)
+                        and (not module or r["module"] == module) and (scope is None or r["scope"] == scope)]
+            self.assertEqual(list(configuration_sources(bundle, persona=persona, module=module, scope=scope)), expected)
+        class Unvisited:
+            def __iter__(self):
+                raise AssertionError("Unselected module was traversed")
+        bundle["results"]["ACCESS_SWITCH"]["modules"]["unselected"] = {"scope_results": Unvisited()}
+        matches = search_configuration(bundle, "10", persona="ACCESS_SWITCH", module="layer2-vlan")
+        self.assertGreater(matches["total"], 0)

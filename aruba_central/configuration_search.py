@@ -16,9 +16,15 @@ def leaves(value, path=()):
         yield path, value
 
 
-def configuration_sources(bundle):
-    names = {(persona, str(s["id"])): s.get("name") or s["id"]
-             for persona, entry in bundle["results"].items() for s in entry["scopes"]}
+def configuration_sources(bundle, *, persona="", module="", scope=None):
+    selected_persona, selected_module, selected_scope = persona, module, scope
+    def accepts(function, mod=None, sid=None):
+        return ((not selected_persona or function == selected_persona)
+                and (mod is None or not selected_module or mod == selected_module)
+                and (sid is None or selected_scope is None or str(sid) == selected_scope))
+    names = {(function, str(s["id"])): s.get("name") or s["id"]
+             for function, entry in bundle["results"].items() if accepts(function)
+             for s in entry["scopes"] if accepts(function, sid=s["id"])}
     def emit(persona, module, scope, side, identity, value, source, state):
         return {"persona": persona, "module": module, "scope": str(scope), "name": names.get((persona, str(scope)), str(scope)),
                 "view": side, "identity": identity, "body": value, "source": source, "state": state}
@@ -31,24 +37,42 @@ def configuration_sources(bundle):
         if "alternate_raw" in view:
             yield emit(persona, module, scope, side, "", view["alternate_raw"], "structured_alternate", view.get("status", "unknown"))
     for persona, entry in bundle["results"].items():
+        if not accepts(persona):
+            continue
         for module, data in entry["modules"].items():
+            if not accepts(persona, module):
+                continue
             for scope in data["scope_results"]:
+                if not accepts(persona, module, scope["scope"]):
+                    continue
                 for side in ("local", "effective"):
                     yield from structured(persona, module, scope["scope"], side, scope.get(side + "_view", {}))
-    for module, view in (bundle.get("library") or {}).get("modules", {}).items():
-        yield from structured("Library", module, "", "library", view)
+    if accepts("Library", sid=""):
+        for module, view in (bundle.get("library") or {}).get("modules", {}).items():
+            if accepts("Library", module, ""):
+                yield from structured("Library", module, "", "library", view)
     for module, data in (bundle.get("unadapted_profiles") or {}).items():
+        if selected_module and module != selected_module:
+            continue
         for scope in data.get("source_views", []):
+            if not accepts(scope.get("persona", ""), module, scope.get("scope", "")):
+                continue
             for side in ("committed", "effective"):
                 view = scope.get(side, {})
                 if "raw" in view:
                     yield emit(scope.get("persona", ""), module, scope.get("scope", ""), side, "", view["raw"], "supplemental", view.get("status", "unknown"))
         view = data.get("library", {})
-        if "raw" in view:
+        if accepts("Library", module, "") and "raw" in view:
             yield emit("Library", module, "", "library", "", view["raw"], "supplemental", view.get("status", "unknown"))
     for persona, scopes in (bundle.get("keyed_profile_details") or {}).get("profiles", {}).items():
+        if not accepts(persona):
+            continue
         for scope, modules in scopes.items():
+            if not accepts(persona, sid=scope):
+                continue
             for module, profiles in modules.items():
+                if not accepts(persona, module, scope):
+                    continue
                 for identity, views in profiles.items():
                     for side, view in views.items():
                         if view.get("status") == "identity_observed" and isinstance(view.get("profile"), dict):
@@ -65,9 +89,7 @@ def matching_fields(bundle, query, *, module="", persona=""):
     terms = query.casefold().split()
     if not terms or len(query) > 200:
         raise ValueError("Invalid search")
-    for record in configuration_sources(bundle):
-        if (module and module != record["module"]) or (persona and persona != record["persona"]):
-            continue
+    for record in configuration_sources(bundle, module=module, persona=persona):
         context = " ".join(str(record[k]) for k in ("persona", "module", "name", "scope", "identity", "view")).casefold()
         def matches(body, context):
             for path, value in leaves(body):
@@ -216,7 +238,7 @@ def evidence_view(workspace, query):
     identity = query.get("evidence", "")
     if len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity):
         raise ValueError("Invalid evidence identity")
-    record = next((r for r in configuration_sources(bundle) if
+    record = next((r for r in configuration_sources(bundle, persona=persona, module=module, scope=scope) if
                    (r["persona"], r["module"], r["scope"]) == (persona, module, scope)
                    and evidence_id(r) == identity), None)
     if record is None:
