@@ -1147,6 +1147,19 @@ def coverage_view(workspace, query):
         tr("Additional assignment identities", "Recovered by scoped queries", str(assignments.get("additional_assignments", "Unavailable"))),
         tr("Unqualified device functions", e(", ".join(bundle.get("unqualified_personas", [])) or "None recorded"), str(len(bundle.get("unqualified_personas", []))))])
     body += '<p class="note">Assignment and profile catalog completeness are not verified.</p></section>'
+    from library_visibility import visibility_summary
+    visibility = visibility_summary(bundle)
+    body += '<section><h2>Library definitions and scope visibility</h2><p>Library objects can be assigned or referenced by other profiles. Empty scope responses do not prove they are unused. Review observed assignments and references before any cleanup.</p>'
+    body += table(("Module", "Library profiles", "Profiles with observed assignments", "Observed assignments",
+                   "Positive effective views", "Empty-object views", "Assigned identity observed",
+                   "Assigned identity absent (count confirmed)", "Assignment visibility unknown", ""), [
+        tr(e(module_label(v["module"])), str(v["definitions"]), str(v["definitions_with_observed_assignments"]),
+           str(v["observed_assignments"]), str(v["effective_views"].get("positive", 0)),
+           str(v["effective_views"].get("empty_object", 0)), str(v["assignment_visibility"].get("identity_observed", 0)),
+           str(v["assignment_visibility"].get("count_confirmed_absence", 0)),
+           str(v["assignment_visibility"].get("unverified", 0) + v["assignment_visibility"].get("library_definition_unobserved", 0)),
+           f'<a href="{url(root, "assignments", snapshot=name, module=v["module"])}">Review assignments</a> · <a href="{url(root, "library", snapshot=name, module=v["module"])}">Library and references</a>')
+        for v in visibility], search=True) + '</section>'
     from nac_authorization import nac_collection
     nac_rows = []
     for module in ("auth-profiles", "authz-policies", "identity-stores", "static-tag"):
