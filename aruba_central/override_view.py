@@ -206,10 +206,13 @@ def overrides_view(workspace, query):
     devices = [(s["id"], s.get("name") or s["id"]) for s in entry["scopes"] if s["kind"] == "device"]
     modules = sorted(m for m, data in entry["modules"].items() if not data.get("device_scope_only"))
     device, module, result = query.get("device", ""), query.get("module", ""), query.get("result", "cleanup")
+    # Explicit all is a nonempty selector so the HTTP query and saved preset preserve it.
+    if result == "":
+        result = "all"
     readiness = query.get("readiness", "")
     if readiness and readiness not in REMOVAL_FILTERS:
         raise ValueError("Unknown removal readiness")
-    if (device and device not in dict(devices)) or (module and module not in modules) or (result and result not in RESULTS and result != "cleanup"):
+    if (device and device not in dict(devices)) or (module and module not in modules) or (result not in RESULTS and result not in ("cleanup", "all")):
         raise ValueError("Unknown comparison filter")
     scoped, missing = device_override_rows(bundle, persona, device=device, module_filter=module)
     counts = Counter(f["result"] for f in scoped)
@@ -217,7 +220,7 @@ def overrides_view(workspace, query):
         ("device", "Device", device, device_options),
         ("module", "Configuration", module, lambda entry: module_options(entry, "All modules", comparable=True))),
         submit="Compare with Global", extra_fields=(("result", "Result", result,
-            [("cleanup", "Redundant and likely redundant"), ("", "All local definitions")] + list(RESULTS.items())),
+            [("cleanup", "Redundant and likely redundant"), ("all", "All local definitions")] + list(RESULTS.items())),
             ("readiness", "Removal readiness", readiness, [("", "All assessments")] + list(REMOVAL_FILTERS.items()))))
     short_action = {
         "identical": "Review redundant local copy",
@@ -241,7 +244,7 @@ def overrides_view(workspace, query):
         if result == "cleanup":
             if not f["review_candidate"]:
                 continue
-        elif result and f["result"] != result:
+        elif result != "all" and f["result"] != result:
             continue
         p = f["profile"]
         label = title_profile(f["identity"], p["local"])
