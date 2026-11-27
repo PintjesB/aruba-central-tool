@@ -3753,6 +3753,14 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     transport = client if isinstance(client, Central) else None
     transport_before = transport.get_transport_metrics() if transport is not None else {}
     validators_before = transport.get_validator_metrics() if transport is not None else {}
+    network_before = transport.get_network_metrics() if transport is not None else {}
+    worker_plan = {}
+    def worker_budget(phase):
+        budget = (transport.recommended_audit_workers(workers)
+                  if transport is not None and workers == AUDIT_WORKERS else workers)
+        worker_plan[phase] = max(worker_plan.get(phase, 0), budget)
+        return budget
+
     client = ReadCoverage(client)
     audit_progress(progress, "Discovery", 0, 0, "Reading device inventory and assignments")
     devices = inventory(client)
@@ -3777,7 +3785,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
         scopes_by_persona[persona], _ = discover_scopes(client, persona, devices, shared_scopes=shared_scopes)
         if shared_scopes is None:
             shared_scopes = [scope for scope in scopes_by_persona[persona] if scope["kind"] != "device"]
-    assignments = collect_scoped_assignments(client, assignments, scopes_by_persona, workers, progress, paginate_uncounted=deep_catalog)
+    assignments = collect_scoped_assignments(client, assignments, scopes_by_persona, worker_budget("assignments"), progress, paginate_uncounted=deep_catalog)
     print("Assignment evidence coverage: " + canonical({
         "additional_assignments": assignments["additional_assignments"],
         "scope_reads": assignments["scope_read_outcomes"]}), flush=True)
@@ -3890,7 +3898,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             if len(grouped[module]) == expected[module]:
                 review_captured_module(module)
 
-        ordered_parallel(tasks, read_scope, workers,
+        ordered_parallel(tasks, read_scope, worker_budget("configuration_scopes"),
                 item_completed=lambda done, total, task: audit_progress(
                     progress, "Configuration scopes", completed_scopes + done,
                     total_scopes, f"{persona} / {task[0]}"),
@@ -3905,8 +3913,8 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     # function. Always survey the entire explicitly supported Library catalog.
     applicable_modules = set(CONFIG_MODULES)
     print("Reading tenant Library and assignments", flush=True)
-    library = library_inventory(client, applicable_modules, assignments, scope_maps, workers, progress, checkpoint=checkpoint, paginate_uncounted=deep_catalog)
-    unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, workers, progress,
+    library = library_inventory(client, applicable_modules, assignments, scope_maps, worker_budget("library"), progress, checkpoint=checkpoint, paginate_uncounted=deep_catalog)
+    unadapted = inspect_unadapted_profiles(client, profile_types, assignments, scope_maps, worker_budget("supplemental"), progress,
                                            scopes_by_persona=scopes_by_persona, deep_catalog=deep_catalog, checkpoint=checkpoint,
                                            structured_results=results, structured_library=library, targeted_catalog=targeted_catalog)
     from nac_authorization import capture_nac_configuration
@@ -3916,15 +3924,15 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     nac_registrations = read_mac_registrations(client, progress)
     print(f"NAC MAC registration coverage: {nac_registrations['status']}; observed={len(nac_registrations['rows'])}", flush=True)
     from nac_assets import capture_portal_assets
-    nac_assets = capture_portal_assets(client, workers, progress) if deep_catalog else None
-    health = capture_configuration_health(client, records, workers, progress)
-    keyed_details = capture_keyed_profile_details(client, results, library, workers, progress, checkpoint=checkpoint, nac_configuration=nac_configuration, unadapted=unadapted, adaptive=not exhaustive_details) if deep_catalog else None
+    nac_assets = capture_portal_assets(client, worker_budget("nac_assets"), progress) if deep_catalog else None
+    health = capture_configuration_health(client, records, worker_budget("health"), progress)
+    keyed_details = capture_keyed_profile_details(client, results, library, worker_budget("keyed_details"), progress, checkpoint=checkpoint, nac_configuration=nac_configuration, unadapted=unadapted, adaptive=not exhaustive_details) if deep_catalog else None
     from scope_evidence import hierarchy_capture, keyed_assignment_capture
-    hierarchy_evidence = hierarchy_capture(client, scopes_by_persona, workers, progress) if deep_catalog else None
-    assignment_details = keyed_assignment_capture(client, assignments, workers, progress) if deep_catalog else None
-    details = capture_vlan_instance_details(client, results, workers, progress, keyed_details=keyed_details)
-    operational = capture_configuration_operational_vlans(client, results, workers, progress)
-    cli = capture_switch_vlan_cli(client, results, details, workers, progress)
+    hierarchy_evidence = hierarchy_capture(client, scopes_by_persona, worker_budget("hierarchy"), progress) if deep_catalog else None
+    assignment_details = keyed_assignment_capture(client, assignments, worker_budget("assignment_details"), progress) if deep_catalog else None
+    details = capture_vlan_instance_details(client, results, worker_budget("vlan_details"), progress, keyed_details=keyed_details)
+    operational = capture_configuration_operational_vlans(client, results, worker_budget("operational"), progress)
+    cli = capture_switch_vlan_cli(client, results, details, worker_budget("switch_cli"), progress)
     print(f"Configuration audit coverage: personas reviewed={len(results)}; "
           f"personas without adapter={len(unqualified)}; migration authorized=no")
     bundle = {"schema": 1, "kind": "configuration_audit", "region": client.base,
@@ -3947,6 +3955,11 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
                                        for key in ("http_get_attempts", "http_get_retries",
                                                    "http_get_429", "http_get_5xx",
                                                    "custom_500_retry_sequences_suppressed", "http_get_transient_errors")}
+        network_after = transport.get_network_metrics()
+        bundle["http_get_performance"] = {
+            key: network_after.get(key, 0) - network_before.get(key, 0)
+            for key in ("rate_wait_ms", "successful_get_ms", "successful_gets")}
+        bundle["http_get_performance"]["phase_worker_budgets"] = worker_plan
         validators_after = transport.get_validator_metrics()
         bundle["http_config_validators"] = {
             key: validators_after.get(key, 0) - validators_before.get(key, 0)
