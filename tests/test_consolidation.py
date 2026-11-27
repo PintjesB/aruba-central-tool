@@ -62,6 +62,29 @@ class ConsolidationTests(unittest.TestCase):
             self.assertIn("Source and comparison are not verified", html)
         self.assertFalse(any(f["identity"] == "999" for f in profile_recommendations(data)))
 
+    def test_consolidation_builds_membership_index_once_per_persona(self):
+        from unittest.mock import patch
+        from aruba_central.consolidation import scope_memberships, placement_evidence, placement_index
+        from aruba_central.inheritance_review import nearest_fallback
+        data = fixture()
+        entry = data["results"]["ACCESS_SWITCH"]
+        expected = profile_recommendations(data)
+        before = copy.deepcopy(data)
+        with patch("aruba_central.consolidation.scope_memberships", wraps=scope_memberships) as memberships:
+            self.assertEqual(profile_recommendations(data), expected)
+            self.assertEqual(memberships.call_count, 1)
+        self.assertEqual(data, before)
+        scopes = entry["scopes"]
+        finding = next(f for f in expected if f["sources"])
+        args = (scopes, finding["sources"], finding["observed_devices"], finding["scope_references"])
+        self.assertEqual(placement_evidence(*args), placement_evidence(*args, index=placement_index(scopes)))
+        device = next(s for s in entry["modules"]["layer2-vlan"]["scope_results"] if s["scope"] == "3")
+        row = next(r for r in device["review"]["profiles"] if r["identity"] == "10")
+        params = (entry, "layer2-vlan", "3", "10", row["local"], row["effective"], row.get("annotations", {}))
+        index = (scope_memberships(scopes), {s["id"]: s for s in scopes},
+                 {s["scope"]: s for s in entry["modules"]["layer2-vlan"]["scope_results"]})
+        self.assertEqual(nearest_fallback(*params), nearest_fallback(*params, index=index))
+
     def test_advisor_groups_and_keeps_uncertainty(self):
         findings = profile_recommendations(fixture())
         by_id = {f["identity"]: f for f in findings}
