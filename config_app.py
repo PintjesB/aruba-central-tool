@@ -91,16 +91,18 @@ def credential_refresh(client_id, client_secret, region, *, deep_catalog=False, 
     if not client_id.strip() or not client_secret or len(client_id) > 1024 or len(client_secret) > 4096:
         raise ValueError("Invalid credentials")
     client = Central(region or EU_REGIONS[0], None, client_id, client_secret)
-    def run(progress=None):
+    def run(progress=None, module_completed=None):
         try:
             audit_progress(progress, "Connection", 0, 0, "Authenticating and detecting region")
             detect_region(client, region or None)
             return configuration_audit(client, progress=progress, deep_catalog=deep_catalog, exhaustive_details=exhaustive_details, targeted_catalog=targeted_catalog,
-                                       checkpoint_path=checkpoint_path, resume=resume, identity_guard=identity_guard)
+                                       checkpoint_path=checkpoint_path, resume=resume, identity_guard=identity_guard,
+                                       module_completed=module_completed)
         finally:
             client.client_id = None
             client.client_secret = None
             client.token = None
+    run.supports_module_preview = True
     run.collection_strategy = "targeted" if targeted_catalog else "deep" if deep_catalog else "standard"
     run.exhaustive_details = exhaustive_details
     run.resumed = resume
@@ -301,6 +303,13 @@ class Workspace:
         self.snapshot = None
         self.collection_strategy = None
         self.historical_times = {}
+        self.live_modules = {}
+
+    def publish_module_preview(self, persona, module, data, scopes):
+        """Retain read-only structured evidence only for the active capture."""
+        with self.lock:
+            if self.state == "running":
+                self.live_modules[(persona, module)] = (data, scopes)
 
     def update_progress(self, phase, done, total, detail):
         with self.lock:
@@ -337,7 +346,7 @@ class Workspace:
                     "state": "failed" if self.state.startswith("failed") else self.state,
                     "message": self.state, "phase": self.phase, "detail": self.detail,
                     "done": self.done, "total": self.total, "elapsed": int(elapsed),
-                    "snapshot": self.snapshot}
+                    "snapshot": self.snapshot, "live_module_count": len(self.live_modules)}
 
     def start_refresh(self, one_shot=None, *, checkpoint_path=None):
         with self.lock:
@@ -356,6 +365,7 @@ class Workspace:
             self.snapshot = None
             self.collection_strategy = getattr(refresh, "collection_strategy", None)
             self.historical_times = {}
+            self.live_modules = {}
         def run():
             try:
                 from central_tool import write_private
@@ -364,7 +374,10 @@ class Workspace:
                                                    getattr(refresh, "exhaustive_details", False))
                     with self.lock:
                         self.historical_times = times
-                bundle = refresh(progress=self.update_progress)
+                kwargs = {"progress": self.update_progress}
+                if getattr(refresh, "supports_module_preview", False):
+                    kwargs["module_completed"] = self.publish_module_preview
+                bundle = refresh(**kwargs)
                 verify_workspace_identity(self.directory, bundle)
                 self.update_progress("Saving snapshot", 0, 0, "Publishing the completed audit")
                 stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
@@ -397,6 +410,7 @@ class Workspace:
                     state = "failed; check local configuration and API access"
             with self.lock:
                 self.state = state
+                self.live_modules = {}
                 self.finished = time.monotonic()
                 if self.phase_started is not None:
                     self.phase_history.append({"phase": self.phase, "done": self.done, "total": self.total,
@@ -492,6 +506,7 @@ class Workspace:
             + (f' value="{status["done"]}"' if status["total"] else "")
             + ("" if state == "running" else " hidden")
             + f'></progress><p id="audit-count">{status["done"]}/{status["total"]} · {status["elapsed"]}s total elapsed</p>'
+            + f'<p id="audit-live-preview"{" hidden" if not status["live_module_count"] else ""}><a href="{root}live">Browse collected modules</a> <span id="audit-live-count">{status["live_module_count"]} ready</span></p>'
             + '<p id="audit-rate" class="muted"></p><details id="audit-history"><summary>Completed phases</summary><ul id="audit-phases"></ul></details>'
             + snapshot_link + '</div>')
         script = """
@@ -507,6 +522,8 @@ const overall=document.getElementById('audit-overall');
 const overallBar=document.getElementById('audit-overall-progress');
 const overallCount=document.getElementById('audit-overall-count');
 const overallEstimate=document.getElementById('audit-overall-estimate');
+const livePreview=document.getElementById('audit-live-preview');
+const liveCount=document.getElementById('audit-live-count');
 function duration(seconds){
   const s=Math.max(0,Math.round(seconds));
   return (s>=3600?Math.floor(s/3600)+'h ':'')+(s>=60?Math.floor((s%3600)/60)+'m ':'')+(s%60)+'s';
@@ -529,6 +546,8 @@ async function poll(){
     title.textContent='Audit in progress';
     detail.textContent=[state.phase,state.detail].filter(Boolean).join(' · ');
     overall.hidden=false;
+    livePreview.hidden=state.live_module_count===0;
+    liveCount.textContent=state.live_module_count+' ready';
     if(state.overall_percent!==null){
       overallBar.value=state.overall_percent;
       overallCount.textContent='Approximately '+state.overall_percent.toFixed(1)+'% · '+duration(state.elapsed)+' elapsed · '+duration(state.overall_eta_seconds)+' remaining';
@@ -767,6 +786,59 @@ if(panel.dataset.state==='running')poll();
         from workspace_views import coverage_view
         return coverage_view(self, query)
 
+    def live_preview(self, query):
+        """Separate live inspection route; never treated as a snapshot or plan."""
+        root = "/" + self.token + "/"
+        with self.lock:
+            modules = dict(self.live_modules)
+            running = self.state == "running"
+            snapshot = self.snapshot
+        intro = ('<p><a href="' + root + '">Back to audit progress</a></p>'
+                 '<p>Partial read-only evidence from the current audit. Library, individual profile reads, '
+                 'dependencies and operational verification may still be pending. No recommendations or changes '
+                 'are authorized from this preview.</p>')
+        if not running:
+            link = (f'<p><a href="{root}report?{e(urlencode({"snapshot": snapshot}))}">Open completed snapshot</a></p>'
+                    if snapshot else "")
+            return page("Live collection preview", intro + '<p>No audit is running.</p>' + link, self.nav())
+        links = []
+        for (persona, module), (data, scopes) in sorted(modules.items()):
+            total = len(data["scope_results"])
+            qualified = sum(row["review"]["qualified"] is True for row in data["scope_results"])
+            href = root + "live?" + urlencode({"persona": persona, "module": module})
+            links.append(f'<tr><td>{e(persona)}</td><td><a href="{e(href)}">{e(module)}</a></td>'
+                         f'<td>{qualified}/{total}</td></tr>')
+        body = intro + f'<p>{len(modules)} structured modules available. <a href="{root}live">Refresh list</a></p>'
+        selected = (query.get("persona"), query.get("module"))
+        if selected != (None, None):
+            if selected not in modules:
+                raise ValueError("Module not yet collected")
+            data, scopes = modules[selected]
+            names = {str(scope["id"]): scope.get("name") or str(scope["id"]) for scope in scopes}
+            body += f'<h2>{e(selected[0])} / {e(selected[1])}</h2>'
+            rows = []
+            chosen = query.get("scope")
+            selected_scope = None
+            for scope in data["scope_results"]:
+                sid = str(scope["scope"])
+                href = root + "live?" + urlencode({"persona": selected[0], "module": selected[1], "scope": sid})
+                local = scope["local_view"]
+                effective = scope["effective_view"]
+                rows.append(f'<tr><td><a href="{e(href)}">{e(names.get(sid, sid))}</a></td>'
+                            f'<td>{e(scope["scope_kind"])}</td><td>{e(local["status"])} ({len(local.get("profiles", {}))})</td>'
+                            f'<td>{e(effective["status"])} ({len(effective.get("profiles", {}))})</td></tr>')
+                if sid == chosen:
+                    selected_scope = scope
+            if chosen is not None and selected_scope is None:
+                raise ValueError("Unknown collected scope")
+            if selected_scope is not None:
+                body += f'<h3>{e(names.get(chosen, chosen))}</h3>'
+                for label, key in (("Committed local", "local_view"), ("Effective", "effective_view")):
+                    body += f'<details open><summary>{label} evidence</summary><pre>{e(json.dumps(selected_scope[key], indent=2, ensure_ascii=False))}</pre></details>'
+            body += '<table><thead><tr><th>Scope</th><th>Level</th><th>Local status</th><th>Effective status</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table>'
+        body += '<h2>Available modules</h2><table><thead><tr><th>Device function</th><th>Module</th><th>Qualified scopes</th></tr></thead><tbody>' + ''.join(links) + '</tbody></table>'
+        return page("Live collection preview", body, self.nav())
+
     def report(self, query):
         from workspace_views import explorer_view
         return explorer_view(self, query)
@@ -852,6 +924,8 @@ def handler_for(workspace):
                     return
                 if parsed.path == root:
                     body = workspace.home(query)
+                elif parsed.path == root + "live":
+                    body = workspace.live_preview(query)
                 elif parsed.path == root + "report":
                     body = workspace.report(query)
                 elif parsed.path == root + "legacy-report":
