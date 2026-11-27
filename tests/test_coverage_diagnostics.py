@@ -80,3 +80,20 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(shapes["empty_list"]["records"], 0)
         self.assertNotIn(private, json.dumps(report))
         self.assertNotIn("private-envelope", json.dumps(report))
+
+
+    def test_specialized_read_outcomes_are_anonymous(self):
+        private = "PRIVATE-RESOURCE-IDENTITY"
+        bundle = {"schema": 1, "kind": "configuration_audit",
+                  "scope_hierarchy_evidence": {"outcomes": {"response_received": 2, private: 1},
+                                               "records": [{"scope": private}]},
+                  "keyed_assignment_details": {"outcomes": {"identity_observed": 3},
+                                               "records": [{"selector": private}]},
+                  "nac_portal_assets": {"status": "list_parsed", "count_confirmed": True,
+                                        "images": [{"imageID": private}], "details": {private: {}}}}
+        report = diagnostics(bundle)
+        self.assertEqual(report["specialized_reads"]["hierarchy"]["outcomes"], {"response_received": 2, "other": 1})
+        self.assertEqual(report["specialized_reads"]["assignments"]["outcomes"], {"identity_observed": 3})
+        self.assertEqual(report["specialized_reads"]["portal-assets"]["images"], 1)
+        self.assertTrue(report["specialized_reads"]["portal-assets"]["count_confirmed"])
+        self.assertNotIn(private, json.dumps(report))

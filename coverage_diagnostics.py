@@ -23,6 +23,7 @@ def safe_status(value):
         "empty_response", "partial_response", "permission_denied", "invalid_selector",
         "selector_mismatch", "empty_correlated", "empty_contradictory_local_profile",
         "empty_effective_source_unverified", "not_attempted",
+        "supplemental_raw", "settings_observed", "tenant_scope_disagreement",
     }
     return value if isinstance(value, str) and value in allowed else "other"
 
@@ -168,7 +169,7 @@ def diagnostics(bundle):
     keyed = Counter()
     selector_shapes = Counter()
     for persona, scopes in (bundle.get("keyed_profile_details") or {}).get("profiles", {}).items():
-        function = persona if persona in NETWORK_PERSONAS or persona in ("Library", "NAC") else "other"
+        function = persona if persona in NETWORK_PERSONAS or persona in ("Library", "NAC", "ALL_DEVICE_FUNCTIONS", "UNFILTERED_SCOPE") else "other"
         for scope in scopes.values():
             for module, identities in scope.items():
                 name = module if module in modules else "other"
@@ -195,8 +196,20 @@ def diagnostics(bundle):
         scope_totals[key[4]] += n
     registration = bundle.get("nac_registrations") or {}
     nac["mac-registrations"]["status"] = safe_status(registration.get("status", "not_collected"))
+    specialized = {}
+    for name, key in (("hierarchy", "scope_hierarchy_evidence"), ("assignments", "keyed_assignment_details"),
+                      ("portal-assets", "nac_portal_assets")):
+        entry = bundle.get(key) or {}
+        outcomes = Counter()
+        for state, number in entry.get("outcomes", {}).items():
+            outcomes[safe_status(state)] += count(number)
+        specialized[name] = {"collected": bool(entry), "outcomes": dict(outcomes)}
+        if name == "portal-assets":
+            specialized[name].update(status=safe_status(entry.get("status", "not_collected")),
+                                     images=len(entry.get("images", [])), count_confirmed=entry.get("count_confirmed") is True)
     return {
         "schema": 1, "kind": "anonymous_collection_diagnostics",
+        "specialized_reads": specialized,
         "scoped_status_totals": dict(scope_totals),
         "library_views": library_summary,
         "library_visibility": visibility,
