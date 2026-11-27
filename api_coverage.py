@@ -1,5 +1,6 @@
 """Observe read coverage without retaining request identifiers or values."""
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, OrderedDict
+from concurrent.futures import Future
 import json
 from pathlib import Path
 import re
@@ -38,6 +39,10 @@ class ReadCoverage:
         self.counts = defaultdict(Counter)
         self.unmatched = Counter()
         self.lock = threading.Lock()
+        self.cache = OrderedDict()
+        self.cache_bytes = 0
+        self.inflight = {}
+        self.reused = 0
 
     def __getattr__(self, name):
         return getattr(self.client, name)
@@ -54,6 +59,49 @@ class ReadCoverage:
         return best[0] if len(best) == 1 else None
 
     def get(self, path, **params):
+        """Coalesce identical configuration collection GETs within this audit.
+
+        Do not reuse polling, inventory, health, keyed reads, errors or empty
+        responses. Exact filters and pagination selectors are part of the key.
+        """
+        if (path not in self.exact
+                or not re.fullmatch(r"/network-config/v1alpha1/[a-z][a-z0-9-]*", path)
+                or params.get("view-type") not in ("LOCAL", "LIBRARY")):
+            return self._get(path, **params)
+        key = (path, json.dumps(params, sort_keys=True, separators=(",", ":")))
+        while True:
+            with self.lock:
+                if key in self.cache:
+                    self.cache.move_to_end(key)
+                    self.reused += 1
+                    return json.loads(self.cache[key])
+                future = self.inflight.get(key)
+                if future is None:
+                    future = self.inflight[key] = Future()
+                    break
+            # A failed or empty response is not cached; the waiting caller
+            # performs its own read, preserving existing recovery behavior.
+            future.result()
+        try:
+            result = self._get(path, **params)
+            if isinstance(result, dict) and any(
+                    k not in ("metadata", "@") and isinstance(v, (list, dict)) and v
+                    for k, v in result.items()):
+                payload = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                if len(payload) <= 64 * 1024 * 1024:
+                    with self.lock:
+                        self.cache[key] = payload
+                        self.cache_bytes += len(payload)
+                        while self.cache_bytes > 64 * 1024 * 1024 or len(self.cache) > 8192:
+                            _, old = self.cache.popitem(last=False)
+                            self.cache_bytes -= len(old)
+            return result
+        finally:
+            with self.lock:
+                self.inflight.pop(key, None)
+                future.set_result(None)
+
+    def _get(self, path, **params):
         from central_tool import APIError
         template = self.resolve(path)
         try:
@@ -87,4 +135,5 @@ class ReadCoverage:
                              "definitions": meta["definitions"], "attempted": attempted,
                              "received": received, "outcomes": counts, "status": state})
             return {"revision": self.revision, "operations": rows,
-                    "unmatched_get_outcomes": dict(self.unmatched), "complete": False}
+                    "unmatched_get_outcomes": dict(self.unmatched),
+                    "exact_collection_gets_reused": self.reused, "complete": False}
