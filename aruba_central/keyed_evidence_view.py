@@ -43,6 +43,8 @@ def keyed_view(workspace, query):
     root, name, bundle, picker = loaded
     category = query.get("category", "attention")
     module = query.get("module", "")
+    persona = query.get("persona", "")
+    scope = query.get("scope", "")
     if category not in ("attention", "all", *CATEGORIES):
         raise ValueError("Unknown individual evidence category")
     try:
@@ -51,14 +53,15 @@ def keyed_view(workspace, query):
         raise ValueError("Invalid offset")
     if offset < 0:
         raise ValueError("Invalid offset")
-    counts, modules = Counter(), set()
+    counts, modules, personas = Counter(), set(), set()
     selected = []
     total = 0
     for row in keyed_observations(bundle):
         modules.add(row["module"])
-        counts[row["category"]] += 1
-        if module and row["module"] != module:
+        personas.add(row["persona"])
+        if (module and row["module"] != module) or (persona and row["persona"] != persona) or (scope and row["scope"] != scope):
             continue
+        counts[row["category"]] += 1
         if category == "attention":
             if row["category"] not in ("unqualified", "different", "order_only", "not_compared"):
                 continue
@@ -69,8 +72,12 @@ def keyed_view(workspace, query):
         total += 1
     if module and module not in modules:
         raise ValueError("Unknown individual evidence module")
+    if persona and persona not in personas:
+        raise ValueError("Unknown individual evidence function")
     body = intro("Individual profile evidence", "Investigate collection versus individual GET discrepancies and unresolved responses.", picker)
     body += f'<p><a href="{url(root, "assessment", snapshot=name)}">Back to configuration assessment</a></p>'
+    if scope:
+        body += '<p class="note">Exact scope filter: ' + e(scope) + '</p>'
     body += metrics([("Unqualified", counts["unqualified"], "Individual read could not be qualified"),
                      ("Differing bodies", counts["different"] + counts["order_only"], "Exact field comparisons"),
                      ("Order-only", counts["order_only"], "Order may be significant"),
@@ -80,6 +87,8 @@ def keyed_view(workspace, query):
     body += (f'<section><form class="filter-bar" method="get" action="{e(root+"assessment")}">'
              f'<input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="mode" value="keyed">'
              + select("category", [("attention", "Requires review"), ("all", "All observations")] + list(CATEGORIES.items()), category, "Evidence")
+             + (f'<input type="hidden" name="scope" value="{e(scope)}">' if scope else "")
+             + select("persona", [("", "All functions")] + [(p, persona_label(p)) for p in sorted(personas)], persona, "Function")
              + select("module", [("", "All modules")] + [(m, module_label(m)) for m in sorted(modules)], module, "Module")
              + '<button type="submit">Filter evidence</button></form>'
              '<p class="note">Collection and individual reads are independent observations. Neither is automatically authoritative. Order-only differences remain differences; no removal or migration is authorized.</p></section>')
@@ -102,7 +111,7 @@ def keyed_view(workspace, query):
                        e(row["identity"]), e(row["view"]), badge(CATEGORIES[category_name]),
                        str(len(read["differences"])) if isinstance(read.get("differences"), list) else "Unknown",
                        inspect(row["identity"], detail, "Inspect evidence")))
-    params = {"snapshot": name, "mode": "keyed", "category": category, "module": module}
+    params = {"snapshot": name, "mode": "keyed", "category": category, "module": module, "persona": persona, "scope": scope}
     body += f'<section><h2>{total} matching observations</h2><p>Showing {offset + 1 if selected else 0}–{offset + len(selected) if selected else 0}. Table search and CSV cover this batch only.</p>'
     if offset:
         body += f'<a class="button" href="{url(root, "assessment", **params, offset=max(0, offset-200))}">Previous batch</a> '
