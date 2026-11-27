@@ -47,6 +47,37 @@ class DiagnosticsTests(unittest.TestCase):
                          [{"module": "dns", "scope_views": 1, "library_view": True}])
         self.assertNotIn("PRIVATE", json.dumps(report))
 
+    def test_supplemental_footprint_counts_scope_kind_and_selector_without_leaking_values(self):
+        bundle = {"schema": 1, "kind": "configuration_audit",
+                  "results": {"ACCESS_SWITCH": {"scopes": [{"id": "PRIVATE-A", "kind": "device"},
+                                                         {"id": "PRIVATE-B", "kind": "group"}]}},
+                  "unadapted_profiles": {"dns": {"source_views": [
+                      {"scope": "PRIVATE-A", "persona": "ALL_DEVICE_FUNCTIONS",
+                       "committed": {"status": "empty_response", "raw": {}},
+                       "effective": {"status": "response_received", "raw": {"dns": [{"name": "PRIVATE-PROFILE"}]},
+                                     "reused_exact_collection": True}},
+                      {"scope": "PRIVATE-B", "persona": "ACCESS_SWITCH",
+                       "committed": {"status": "request_rejected", "http_error": 400},
+                       "effective": {"status": "response_received", "raw": {"dns": [], "metadata": {"total": 0}},
+                                     "collection_count_verified": True}},
+                      {"scope": "PRIVATE-C", "persona": "PRIVATE-FUNCTION",
+                       "committed": {"status": "partial_response", "raw": {"dns": [{"name": "PRIVATE-PROFILE"}]},
+                                     "pagination_status": "request_failed", "raw_pages": [{}]},
+                       "effective": {"status": "response_received", "raw": {"metadata": {"count": 0}}}}
+                  ]}}}
+        rows = diagnostics(bundle)["supplemental_survey_footprint"]
+        by_kind = {r["scope_kind"]: r for r in rows}
+        self.assertEqual(by_kind["device"]["empty_object"], 1)
+        self.assertEqual(by_kind["device"]["positive_uncounted"], 1)
+        self.assertEqual(by_kind["device"]["reused_views"], 1)
+        self.assertEqual(by_kind["device"]["selector"], "unfiltered")
+        self.assertEqual(by_kind["group"]["http_400"], 1)
+        self.assertEqual(by_kind["group"]["counted_empty"], 1)
+        self.assertEqual(by_kind["unknown"]["pagination_failures"], 1)
+        self.assertEqual(by_kind["unknown"]["metadata_or_empty_collection"], 1)
+        self.assertEqual(sum(r["views"] for r in rows), 6)
+        self.assertNotIn("PRIVATE", json.dumps(rows))
+
     def test_no_customer_values_in_diagnostics(self):
         private = "CUSTOMER-PRIVATE-IDENTITY"
         bundle = {
