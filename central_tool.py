@@ -81,11 +81,34 @@ class Central:
         self._custom_api_terminal_500s = 0
         self._get_metrics_lock = threading.Lock()
         self._get_metrics = Counter()
+        self._validator_metrics = Counter()
 
     def get_transport_metrics(self):
         """Cumulative GET transport attempts, not identifiers or query values."""
         with self._get_metrics_lock:
             return dict(self._get_metrics)
+
+    def get_validator_metrics(self):
+        """Aggregate validator availability; never retain header values."""
+        with self._get_metrics_lock:
+            return dict(self._validator_metrics)
+
+    def _observe_config_validators(self, request, response):
+        path = urlsplit(request.full_url).path
+        if request.get_method() != "GET" or not path.startswith(ALPHA + "/"):
+            return
+        headers = getattr(response, "headers", None)
+        etag = headers.get("ETag") if headers is not None else None
+        modified = headers.get("Last-Modified") if headers is not None else None
+        kind = "keyed" if "/" in path[len(ALPHA) + 1:] else "collection"
+        with self._get_metrics_lock:
+            self._validator_metrics[kind + "_responses"] += 1
+            if isinstance(etag, str) and re.fullmatch(r'"[^"\r\n]*"', etag):
+                self._validator_metrics[kind + "_strong_etag"] += 1
+            elif isinstance(etag, str) and re.fullmatch(r'W/"[^"\r\n]*"', etag):
+                self._validator_metrics[kind + "_weak_etag"] += 1
+            if isinstance(modified, str) and modified.strip():
+                self._validator_metrics[kind + "_last_modified"] += 1
 
     def _wait_rate_limit(self):
         # HPE documents 10 requests/s per account across all credentials.
@@ -119,6 +142,7 @@ class Central:
             try:
                 with self._http.opener.open(request, timeout=30) as response:
                     payload = json.load(response)
+                    self._observe_config_validators(request, response)
                 if custom_get:
                     with self._rate_lock:
                         self._custom_api_terminal_500s = 0
@@ -3543,6 +3567,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     from api_coverage import ReadCoverage
     transport = client if isinstance(client, Central) else None
     transport_before = transport.get_transport_metrics() if transport is not None else {}
+    validators_before = transport.get_validator_metrics() if transport is not None else {}
     client = ReadCoverage(client)
     audit_progress(progress, "Discovery", 0, 0, "Reading device inventory and assignments")
     devices = inventory(client)
@@ -3714,6 +3739,12 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
                                        for key in ("http_get_attempts", "http_get_retries",
                                                    "http_get_429", "http_get_5xx",
                                                    "custom_500_retry_sequences_suppressed")}
+        validators_after = transport.get_validator_metrics()
+        bundle["http_config_validators"] = {
+            key: validators_after.get(key, 0) - validators_before.get(key, 0)
+            for kind in ("collection", "keyed")
+            for field in ("responses", "strong_etag", "weak_etag", "last_modified")
+            for key in (kind + "_" + field,)}
     coverage_counts = Counter(row["status"] for row in bundle["api_read_coverage"]["operations"])
     print("Documented GET operation outcomes: " + canonical(dict(coverage_counts)), flush=True)
     print("VLAN evidence coverage: " + canonical(vlan_evidence_summary(bundle)), flush=True)
