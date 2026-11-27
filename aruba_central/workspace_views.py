@@ -408,7 +408,7 @@ ADVISOR_CSS = """
 #advisor-table td:nth-child(2){min-width:145px}#advisor-table td:nth-child(5){max-width:290px;min-width:160px}
 #advisor-table td:nth-child(5) select{width:100%;font-size:12px}
 #advisor-table th:first-child{font-size:0;width:38px}.selection-bar{position:sticky;bottom:12px;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:14px 18px;background:var(--surface);border:1px solid var(--line);box-shadow:0 5px 24px #0002;border-radius:10px}
-.selection-bar small{display:block}.selection-actions{display:flex;gap:8px;flex-wrap:wrap}.plan-content{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:22px}.plan-item{padding:14px 0;border-bottom:1px solid var(--line)}.plan-item h3{margin:0 0 5px}.plan-item p{margin:4px 0}.tabs button[aria-pressed=true]{border-bottom-color:var(--accent);color:var(--accent);font-weight:700}
+.selection-bar small{display:block}.selection-actions{display:flex;gap:8px;flex-wrap:wrap}.plan-content{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:22px}.plan-item{padding:14px 0;border-bottom:1px solid var(--line)}.plan-item h3{margin:0 0 5px}.preview-metrics,.preview-transition{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:10px 0}.preview-metrics>div,.preview-transition>div,.preview-decision{border:1px solid var(--line);border-radius:9px;padding:12px;min-width:0;overflow-wrap:anywhere}.preview-metrics strong{font-size:24px}.preview-metrics small,.preview-transition small{display:block;color:var(--muted)}.preview-decision{background:var(--bg)}.preview-transition ul{padding-left:18px;margin-bottom:0}.plan-item p{margin:4px 0}.tabs button[aria-pressed=true]{border-bottom-color:var(--accent);color:var(--accent);font-weight:700}
 """
 ADVISOR_JS = r"""
 (()=>{
@@ -560,9 +560,20 @@ function preview(){
  const chosen=selection();$('preview').replaceChildren();
  const review=bulkReview(chosen);
  const summary=el('section','');
- summary.append(el('h3','Bulk review summary'),
-  el('p',chosen.length+' proposals · '+review.known_recipients.length+' known device/function pairs · '+review.unknown_recipients.length+' uncertain recipient pairs'),
-  el('p','Counts include source recipients and selected destination impact. They are not a simulated deployment.'));
+ summary.append(el('h3','Bulk review summary'));
+ const cards=el('div','');cards.className='preview-metrics';
+ for(const [value,label] of [[chosen.length,'Selected proposals'],[review.known_recipients.length,'Observed recipient pairs'],[review.unknown_recipients.length,'Uncertain recipient pairs']]){
+  const card=el('div','');card.append(el('strong',String(value)),el('small',label));cards.append(card);
+ }
+ summary.append(cards,el('p','Counts include source recipients and selected destination impact. They are not a simulated deployment.'));
+ const restrictions=[];
+ if(review.missing_destinations.length)restrictions.push(review.missing_destinations.length+' missing destination selections');
+ if(review.collisions.length)restrictions.push(review.collisions.length+' overlapping proposal conflicts');
+ if(review.dependency_order.blocked.length)restrictions.push(review.dependency_order.blocked.length+' proposals with blocked dependency order');
+ const decision=el('div','');decision.className='preview-decision';
+ decision.append(el('strong',restrictions.length?'Resolve export blockers':'Review export available'),
+  el('p',restrictions.length?restrictions.join(' · '):'You can export this private review plan. It is not an approved or executable change.'));
+ summary.append(decision);
  const recipients=el('details','');recipients.append(el('summary','Review recipient evidence'));
  const recipientList=el('ul','');
  for(const d of review.known_recipients)recipientList.append(el('li',d.name+' ('+d.persona+') · known'));
@@ -596,6 +607,17 @@ function preview(){
  for(const f of chosen){
   const item=document.createElement('div');item.className='plan-item';
   item.append(el('h3',f.module+' / '+f.identity),el('p',({remove_override:'Review matching nearest inheritance',promote_local:'Consolidate repeated local profiles',reuse_library:'Reuse matching Library profile'}[f.action]||f.action)+' · '+f.target));
+  const flow=el('div','');flow.className='preview-transition';
+  const before=el('div','');before.append(el('small','Captured configuration'),el('strong',f.sources.length+' local definition(s)'));
+  const sourceNames=el('ul','');for(const source of f.sources)sourceNames.append(el('li',source.name+' ('+source.kind+')'));before.append(sourceNames);
+  const after=el('div','');after.append(el('small','Proposed configuration source'),el('strong',f.target));
+  if(f.action==='remove_override'){
+   const fallbacks=el('ul','');for(const x of f.fallbacks||[])fallbacks.append(el('li',x.name+' → '+(x.source?.name||'Unknown source')));after.append(fallbacks);
+  }else if(f.action==='promote_local'&&f.selected_destination&&f.selected_destination.kind!=='library'){
+   after.append(el('p',f.selected_destination.additional_devices.length+' additional recipients; '+f.selected_destination.unknown_membership.length+' uncertain members.'));
+  }
+  const goal=el('p','Expected goal: retain effective settings at intended recipients. Not a simulated or verified outcome.');
+  flow.append(before,after);item.append(flow,goal);
   const steps=document.createElement('ol');for(const s of f.steps)steps.append(el('li',s));item.append(steps);
   const blockers=document.createElement('details');blockers.append(el('summary','Validation required ('+f.blockers.length+')'));
   const ul=document.createElement('ul');for(const b of f.blockers)ul.append(el('li',b));blockers.append(ul);item.append(blockers);$('preview').append(item);
