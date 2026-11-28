@@ -35,3 +35,30 @@ class IdentityReviewTests(unittest.TestCase):
         self.assertTrue(reads["effective"]["both_names_observed_in_context"])
         self.assertFalse(reads["local"]["both_names_observed_in_context"])
         self.assertEqual(reads["local"]["returned_identity"],"EMPLOYEE")
+
+
+    def test_active_capture_identity_cache_shared_by_assessment_and_inspector(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from aruba_central.config_app import Workspace
+        from aruba_central.identity_review import identity_collisions
+        from test_consolidation import fixture
+        with tempfile.TemporaryDirectory() as directory:
+            name="config-audit-test.json"
+            path=Path(directory)/name
+            path.write_text(json.dumps(fixture()))
+            w=Workspace(directory)
+            bundle=w.reviewed_snapshot(name)
+            with patch("aruba_central.identity_review.identity_collisions",wraps=identity_collisions) as calc:
+                w.assessment_snapshot(bundle)
+                first=w.identity_snapshot(bundle)
+                w.assessment({"snapshot":name,"mode":"identities"})
+                self.assertIs(first,w.identity_snapshot(bundle))
+                self.assertEqual(calc.call_count,1)
+                path.write_text(path.read_text()+" ")
+                changed=w.reviewed_snapshot(name)
+                self.assertIsNot(bundle,changed)
+                self.assertEqual(w.identity_snapshot(changed),first)
+                self.assertEqual(calc.call_count,2)
