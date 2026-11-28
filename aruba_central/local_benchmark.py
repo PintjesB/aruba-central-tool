@@ -111,8 +111,10 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
                 ("render_coverage", lambda: workspace.coverage({"snapshot": snapshot})),
                 ("render_entity_search", lambda: workspace.report({"snapshot": snapshot, "mode": "entities", "q": "vlan"})),
                 ("render_field_search", lambda: workspace.report({"snapshot": snapshot, "mode": "search", "q": "vlan"})),
+                ("render_field_search_repeat", lambda: workspace.report({"snapshot": snapshot, "mode": "search", "q": "vlan"})),
                 ("render_field_search_alternate", lambda: workspace.report({"snapshot": snapshot, "mode": "search", "q": "name"})),
                 ("render_field_search_grouped", lambda: workspace.report({"snapshot": snapshot, "mode": "search", "q": "vlan", "presentation": "grouped"})),
+                ("render_field_search_grouped_repeat", lambda: workspace.report({"snapshot": snapshot, "mode": "search", "q": "vlan", "presentation": "grouped"})),
             ):
                 render(label, action)
             from .optimization_worklist import engineering_group_id
