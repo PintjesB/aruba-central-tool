@@ -117,3 +117,28 @@ class PolicySequenceTests(unittest.TestCase):
         self.assertEqual({r["context"] for r in reports[1]["references"][0]["alternative_observations"]},{"library_definition"})
         self.assertTrue(all(not r["findings"] and not r["safe_to_apply"] for r in reports))
         self.assertNotIn("alternative_observations",reports[1]["references"][1])
+
+    def test_definition_preview_does_not_mix_library_and_effective_or_qualify_targets(self):
+        raw=capture([{"name":"broad","position":1},{"name":"specific","position":2}])
+        library={"status":"list_parsed","profiles":{
+            "broad":policy([rule(1,source=None)]),"specific":policy([rule(1,action="OTHER_ACTION")])}}
+        effective={"status":"list_parsed","count_confirmed":True,"profiles":{"specific":policy([rule(1,source="different")])}}
+        data={"results":{"CAMPUS_AP":{"scopes":[{"id":"1","kind":"site"}],"modules":{
+            "policies":{"scope_results":[{"scope":"1","effective_view":effective}]}}}},
+            "library":{"modules":{"policies":library}},
+            "unadapted_profiles":{"policy-groups":{"source_views":[{"persona":"CAMPUS_AP","scope":"1","effective":raw}]}}}
+        result=policy_sequence_reviews(data)[0]
+        self.assertEqual([r["status"] for r in result["references"]],["not_observed","rules_observed"])
+        self.assertFalse(result["findings"])
+        preview=result["library_preview"]
+        self.assertEqual(preview["context"],"library_definition_only")
+        self.assertEqual(len(preview["findings"]),1)
+        self.assertEqual(preview["findings"][0]["later_rule"]["condition"]["source"],{"type":"ADDRESS_ROLE","role":"guest"})
+        self.assertFalse(preview["safe_to_apply"])
+        self.assertFalse(preview["complete"])
+        data["keyed_profile_details"]={"profiles":{"Library":{"":{"policies":{"broad":{"library":{
+            "status":"identity_observed","profile":policy([])}}}}}}}
+        result=policy_sequence_reviews(data)[0]
+        self.assertEqual(result["library_preview"]["references"][0]["status"],"individual_evidence_conflict")
+        self.assertFalse(result["library_preview"]["findings"])
+        self.assertFalse(result["findings"])

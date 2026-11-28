@@ -112,6 +112,7 @@ def policy_sequence_reviews(bundle):
                 if isinstance(raw, dict) and isinstance(raw.get("policy"), list):
                     unfiltered_reads[str(capture["scope"])].append(module_view(raw, "name"))
     library_view = (bundle.get("library") or {}).get("modules", {}).get("policies", {})
+    library_conflicts = conflicting_profiles(bundle,"Library","policies","",library_view,side="library")
     for persona, entry in bundle["results"].items():
         for source in entry.get("scopes", []):
             scopes.setdefault((persona, str(source["id"])), source)
@@ -149,10 +150,16 @@ def policy_sequence_reviews(bundle):
                 if mixed.get("status") == "list_parsed" and name in mixed.get("profiles", {}):
                     observations.append({"context":"unfiltered_same_scope","status":"identity_observed"})
             if library_view.get("status") == "list_parsed" and name in library_view.get("profiles", {}):
-                conflicts = conflicting_profiles(bundle,"Library","policies","",library_view,{name},side="library")
-                observations.append({"context":"library_definition","status":"individual_evidence_conflict" if name in conflicts else "identity_observed"})
+                observations.append({"context":"library_definition","status":"individual_evidence_conflict" if name in library_conflicts else "identity_observed"})
             if observations:
                 ref["alternative_observations"] = observations
+        # A separate definition-only analysis uses the captured sequence order
+        # and exclusively Library bodies. Never mix Library and effective rules
+        # or replace an unresolved scope target with a definition.
+        if report["status"] == "order_observed" and any(ref["status"] != "rules_observed" for ref in report["references"]):
+            preview = compare_sequence({"status": report["status"], "entries": report["entries"]},
+                                       library_view, conflicts=library_conflicts)
+            report["library_preview"] = {**preview, "context": "library_definition_only"}
         output.append({"persona": persona, "scope": scope, "name": source.get("name") or scope,
                        "target_context": context, **report})
     if "library" in evidence:
