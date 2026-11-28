@@ -3,7 +3,7 @@ from collections import Counter
 import json
 from .configuration_history import configuration_drift, reference_compliance, snapshot_identity_checks, STANDARD_MODULES, STANDARD_TEMPLATES
 from .workspace_ui import e, page, intro, metrics, badge, raw, table, tr, inspect, diff_table, property_table, module_label, persona_label, pretty
-from .workspace_views import load, select, scope_filter_form
+from .workspace_views import load, select, scope_filter_form, url
 
 
 def private_export(kind, data):
@@ -33,9 +33,54 @@ def change_detail(row):
     return body + raw(row)
 
 
+def drift_control(root, common, kind, index, label):
+    endpoint = url(root, "drift", **common, detail=kind, index=index)
+    href = url(root, "drift", **common, evidence=kind, index=index)
+    return (f'<button type="button" class="quiet inspect-trigger" data-inspect data-inspect-url="{endpoint}">{e(label)}</button>'
+            f'<noscript><a href="{href}">{e(label)}</a></noscript>')
+
+
+def drift_group_detail(group):
+    evidence = group["observations"]
+    locations = table(("Function", "Scope", "View", "Change"), [
+        tr(e(persona_label(row["persona"])), e(row["scope_name"]), e(pretty(row["view"])),
+           badge(pretty(row["status"]))) for row in evidence], search=True)
+    return ("<h3>Observed locations</h3>" + locations + "<h3>Shared observed transition</h3>" + change_detail(evidence[0])
+            + '<p class="note">Matching transitions across scopes do not prove a common cause. Each observation remains available in the detailed change worklist.</p>')
+
+
+def drift_batch(records, query, prefix, fields):
+    keyword = query.get(prefix + "_q", "")
+    if len(keyword) > 200:
+        raise ValueError("Invalid drift search")
+    terms = keyword.casefold().split()
+    matches = [(i, row) for i, row in enumerate(records)
+               if all(term in " ".join(str(row.get(k, "")) for k in fields).casefold() for term in terms)]
+    try:
+        offset = int(query.get(prefix + "_offset", "0"))
+    except (ValueError, TypeError):
+        raise ValueError("Invalid drift page") from None
+    if offset < 0 or offset % 50 or (offset and offset >= len(matches)):
+        raise ValueError("Invalid drift page")
+    return matches[offset:offset+50], len(matches), offset, keyword
+
+
+def drift_batch_controls(root, common, prefix, total, offset, keyword):
+    body = (f'<form class="filter-bar" method="get" action="{e(root+"drift")}#{prefix}-drift">'
+            + "".join(f'<input type="hidden" name="{e(key)}" value="{e(value)}">' for key,value in common.items() if key != "binding")
+            + f'<label>Search all observations<input name="{prefix}_q" maxlength="200" value="{e(keyword)}"></label>'
+            + '<button type="submit">Filter</button></form>')
+    body += '<p>' + ("Showing "+str(offset+1)+"–"+str(min(total,offset+50))+" of "+str(total) if total else "No matching observations") + '</p>'
+    for label,next_offset in (("Previous",offset-50),("Next",offset+50)):
+        if 0 <= next_offset < total:
+            href=url(root,"drift",**{k:v for k,v in common.items() if k!="binding"},
+                     **{prefix+"_q":keyword,prefix+"_offset":next_offset})
+            body += f'<a class="button" href="{href}#{prefix}-drift">{label}</a> '
+    return body
+
+
 def drift_view(workspace, query):
-    from .config_app import audit_files, read_audit
-    from .central_tool import refresh_configuration_review
+    from .config_app import audit_files
     loaded, empty = load(workspace, query, "Configuration drift", "drift")
     if empty:
         return empty
@@ -51,48 +96,69 @@ def drift_view(workspace, query):
              + select("previous", [("", "Select an earlier snapshot")] + others, previous, "Previous snapshot")
              + f'<label><span><input type="checkbox" name="confirmed" value="yes" {"checked" if confirmed else ""} required> Both snapshots are from the same tenant</span></label>'
              + '<button type="submit">Compare snapshots</button></form></section>')
+    special = query.get("detail") or query.get("evidence") or query.get("export")
+    if special and (not previous or not confirmed):
+        raise ValueError("Comparison context required")
     if previous and confirmed:
         if previous not in dict(others):
             raise ValueError("Invalid previous snapshot")
         try:
-            before = refresh_configuration_review(read_audit(workspace.directory, previous))
-            result = configuration_drift(before, bundle, confirmed=True)
+            result, binding = workspace.drift_snapshot(name, bundle, previous)
         except ValueError as exc:
+            if special:
+                raise
             return page("Configuration drift", body + '<section><p>Cannot compare these snapshots: ' + e(str(exc)) + '</p></section>', workspace.nav(name))
-        from .drift_review import drift_groups
-        groups = drift_groups(result["records"], bundle)
-        result["profile_change_groups"] = groups
-        counts = result["counts"]
-        rows = []
-        for row in result["records"]:
-            rows.append(tr(e(persona_label(row["persona"])), e(row["scope_name"]), e(module_label(row["module"])),
-                           e(pretty(row["view"])), e(row["identity"] or "Collection"), badge(pretty(row["status"])),
-                           inspect(row["identity"] or row["module"], change_detail(row), "Compare")))
+        common = {"snapshot":name,"previous":previous,"confirmed":"yes","binding":binding}
+        groups = result["profile_change_groups"]
+        if special:
+            if query.get("binding") != binding:
+                raise ValueError("Comparison snapshot changed; reopen worklist")
+            if query.get("export") == "1":
+                export = intro("Configuration drift", "Complete private comparison export. Keep this file private.", picker)
+                export += private_export("configuration-drift", {"previous_snapshot":previous,"current_snapshot":name,"report":result})
+                return page("Configuration drift",export,workspace.nav(name))
+            kind=query.get("detail") or query.get("evidence")
+            collections={"group":groups,"record":result["records"],"additional":result["additional_evidence"]["records"]}
+            if kind not in collections:
+                raise ValueError("Invalid drift evidence type")
+            try:
+                index=int(query.get("index",""))
+            except (ValueError,TypeError):
+                raise ValueError("Invalid drift evidence index") from None
+            records=collections[kind]
+            if not 0 <= index < len(records):
+                raise ValueError("Unknown drift evidence")
+            row=records[index]
+            title=row.get("identity") or row["module"]
+            content=drift_group_detail(row) if kind=="group" else change_detail(row)
+            if query.get("evidence"):
+                return page("Configuration drift",intro("Configuration drift",title,picker)+content,workspace.nav(name))
+            return '<template data-advisor-evidence><div class="inspector-title"><h2>'+e(title)+'</h2></div>'+content+'</template>'
+        counts=result["counts"]
         body += metrics([("Observed changes", counts.get("changed", 0) + counts.get("source_changed", 0), "Body or source differences"),
                          ("Added / removed profiles", counts.get("added", 0) + counts.get("removed", 0), "Count-confirmed opposite view"),
                          ("Uncertain observations", sum(v for k, v in counts.items() if k not in ("changed", "source_changed", "added", "removed")), "Review coverage and membership"),
                          ("Common device serials", result["identity_checks"]["common_serial_count"], "Identity check, not independent tenant proof")])
-        group_rows = []
-        for group in groups:
-            evidence = group["observations"]
-            locations = table(("Function", "Scope", "View", "Change"), [
-                tr(e(persona_label(row["persona"])), e(row["scope_name"]), e(pretty(row["view"])),
-                   badge(pretty(row["status"]))) for row in evidence], search=True)
-            details = "<h3>Observed locations</h3>" + locations + "<h3>Shared observed transition</h3>" + change_detail(evidence[0])
-            details += '<p class="note">Matching transitions across scopes do not prove a common cause. Each observation remains available in the detailed change worklist.</p>'
-            group_rows.append(tr(e(module_label(group["module"])), e(group["identity"]),
-                                 badge(pretty(group["status"])) + ('<small>Field evidence gaps</small>' if group["has_field_gaps"] else ""),
-                                 str(group["effective_device_count"]), str(group["saved_scope_count"]),
-                                 str(group["higher_effective_count"]), str(group["library_count"]),
-                                 inspect(group["identity"], details, "Review impact")))
-        body += '<section><h2>Profile change groups</h2><p>Identical before/after profile transitions are grouped to reduce repeated review. Effective device counts describe captured changes, not inferred deployment or causality.</p>'
-        body += table(("Module", "Profile", "Change", "Device/function pairs", "Saved scopes", "Higher effective scopes", "Library observations", ""), group_rows, search=True) if group_rows else "<p>No comparable profile transitions.</p>"
-        body += "</section>"
-        body += '<section><div class="section-head"><h2>Change worklist</h2>' + private_export(
-            "configuration-drift", {"previous_snapshot": previous, "current_snapshot": name, "report": result}) + '</div>' + (table(("Function", "Scope", "Module", "View", "Profile", "Change", ""), rows, search=True) if rows else "<p>No differences in the compared views.</p>")
+        batch,total,offset,keyword=drift_batch(groups,query,"group",("module","identity","status"))
+        body += '<section id="group-drift"><h2>Profile change groups</h2><p>Identical before/after profile transitions are grouped to reduce repeated review. Effective device counts describe captured changes, not inferred deployment or causality.</p>'
+        body += drift_batch_controls(root,common,"group",total,offset,keyword)
+        body += table(("Module", "Profile", "Change", "Device/function pairs", "Saved scopes", "Higher effective scopes", "Library observations", ""),[
+            tr(e(module_label(group["module"])),e(group["identity"]),
+               badge(pretty(group["status"]))+('<small>Field evidence gaps</small>' if group["has_field_gaps"] else ""),
+               str(group["effective_device_count"]),str(group["saved_scope_count"]),str(group["higher_effective_count"]),str(group["library_count"]),
+               drift_control(root,common,"group",index,"Review impact")) for index,group in batch])
+        body += '</section>'
+        batch,total,offset,keyword=drift_batch(result["records"],query,"record",("persona","scope","scope_name","module","view","identity","status"))
+        body += '<section id="record-drift"><div class="section-head"><h2>Change worklist</h2>'
+        body += f'<a class="button" href="{url(root,"drift",**common,export="1")}">Export private report JSON</a></div>'
+        body += drift_batch_controls(root,common,"record",total,offset,keyword)
+        body += table(("Function","Scope","Module","View","Profile","Change",""),[
+            tr(e(persona_label(row["persona"])),e(row["scope_name"]),e(module_label(row["module"])),e(pretty(row["view"])),
+               e(row["identity"] or "Collection"),badge(pretty(row["status"])),drift_control(root,common,"record",index,"Compare"))
+            for index,row in batch])
         body += '<p class="note">Missing fields are not explicit defaults. A changed observation is not proof of who changed it or that the configuration was deployed. Captures are not atomic; coverage remains incomplete.</p></section>'
         from .additional_drift_view import additional_drift_panel
-        body += additional_drift_panel(result["additional_evidence"], root, name, previous, query)
+        body += additional_drift_panel(result["additional_evidence"], root, name, previous, query, binding=binding)
     return page("Configuration drift", body, workspace.nav(name))
 
 

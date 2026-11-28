@@ -404,6 +404,7 @@ class Workspace:
         self._consolidation_snapshot = None
         self._assessment_snapshot = None
         self._assignment_snapshot = None
+        self._drift_snapshot = None
         self._optimization_worklist = None
         self._vlan_summary = None
         self._configuration_search_index = None
@@ -593,6 +594,7 @@ class Workspace:
         self._consolidation_snapshot = None
         self._assessment_snapshot = None
         self._assignment_snapshot = None
+        self._drift_snapshot = None
         self._optimization_worklist = None
         self._vlan_summary = None
         self._configuration_search_index = None
@@ -668,6 +670,37 @@ class Workspace:
                     self._assessment_snapshot = assessment(bundle, findings=findings, engineering=engineering, assignments=assignments)
                 return self._assessment_snapshot
         return assessment(bundle, findings=findings, engineering=engineering, assignments=assignments)
+
+    def drift_snapshot(self, name, bundle, previous):
+        """Cache one derived comparison, bound to both unchanged capture files."""
+        from .configuration_history import configuration_drift
+        from .drift_review import drift_groups
+        from .central_tool import refresh_configuration_review, canonical
+        import hashlib
+        with self.snapshot_lock:
+            paths = {p.name: p for p in audit_files(self.directory)}
+            def fingerprint(selected):
+                path = paths.get(selected)
+                if path is None or path.is_symlink():
+                    raise ValueError("Unknown snapshot")
+                stat = path.stat()
+                return (path.name, stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+            key = (fingerprint(name), fingerprint(previous))
+            if (self._reviewed_snapshot is None or self._reviewed_snapshot[0] != key[0]
+                    or self._reviewed_snapshot[1] is not bundle):
+                raise ValueError("Current snapshot changed; reopen comparison")
+            if self._drift_snapshot is not None and self._drift_snapshot[0] == key:
+                return self._drift_snapshot[1:]
+            self._drift_snapshot = None
+            before = refresh_configuration_review(read_audit(self.directory, previous))
+            result = configuration_drift(before, bundle, confirmed=True)
+            result["profile_change_groups"] = drift_groups(result["records"], bundle)
+            if (fingerprint(name), fingerprint(previous)) != key:
+                raise ValueError("Snapshot changed during comparison")
+            binding = hashlib.sha256(canonical(key).encode()).hexdigest()
+            # Retain the derived report, not a second full reviewed snapshot.
+            self._drift_snapshot = (key, result, binding)
+            return result, binding
 
     def optimization_worklist(self, bundle):
         """Reuse finding rows; local disposition records are always read separately."""
