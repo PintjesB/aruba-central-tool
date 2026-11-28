@@ -287,7 +287,7 @@ def profile_reference_observations(module, identity, body, vlans):
 
 def advanced_analysis(bundle):
     result = {"port_groups": [], "shadowed": [], "library_duplicates": [],
-              "references": [], "coverage": [], "reference_graph_complete": False,
+              "references": [], "coverage": [], "precedence_conflicts": [], "reference_graph_complete": False,
               "safe_to_apply": False}
     library = bundle.get("library") or {}
     library_modules = library.get("modules", {})
@@ -303,6 +303,13 @@ def advanced_analysis(bundle):
         members = scope_memberships(entry["scopes"])
         names = {s["id"]: s.get("name") or s["id"] for s in entry["scopes"]}
         scope_kinds = {s["kind"] for s in entry["scopes"]}
+        from .standard_evidence import conflicting_profiles as precedence_conflicting_profiles
+        precedence_conflicts = {}
+        def scope_contradiction(module, scope, identity):
+            key = (module, scope)
+            if key not in precedence_conflicts:
+                precedence_conflicts[key] = precedence_conflicting_profiles(bundle, persona, module, scope, views[module].get(scope, {}))
+            return precedence_conflicts[key].get(identity)
         port_groups = defaultdict(list)
         for device in (s for s in entry["scopes"] if s["kind"] == "device"):
             sid = device["id"]
@@ -348,6 +355,14 @@ def advanced_analysis(bundle):
                     annotation = raw.get("@", {})
                     if not isinstance(annotation, dict) or annotation.get("aruba-annotation:is_default") is True:
                         continue
+                    def record_conflict(scope, evidence):
+                        result["precedence_conflicts"].append({"persona": persona, "device": names[sid], "scope": sid,
+                            "module": module, "identity": identity, "conflicting_scope": scope,
+                            "conflicting_scope_name": names[scope], "individual_conflict": evidence, "safe_to_apply": False})
+                    conflict = scope_contradiction(module, sid, identity)
+                    if conflict:
+                        record_conflict(sid, conflict)
+                        continue
                     # A direct winner must have explicit annotations at a known
                     # member scope, and agree exactly with the device effective body.
                     actual = profile_body(raw)
@@ -365,8 +380,15 @@ def advanced_analysis(bundle):
                         if effective.get("status") != "list_parsed":
                             unknown_higher = True
                             continue
+                        conflict = scope_contradiction(module, scope_id, identity)
+                        if conflict:
+                            record_conflict(scope_id, conflict)
+                            unknown_higher = True
+                            continue
                         candidate = effective["profiles"].get(identity)
                         if candidate is None:
+                            if effective.get("count_confirmed") is not True:
+                                unknown_higher = True
                             continue
                         ann = candidate.get("@", {})
                         if not isinstance(ann, dict) or ann.get("aruba-annotation:inherited") is not False or ann.get("aruba-annotation:object_type") not in ("LOCAL", "SHARED") or ann.get("aruba-annotation:is_default") is True:
@@ -385,6 +407,10 @@ def advanced_analysis(bundle):
                             continue
                         upstream = views[module].get(ancestor, {})
                         if upstream.get("status") != "list_parsed" or identity not in upstream["profiles"]:
+                            continue
+                        conflict = scope_contradiction(module, ancestor, identity)
+                        if conflict:
+                            record_conflict(ancestor, conflict)
                             continue
                         other = profile_body(upstream["profiles"][identity])
                         result["shadowed"].append({"persona": persona, "module": module,
