@@ -641,12 +641,14 @@ class Workspace:
                 return self._optimization_worklist
         return optimization_worklist(bundle, findings, engineering)
 
-    def configuration_search_index(self, bundle):
+    def configuration_search_index(self, bundle, *, build=True):
         """Cache bounded search preprocessing only for the active capture."""
         from .configuration_search import build_search_index
         with self.snapshot_lock:
             if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle:
                 if self._configuration_search_index is None:
+                    if not build:
+                        return None
                     # Tuple also remembers a rejected (oversized) index.
                     diagnostics = {}
                     self._configuration_search_index = (build_search_index(bundle, diagnostics=diagnostics), diagnostics)
@@ -666,7 +668,10 @@ class Workspace:
                 result = self._configuration_search_pages.pop(key)
                 self._configuration_search_pages[key] = result
                 return result
-        index = self.configuration_search_index(bundle)
+        # A device or exact scope search should not pay the cost of building
+        # a tenant-wide index on its first visit. Reuse the index if available;
+        # otherwise use the existing exact scope-filtered streaming path.
+        index = self.configuration_search_index(bundle, build=scope is None)
         kwargs = dict(module=module, persona=persona, scope=scope, offset=offset, index=index)
         result = (grouped_search(bundle, query, **kwargs) if grouped
                   else search_configuration(bundle, query, group=group, **kwargs))
