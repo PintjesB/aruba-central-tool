@@ -109,6 +109,7 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
                 ("render_engineering_ports", lambda: workspace.advanced({"snapshot": snapshot, "workflow": "ports"})),
                 ("render_engineering_duplicates", lambda: workspace.advanced({"snapshot": snapshot, "workflow": "duplicates"})),
                 ("render_coverage", lambda: workspace.coverage({"snapshot": snapshot})),
+                ("render_configuration_explorer", lambda: workspace.report({"snapshot": snapshot, "view": "all"})),
                 ("render_entity_search", lambda: workspace.report({"snapshot": snapshot, "mode": "entities", "q": "vlan"})),
                 ("render_field_search", lambda: workspace.report({"snapshot": snapshot, "mode": "search", "q": "vlan"})),
                 ("render_field_search_repeat", lambda: workspace.report({"snapshot": snapshot, "mode": "search", "q": "vlan"})),

@@ -62,6 +62,39 @@ class ConsolidationTests(unittest.TestCase):
             self.assertIn("Source and comparison are not verified", html)
         self.assertFalse(any(f["identity"] == "999" for f in profile_recommendations(data)))
 
+    def test_explorer_lazy_evidence_binds_exact_profile_and_capture(self):
+        import tempfile
+        import json
+        from pathlib import Path
+        from aruba_central.config_app import Workspace
+        from aruba_central.review_dispositions import snapshot_binding
+        data = fixture()
+        scope = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"][2]
+        scope["effective_view"]["profiles"]["10"]["private-setting"] = "marker-only-ten"
+        scope["effective_view"]["profiles"]["20"]["private-setting"] = "marker-only-twenty"
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            path = Path(directory) / name
+            path.write_text(json.dumps(data))
+            workspace = Workspace(directory)
+            bundle = workspace.reviewed_snapshot(name)
+            query = {"snapshot": name, "persona": "ACCESS_SWITCH", "module": "layer2-vlan", "scope": "3", "view": "all"}
+            html = workspace.report(query)
+            self.assertIn("data-inspect-url", html)
+            self.assertNotIn("marker-only-ten", html)
+            self.assertNotIn("marker-only-twenty", html)
+            exact = {**query, "identity": "10", "detail": "1", "binding": snapshot_binding(workspace, name, bundle)}
+            detail = workspace.report(exact)
+            self.assertIn("data-advisor-evidence", detail)
+            self.assertIn("marker-only-ten", detail)
+            self.assertNotIn("marker-only-twenty", detail)
+            self.assertIn("marker-only-ten", workspace.report({**query, "identity": "10"}))
+            with self.assertRaises(ValueError):
+                workspace.report({**exact, "identity": "absent"})
+            path.write_text(path.read_text() + " ")
+            with self.assertRaises(ValueError):
+                workspace.report(exact)
+
     def test_recipient_index_matches_independent_membership_scan(self):
         from aruba_central.consolidation import placement_index
         scopes = [{"id": "1", "kind": "global"},
