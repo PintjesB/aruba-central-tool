@@ -59,6 +59,10 @@ def keyed_view(workspace, query):
     module = query.get("module", "")
     persona = query.get("persona", "")
     scope = query.get("scope", "")
+    keyword = query.get("q", "")
+    if len(keyword) > 200:
+        raise ValueError("Invalid evidence search")
+    terms = keyword.casefold().split()
     if category not in ("attention", "all", *CATEGORIES):
         raise ValueError("Unknown individual evidence category")
     try:
@@ -75,6 +79,12 @@ def keyed_view(workspace, query):
         personas.add(row["persona"])
         if (module and row["module"] != module) or (persona and row["persona"] != persona) or (scope and row["scope"] != scope):
             continue
+        if terms:
+            searchable = " ".join(str(v) for v in (row["name"], row["scope"], row["persona"],
+                persona_label(row["persona"]), row["module"], module_label(row["module"]),
+                row["identity"], row["view"], row["read"].get("status", ""), CATEGORIES[row["category"]])).casefold()
+            if not all(term in searchable for term in terms):
+                continue
         counts[row["category"]] += 1
         if category == "attention":
             if row["category"] not in ("unqualified", "different", "order_only", "not_compared"):
@@ -104,6 +114,7 @@ def keyed_view(workspace, query):
              + (f'<input type="hidden" name="scope" value="{e(scope)}">' if scope else "")
              + select("persona", [("", "All functions")] + [(p, persona_label(p)) for p in sorted(personas)], persona, "Function")
              + select("module", [("", "All modules")] + [(m, module_label(m)) for m in sorted(modules)], module, "Module")
+             + f'<label>Search all observations<input type="search" name="q" maxlength="200" value="{e(keyword)}"></label>'
              + '<button type="submit">Filter evidence</button></form>'
              '<p class="note">Collection and individual reads are independent observations. Neither is automatically authoritative. Order-only differences remain differences; no removal or migration is authorized.</p></section>')
     rows = []
@@ -117,12 +128,14 @@ def keyed_view(workspace, query):
                        e(row["identity"]), e(row["view"]), badge(CATEGORIES[category_name]),
                        str(len(read["differences"])) if isinstance(read.get("differences"), list) else "Unknown",
                        control))
-    params = {"snapshot": name, "mode": "keyed", "category": category, "module": module, "persona": persona, "scope": scope}
+    params = {"snapshot": name, "mode": "keyed", "category": category, "module": module, "persona": persona, "scope": scope, "q": keyword}
     body += f'<section><h2>{total} matching observations</h2><p>Showing {offset + 1 if selected else 0}–{offset + len(selected) if selected else 0}. Table search and CSV cover this batch only.</p>'
     if offset:
         body += f'<a class="button" href="{url(root, "assessment", **params, offset=max(0, offset-200))}">Previous batch</a> '
     if offset + len(selected) < total:
         body += f'<a class="button" href="{url(root, "assessment", **params, offset=offset+200)}">Next batch</a>'
+    if offset and not selected:
+        body += f'<p><a href="{url(root, "assessment", **params)}">Return to first batch</a></p>'
     body += table(("Scope", "Function", "Module", "Profile", "View", "Evidence", "Differences", ""), rows, search=True) + '</section>'
     return page("Configuration assessment", body, workspace.nav(name))
 
