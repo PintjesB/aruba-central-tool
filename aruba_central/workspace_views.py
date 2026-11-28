@@ -1063,6 +1063,14 @@ def policy_rule_detail(finding):
     if finding.get("unsupported_reasons"):
         detail += '<h3>Unsupported rule observations</h3>'+table(("Reason","Rules"),[
             tr(e(pretty(reason)),str(count)) for reason,count in sorted(finding["unsupported_reasons"].items())])
+    if finding.get("service_definition_evidence"):
+        evidence=finding["service_definition_evidence"]
+        detail += '<h3>Referenced network service definitions</h3><p>Exact captured scope or Library evidence. Literal protocol and ports describe the referenced definition, not the complete policy predicate.</p>'
+        detail += table(("Location","Rule position","Service","Evidence","Literal service"),[
+            tr(e(group["location"]["name"]),e(str(ref.get("position"))),e(ref.get("service") or "Unknown"),e(pretty(ref["status"])),
+               property_table(ref["literal_service"]) if ref.get("literal_service") else e("Unknown"))
+            for group in evidence for ref in group["references"]])
+        detail += raw(evidence,"Full private service evidence")
     if finding.get("unsupported_predicate_shapes"):
         detail += '<h3>Unsupported predicate structure</h3><p>These fixed categories describe captured shapes, not matching semantics.</p>'+table(("Reason","Condition type","Rule type","Source","Destination","Additional sections","Rules"),[
             tr(e(pretty(v["reason"])),e(pretty(v["condition_shape"])),e(v["rule_kind"]),e(v["source_kind"]),e(v["destination_kind"]),
