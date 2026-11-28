@@ -89,3 +89,59 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
                   for (p, d, m, i), a in overlaps.items() if len(a) > 1]
     return {"rows": rows, "overlaps": collisions, "invalid_rows": invalid,
             "capture_status": assignment_view.get("status", "not_collected"), "complete": False, "safe_to_apply": False}
+
+
+ASSIGNMENT_FILTERS = {
+    "all": "All assignments", "attention": "Requires review",
+    "scope_unresolved": "Unresolved assignment scope",
+    "overlap": "Overlapping assignments",
+    "library_unobserved": "Library definition not observed",
+    "different_body": "Different effective settings",
+    "not_visible": "Count-confirmed profile absence",
+    "membership_unverified": "Unknown recipient membership",
+    "unverified": "Unverified effective evidence",
+    "matching_source_unverified": "Matching body, source unverified",
+    "matching_shared": "Matching shared profile observed",
+    "no_recipients": "No known or uncertain recipients",
+}
+
+
+def filter_assignment_review(report, module="", persona="", identity="", state="all"):
+    """Filter cached review rows without discarding their overlap context.
+
+    An atomic module may overlap across different profile names. Retain the
+    complete collision when any selected assignment participates.
+    """
+    if state not in ASSIGNMENT_FILTERS:
+        raise ValueError("Unknown assignment evidence filter")
+    def key(row):
+        return (row["persona"], row["module"], row["identity"], row["scope"])
+    def participants(collision):
+        return {(collision["persona"], collision["module"], item["identity"], item["scope"])
+                for item in collision["assignments"]}
+    overlap_keys = set().union(*(participants(c) for c in report["overlaps"]))
+    def matches(row):
+        if ((module and row["module"] != module) or (persona and row["persona"] != persona)
+                or (identity and row["identity"] != identity)):
+            return False
+        states = {r["status"] for r in row["recipients"]}
+        unresolved = not row["scope_resolved"]
+        overlap = key(row) in overlap_keys
+        no_recipients = not row["recipients"]
+        if state == "all":
+            return True
+        if state == "attention":
+            return (unresolved or overlap or not row["library_present"] or no_recipients
+                    or bool(states - {"matching_shared"}))
+        if state == "scope_unresolved":
+            return unresolved
+        if state == "overlap":
+            return overlap
+        if state == "library_unobserved":
+            return not row["library_present"]
+        if state == "no_recipients":
+            return no_recipients
+        return state in states
+    rows = [row for row in report["rows"] if matches(row)]
+    selected = {key(row) for row in rows}
+    return {**report, "rows": rows, "overlaps": [c for c in report["overlaps"] if participants(c) & selected]}

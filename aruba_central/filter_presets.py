@@ -14,7 +14,7 @@ ROUTES = {
     "scopes": {"mode", "persona", "device"},
     "library": {"module", "visibility", "profile"},
     "advanced": {"workflow", "group"},
-    "assignments": {"module", "persona", "identity"},
+    "assignments": {"module", "persona", "identity", "state"},
     "advisor": {"finding", "group", "persona", "module", "scope", "identity"},
 }
 LABELS = {"assessment": "Configuration assessment", "overrides": "Device overrides",
