@@ -79,7 +79,12 @@ def revalidate_plan(workspace, manifest, current_name, *, confirmed=False):
         unverified = sum(not same_device(before,after,persona,sid) for sid in device_ids)
         if unverified:
             reasons.append("device_identity_unverified")
-        if destination.get("kind") == "library" or proposal["action"] == "reuse_library":
+        library_destination = destination.get("kind") == "library" or proposal["action"] == "reuse_library"
+        from .preflight_evidence import compare_profile_evidence
+        profile_changes = compare_profile_evidence(before,after,persona,module,identity,library_destination)
+        if profile_changes:
+            reasons.append("exact_profile_evidence_changed")
+        if library_destination:
             old_assignments = assignment_evidence(before,module,identity)
             new_assignments = assignment_evidence(after,module,identity)
             if old_assignments != new_assignments:
@@ -88,7 +93,8 @@ def revalidate_plan(workspace, manifest, current_name, *, confirmed=False):
             reasons.append("combined_review_not_reconstructed")
         rows.append({"id":fid,"action":proposal["action"],"persona":persona,"module":module,"identity":identity,
                      "status":"review_required" if reasons else "observed_evidence_unchanged",
-                     "reasons":reasons,"device_pairs_checked":len(device_ids),"unverified_device_pairs":unverified})
+                     "reasons":reasons,"device_pairs_checked":len(device_ids),"unverified_device_pairs":unverified,
+                     "profile_evidence_changes":profile_changes})
     if current_plan is not None and (current_plan["review_order"] != plan["review_order"] or current_plan["validation"] != plan["validation"]):
         combined_reasons.append("combined_review_order_or_gate_evidence_changed")
     if (snapshot_binding(workspace,previous,before) != before_binding or
