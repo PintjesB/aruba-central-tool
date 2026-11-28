@@ -417,3 +417,27 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(len(identity_refs),1)
         self.assertEqual(identity_refs[0]["target"],"10")
         self.assertEqual(identity_refs[0]["status"],"definition_observed")
+
+    def test_scope_precedence_does_not_qualify_conflicting_individual_observations(self):
+        p="ACCESS_SWITCH"
+        scopes=[{"id":"1","kind":"global","name":"Global"},{"id":"2","kind":"site","name":"Site","metadata":{"id":2}},
+                {"id":"3","kind":"device","name":"Switch","metadata":{"siteId":2}}]
+        ann={"aruba-annotation:inherited":False,"aruba-annotation:object_type":"LOCAL"}
+        def captured(name,inherited=False):
+            return {"status":"list_parsed","count_confirmed":True,"profiles":{"10":{"vlan":10,"name":name,
+                "@":{**ann,"aruba-annotation:inherited":inherited}}}}
+        data={"results":{p:{"scopes":scopes,"modules":{"layer2-vlan":{"scope_results":[
+            {"scope":"1","effective_view":captured("Global")},
+            {"scope":"2","effective_view":captured("Office")},
+            {"scope":"3","effective_view":captured("Office",True)}]}}}}}
+        self.assertEqual(len(advanced_analysis(data)["shadowed"]),1)
+        data["keyed_profile_details"]={"profiles":{p:{"2":{"layer2-vlan":{"10":{"effective":{
+            "status":"identity_observed","profile":{"vlan":10,"name":"Other"}}}}}}}}
+        report=advanced_analysis(data)
+        self.assertFalse(report["shadowed"])
+        self.assertEqual(report["precedence_conflicts"][0]["conflicting_scope"],"2")
+        data["keyed_profile_details"]["profiles"][p]["1"]=data["keyed_profile_details"]["profiles"][p].pop("2")
+        report=advanced_analysis(data)
+        self.assertFalse(report["shadowed"])
+        self.assertEqual(report["precedence_conflicts"][0]["conflicting_scope"],"1")
+        self.assertFalse(report["safe_to_apply"])
