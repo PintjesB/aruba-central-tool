@@ -20,7 +20,7 @@ class PlanReader(HTMLParser):
 
 
 class AdvisorPayloadTests(unittest.TestCase):
-    def test_only_selectable_rows_carry_full_preview_evidence(self):
+    def test_selectable_rows_keep_gate_inputs_and_full_evidence_is_loaded_at_export(self):
         with tempfile.TemporaryDirectory() as directory:
             name = "config-audit-example.json"
             (Path(directory) / name).write_text(json.dumps(fixture()))
@@ -39,6 +39,12 @@ class AdvisorPayloadTests(unittest.TestCase):
                     self.assertEqual(plan["sources"], [{"name": s["name"]} for s in original["sources"]])
                     self.assertEqual(plan["observed_counts"], {k: len(v) for k, v in original["observed_devices"].items()})
                 else:
-                    self.assertEqual(plan["local"], original["local"])
+                    self.assertNotIn("local", plan)
+                    self.assertNotIn("consumers", plan["dependency_review"])
+                    from aruba_central.review_dispositions import snapshot_binding
+                    from aruba_central.workspace_views import advisor_export_evidence
+                    full=advisor_export_evidence(workspace,{"snapshot":name,"group":original["id"],"binding":snapshot_binding(workspace,name,bundle)})
+                    self.assertEqual(full["local"],original["local"])
+                    self.assertIn("consumers",full["dependency_review"])
                     self.assertEqual(plan["placement_options"], original["placement_options"])
                     self.assertIn("dependency_review", plan)
