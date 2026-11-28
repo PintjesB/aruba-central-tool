@@ -206,3 +206,24 @@ capture. A passing result qualifies the local review selection only, not the
 contents of every exported field, live state, authorization, deployment,
 or permission to execute. Do not transfer these private exports to the public
 repository.
+
+
+### Measure local browser responsiveness (optional)
+
+The regular local benchmark measures server-side analysis and HTML generation.
+To additionally measure real browser navigation, DOM size and on-demand
+evidence loading, install the optional Playwright package in your local
+Python environment, then run:
+
+```shell
+python -m aruba_central.browser_benchmark --directory <private-workspace> --repeat 3 --output <new-report.json>
+```
+
+Use `--browser <existing Chromium, Chrome or Edge executable>` to use a local
+browser rather than installing the Playwright Chromium binary. Otherwise,
+install that binary with `python -m playwright install chromium` if needed.
+The benchmark uses a temporary loopback workspace server, blocks external
+page requests, does not contact Central and reports aggregate measurements only.
+Navigation timings include server work, HTTP, DOM initialization and two
+animation frames, not measured visual paint or production deployment behavior.
+The reviewed snapshot is warm; the first visit may still populate other caches.

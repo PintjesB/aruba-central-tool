@@ -124,6 +124,17 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
             if bundle.get("results"):
                 persona = sorted(bundle["results"])[0]
                 render("render_overrides", lambda: workspace.overrides({"snapshot": snapshot, "persona": persona, "result": "all"}))
+                override_rows, _ = device_override_rows(bundle, persona)
+                if override_rows:
+                    row = override_rows[0]
+                    render("render_override_detail", lambda: workspace.overrides({"snapshot": snapshot, "persona": persona,
+                        "device": row["device"], "module": row["module"], "identity": row["identity"], "detail": "1", "binding": binding}))
+            from .keyed_evidence_view import keyed_observations
+            first_keyed = next((row for row in keyed_observations(bundle) if row["category"] != "sampled"), None)
+            if first_keyed is not None:
+                render("render_keyed_detail", lambda: workspace.assessment({"snapshot": snapshot, "mode": "keyed",
+                    **{k: first_keyed[k] for k in ("persona", "scope", "module", "identity", "view")},
+                    "detail": "1", "binding": binding}))
             if bundle.get("nac_registrations") or bundle.get("nac_configuration"):
                 render("render_nac", lambda: workspace.nac({"snapshot": snapshot}))
             for label, query in (("render_assessment", {}),
