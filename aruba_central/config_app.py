@@ -404,6 +404,7 @@ class Workspace:
         self._consolidation_snapshot = None
         self._assessment_snapshot = None
         self._identity_snapshot = None
+        self._policy_snapshots = {}
         self._assignment_snapshot = None
         self._drift_snapshot = None
         self._optimization_worklist = None
@@ -595,6 +596,7 @@ class Workspace:
         self._consolidation_snapshot = None
         self._assessment_snapshot = None
         self._identity_snapshot = None
+        self._policy_snapshots = {}
         self._assignment_snapshot = None
         self._drift_snapshot = None
         self._optimization_worklist = None
@@ -670,6 +672,20 @@ class Workspace:
                 return self._identity_snapshot
         return identity_collisions(bundle)
 
+    def policy_snapshot(self, bundle, kind):
+        """Share derived policy evidence only for the active immutable capture."""
+        from .policy_variants import policy_variants
+        from .policy_rule_review import policy_rule_groups
+        from .policy_sequence_review import policy_sequence_reviews
+        compute = {"variants": policy_variants, "rules": policy_rule_groups,
+                   "sequences": policy_sequence_reviews}[kind]
+        with self.snapshot_lock:
+            if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle:
+                if kind not in self._policy_snapshots:
+                    self._policy_snapshots[kind] = compute(bundle)
+                return self._policy_snapshots[kind]
+        return compute(bundle)
+
     def assessment_snapshot(self, bundle):
         """Reuse aggregate assessment only for the exact active capture."""
         from .assessment_review import assessment
@@ -677,12 +693,13 @@ class Workspace:
         engineering = self.advanced_snapshot(bundle)
         assignments = self.assignment_snapshot(bundle)
         collisions = self.identity_snapshot(bundle)
+        policy = {kind: self.policy_snapshot(bundle, kind) for kind in ('variants', 'rules', 'sequences')}
         with self.snapshot_lock:
             if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle:
                 if self._assessment_snapshot is None:
-                    self._assessment_snapshot = assessment(bundle, findings=findings, engineering=engineering, assignments=assignments, collisions=collisions)
+                    self._assessment_snapshot = assessment(bundle, findings=findings, engineering=engineering, assignments=assignments, collisions=collisions, **policy)
                 return self._assessment_snapshot
-        return assessment(bundle, findings=findings, engineering=engineering, assignments=assignments, collisions=collisions)
+        return assessment(bundle, findings=findings, engineering=engineering, assignments=assignments, collisions=collisions, **policy)
 
     def drift_snapshot(self, name, bundle, previous):
         """Cache one derived comparison, bound to both unchanged capture files."""
