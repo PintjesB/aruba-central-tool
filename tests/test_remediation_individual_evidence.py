@@ -42,3 +42,15 @@ class RemediationIndividualEvidenceTests(unittest.TestCase):
         self.assertFalse(report["destination_and_assignments_observed"])
         self.assertEqual(report["after_destination"]["state"],"individual_evidence_conflict")
         self.assertFalse(report["safe_to_apply"])
+
+    def test_collateral_equal_collections_do_not_hide_direct_conflicts(self):
+        from aruba_central.remediation_collateral import collateral_review
+        a,b = self.captures()
+        b["keyed_profile_details"] = {"profiles":{"ACCESS_SWITCH":{"4":{"layer2-vlan":{"20":{"effective":{"status":"identity_observed","profile":{"vlan":20,"name":"Different"}}}}}}}}
+        report = collateral_review(a,b,"layer2-vlan",{})
+        conflicts = [r for r in report["records"] if r["status"] == "individual_evidence_conflict"]
+        self.assertEqual(len(conflicts),1)
+        self.assertEqual(conflicts[0]["capture"],"after")
+        self.assertEqual(conflicts[0]["scope"],"4")
+        self.assertFalse(any(r["status"] == "individual_evidence_conflict" for r in
+                             collateral_review(a,b,"layer2-vlan",{("ACCESS_SWITCH","4"):{"20"}})["records"]))
