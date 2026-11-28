@@ -68,6 +68,13 @@ def plan_result(workspace, report):
                           summary, cleanup, e(destination), str(len(detail["collateral"]["records"])),
                           f'<a href="{href}">Reopen individual verification</a>'))
     body += table(("Action","Module","Profile","Function","Recipient outcomes","Source cleanup","Destination evidence","Collateral observations","Evidence"),listing,search=True)
+    body += '</section><section><h2>Combined collateral review</h2><p>Each affected module is compared outside all exact profile/device pairs already covered by the selected proposals. These counts are not the sum of the individual collateral reports.</p>'
+    body += table(("Module","Proposals","Device/function pairs","Count-confirmed unchanged","Unverified views","Unverified device identities","Other observations"),[
+        tr(e(item["module"]),str(item["proposal_count"]),str(item["counts"].get("device_function_pairs",0)),
+           str(item["counts"].get("unchanged_count_confirmed_pairs",0)),str(item["counts"].get("unverified_view_pairs",0)),
+           str(item["counts"].get("unverified_device_pairs",0)),str(len(item["records"])))
+        for item in report.get("combined_collateral",[])])
+    body += '<p>Full combined collateral observations are in the private export.</p>'
     body += '<p class="note">Original and newer captures were bound during verification. Reopening a proposal recalculates evidence from the currently saved snapshots.</p>'
     body += private_export("private_plan_verification", report) + '</section>'
     body += f'<p><a href="{url(root,"remediation",snapshot=name)}">Return to remediation verification</a></p>'
