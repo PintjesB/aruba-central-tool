@@ -114,6 +114,8 @@ class EngineeringQualificationTests(unittest.TestCase):
         with patch("aruba_central.engineering_qualification.refresh_configuration_review",return_value={}),patch("aruba_central.engineering_qualification.assessment",return_value=report):
             counts=engineering_qualification({})["counts"]
         self.assertEqual(counts["policy_rules"]["schema_network_acl"],1)
+        self.assertEqual(counts["policy_rules"]["schema_unknown"],1)
+        self.assertEqual(counts["policy_sequences"]["alternative_any"],1)
         self.assertEqual(counts["policy_sequences"]["schema_network_acl"],1)
         self.assertEqual(counts["policy_sequences"]["alternative_library_definition"],1)
         self.assertEqual(counts["policy_sequences"]["alternative_other_function_same_scope"],0)
