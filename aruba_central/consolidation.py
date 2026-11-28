@@ -141,7 +141,8 @@ def profile_recommendations(bundle):
     assigned = {(a.get("profile-type"), str(a["profile-instance"])) for a in assignments
                 if isinstance(a.get("profile-type"), str) and type(a.get("profile-instance")) in (str, int)}
     def add(action, persona, module, identity, sources, body, target, reference=None,
-            observed=None, blockers=(), steps=(), scope_references=(), placement=(), fallbacks=()):
+            observed=None, blockers=(), steps=(), scope_references=(), placement=(), fallbacks=(),
+            individual_conflicts=()):
         payload = {"action": action, "persona": persona, "module": module,
                    "identity": identity, "sources": sources, "local": body,
                    "target": target, "reference": reference,
@@ -153,6 +154,9 @@ def profile_recommendations(bundle):
                        f["status"] == "matching_fallback" for f in fallbacks),
                    "blockers": list(dict.fromkeys([*blockers, *COMMON_BLOCKERS])),
                    "steps": list(steps), "safe_to_apply": False}
+        if individual_conflicts:
+            payload["individual_conflicts"] = list(individual_conflicts)
+            payload["preview_selectable"] = False
         payload["id"] = hashlib.sha256(canonical(payload).encode()).hexdigest()[:24]
         findings.append(payload)
     for persona, entry in sorted(bundle["results"].items()):
@@ -309,6 +313,26 @@ def profile_recommendations(bundle):
                         target = f"Review {exact['kind']} / {exact['name']}; or Library"
                     else:
                         conflicts.append("No common higher scope with exactly the intended observed device set is established; review exact-scope Library assignments instead.")
+                individual_conflicts = []
+                if action in ("promote_local", "reuse_library"):
+                    # A contradiction in the actual source body (or retained
+                    # Library definition) must not enter the review export.
+                    # Sampled/absent individual reads are not contradictions.
+                    all_details = (bundle.get("keyed_profile_details") or {}).get("profiles", {})
+                    checks = [(persona, scope["scope"], kind, row[kind])
+                              for scope, row in members for kind in ("local", "effective")]
+                    if action == "reuse_library":
+                        checks.append(("Library", "", "library", lib_ref))
+                    for function, sid, kind, expected in checks:
+                        evidence = all_details.get(function, {}).get(str(sid), {}).get(module, {}).get(identity, {}).get(kind, {})
+                        body = evidence.get("profile")
+                        if (evidence.get("status") == "identity_observed" and isinstance(body, dict)
+                                and isinstance(expected, dict) and canonical(profile_body(body)) != canonical(expected)):
+                            individual_conflicts.append({"persona": function, "scope": sid, "identity": identity,
+                                                         "view": kind, "differences": field_differences(expected, profile_body(body))})
+                    if individual_conflicts:
+                        conflicts.append("Direct individual configuration differs from source or retained Library collection evidence; preview is blocked.")
+                        target = "Retain: conflicting individual configuration evidence"
                 if action == "remove_override":
                     # Do not offer a removal preview when a direct individual
                     # read contradicts the collection evidence used to qualify
@@ -336,7 +360,8 @@ def profile_recommendations(bundle):
                     if any(f.get("individual_conflicts") for f in fallbacks):
                         conflicts.append("Individual profile evidence contradicts the configuration comparison; removal preview is blocked.")
                         target = "Retain: conflicting individual configuration evidence"
-                add(action, persona, module, identity, sources, local, target, ref, observed, conflicts, steps, scope_references, placements, fallbacks if action == "remove_override" else ())
+                add(action, persona, module, identity, sources, local, target, ref, observed, conflicts, steps, scope_references, placements, fallbacks if action == "remove_override" else (),
+                    individual_conflicts=individual_conflicts)
     for module, view in sorted(library_modules.items()):
         if (library.get("assignments") or {}).get("status") != "response_received":
             continue
