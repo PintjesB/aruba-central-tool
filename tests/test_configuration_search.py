@@ -312,3 +312,26 @@ class ConfigurationSearchTests(unittest.TestCase):
             workspace.configuration_search_page(first, "vlan")
             self.assertEqual(workspace._configuration_search_pages, {})
             self.assertEqual(workspace.configuration_search_page(second, "new-value")["total"], 1)
+
+
+    def test_cold_exact_scope_search_does_not_build_tenant_index(self):
+        from unittest.mock import patch
+        from aruba_central.configuration_search import build_search_index
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(fixture()))
+            workspace = Workspace(directory)
+            bundle = workspace.reviewed_snapshot(name)
+            filters = {"scope": "3", "persona": "ACCESS_SWITCH"}
+            with patch("aruba_central.configuration_search.build_search_index", wraps=build_search_index) as build:
+                self.assertEqual(workspace.configuration_search_page(bundle, "vlan", **filters),
+                                 search_configuration(bundle, "vlan", **filters))
+                self.assertEqual(workspace.configuration_search_page(bundle, "vlan", grouped=True, **filters),
+                                 grouped_search(bundle, "vlan", **filters))
+                self.assertEqual(workspace.configuration_search_diagnostics(bundle), {"status": "not_built"})
+                build.assert_not_called()
+                workspace.configuration_search_page(bundle, "vlan")
+                build.assert_called_once()
+                self.assertEqual(workspace.configuration_search_page(bundle, "10", **filters),
+                                 search_configuration(bundle, "10", **filters))
+                self.assertEqual(build.call_count, 1)
