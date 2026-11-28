@@ -527,7 +527,7 @@ def diagnostics(bundle):
     phase_names = {"Connection", "Discovery", "Configuration scopes", "Library",
                    "Additional profile types", "NAC registrations", "Profile details",
                    "Profile detail expansion", "VLAN details", "Configuration health",
-                   "Scope hierarchy", "Individual assignments", "NAC portal assets",
+                   "Scope hierarchy", "Individual assignments", "NAC portal assets", "NAC service inventory",
                    "Saving snapshot", "Assignment coverage", "NAC configuration", "Operational VLANs",
                    "Switch VLAN verification", "Switch VLAN features"}
     def seconds(value):
@@ -578,7 +578,10 @@ def diagnostics(bundle):
                                    if isinstance(transport, dict) else None),
             "http_get_performance": ({
                 **{key: count(bundle["http_get_performance"].get(key))
-                   for key in ("rate_wait_ms", "successful_get_ms", "successful_gets")},
+                   for key in ("rate_wait_ms", "successful_get_ms", "successful_gets",
+                        "pacing_admissions", "pacing_waited_admissions", "pacing_lateness_us",
+                        "pacing_compensation_us", "pacing_gap_samples", "pacing_gap_us")
+                   if key in bundle["http_get_performance"]},
                 "phase_worker_budgets": {
                     key: count(bundle["http_get_performance"].get("phase_worker_budgets", {}).get(key))
                     for key in ("assignments", "configuration_scopes", "library", "supplemental",
