@@ -31,6 +31,9 @@ def report_view(workspace, query):
         tr("Unparsed structured scope views", str(expected - parsed), "Resolve failed or unqualified reads."),
         tr("Parsed views without count confirmation", str(parsed - confirmed), "Validate collection completeness."),
         tr("Unresolved references", str(engineering["unresolved_references"]), "Establish target identity and dependency visibility."),
+        tr("Conditional NAC enforcement observations",str(engineering["conditional_nac_observations"]),"Review potential consumers; client authorization and device applicability are unverified."),
+        tr("Similar exact profile identity groups",str(report["identity_collisions"]["groups"]),"Preserve distinct names; investigate name collisions."),
+        tr("Contradictory policy bodies",str(report["policy_rules"]["individual_conflict_groups"]),"Resolve conflicting observations before rule interpretation."),
         tr("Assignments with unresolved scope", str(assignments["unknown_scopes"]), "Validate scope membership and intended recipients."),
         tr("Unsupported policy rule evidence", str(report["policy_rules"]["groups_with_unsupported_rules"]), "Qualify rule schema and predicate interpretation.")]) + '</section>'
     body += '<section><h2>Recommended execution approach</h2><ol><li>Resolve evidence gaps relevant to each proposed change.</li><li>Review intended recipients, inherited configuration and dependencies.</li><li>Approve the desired configuration and validate individual change previews.</li><li>Perform separately authorized changes and verify a fresh capture.</li></ol><p>Counts can overlap and must not be summed as unique defects or safe removals. This report contains aggregate observations only, not device names, profile bodies, addresses or credentials.</p>'

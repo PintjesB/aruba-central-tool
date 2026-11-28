@@ -50,6 +50,8 @@ def assessment_view(workspace, query):
         linked("Unparsed scope views", expected-parsed, "Collect or interpret configuration evidence", "coverage"),
         linked("Parsed views without confirmed count", parsed-confirmed, "Verify missing collection counts", "coverage"),
         linked("Unresolved reference observations", engineering["unresolved_references"], "Establish target identity and visibility", "advanced", workflow="references"),
+        linked("Conditional NAC enforcement observations", engineering["conditional_nac_observations"], "Review potential role and VLAN consumers separately from device references", "nac"),
+        linked("Contradictory policy bodies", rules["individual_conflict_groups"], "Inspect contradictory individual and collection evidence", "advanced", workflow="rules"),
         linked("Assignments with unresolved scope", assignments["unknown_scopes"], "Verify membership and scope identity", "assignments", state="scope_unresolved"),
         linked("Policy groups with unsupported rule evidence", rules["groups_with_unsupported_rules"], "Qualify rule schemas and predicates", "advanced", workflow="rules"),
         linked("Unqualified policy sequences", sequences["unqualified_order"], "Verify policy group structure and order", "advanced", workflow="rules"),
