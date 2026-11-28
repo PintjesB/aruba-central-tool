@@ -33,3 +33,25 @@ class NACBindingTests(unittest.TestCase):
         self.assertFalse(result["safe_to_apply"])
         self.assertIsNone(vlan_identity("20-30"))
         self.assertIsNone(vlan_identity("4095"))
+
+
+    def test_role_attribute_value_candidates_do_not_imply_authorization(self):
+        from aruba_central.nac_role_review import role_enforcement_review
+        role={"name":"Employee","enable":True}
+        bundle={"results":{"ACCESS_SWITCH":{"scopes":[{"id":"1","kind":"device"},{"id":"2","kind":"device"}],"modules":{"roles":{"scope_results":[
+            {"scope":"1","effective_view":{"status":"list_parsed","count_confirmed":True,"profiles":{"Employee":role}}},
+            {"scope":"2","effective_view":{"status":"list_parsed","count_confirmed":True,"profiles":{"employee":{"name":"employee"}}}}]}}}},
+            "library":{"modules":{"roles":{"status":"list_parsed","profiles":{"Employee":role}}}}}
+        attrs=[{"kind":"custom-attr","name":"Aruba-User-Role","value":"Employee"},
+               {"kind":"defined-attr","name":"UNKNOWN_ENUM","value":"Employee"},
+               {"kind":"custom-attr","name":"Aruba-User-Role","value":"Missing"},
+               {"kind":"defined-attr","name":"ATTR_VLAN_ID","value":"Employee"}]
+        r=role_enforcement_review(bundle,attrs)
+        self.assertEqual([t["status"] for t in r["targets"]],["explicit_role_attribute","exact_role_name_candidate_not_attribute_semantics","explicit_role_attribute"])
+        self.assertEqual(r["visibility"]["Employee"]["similar_exact_names"],["employee"])
+        self.assertEqual([d["status"] for d in r["visibility"]["Employee"]["devices"]],["observed","count_confirmed_absence"])
+        self.assertEqual(r["visibility"]["Employee"]["devices"][0]["library_comparison"],"exact_library_body")
+        self.assertFalse(r["safe_to_apply"])
+        bundle["keyed_profile_details"]={"profiles":{"ACCESS_SWITCH":{"1":{"roles":{"Employee":{"effective":{"status":"identity_observed","profile":{"name":"Employee","enable":False}}}}}}}}
+        r=role_enforcement_review(bundle,attrs)
+        self.assertEqual(r["visibility"]["Employee"]["devices"][0]["status"],"individual_evidence_conflict")

@@ -64,7 +64,7 @@ def vlan_coverage(bundle, identities):
 
 def nac_bindings(bundle, registrations, authorization):
     tags = registrations["tag_definitions"]
-    conditions, vlan_targets = [], []
+    conditions, vlan_targets, role_attributes = [], [], []
     for policy in authorization["policies"]:
         for row in tag_condition_observations(policy["conditions"], tags):
             conditions.append({"policy_id": policy["id"], "policy": policy["name"], "rule": None, "rule_index": None, **row})
@@ -76,6 +76,9 @@ def nac_bindings(bundle, registrations, authorization):
                            not rule["gaps"], rule["enabled"]))
         for position, index, attrs, qualified, enabled in groups:
             for attr in attrs:
+                role_attributes.append({"policy_id":policy["id"],"policy":policy["name"],"rule":position,"rule_index":index,
+                                        "policy_enabled":policy["enabled"],"rule_enabled":enabled if index is not None else None,
+                                        "enforcement_qualified":qualified,**attr})
                 if attr["kind"] != "defined-attr" or attr["name"] != "ATTR_VLAN_ID":
                     continue
                 vid = vlan_identity(attr["value"])
@@ -94,7 +97,8 @@ def nac_bindings(bundle, registrations, authorization):
                     "registered_id_count": len(usage[identity]),
                     "condition_observations": [row for row in conditions if identity in row["tag_candidates"]]}
                    for identity, tag in tags.items()]
-    return {"tag_summary": tag_summary, "tag_condition_observations": conditions, "vlan_targets": vlan_targets,
+    from .nac_role_review import role_enforcement_review
+    return {"role_enforcement":role_enforcement_review(bundle,role_attributes),"tag_summary": tag_summary, "tag_condition_observations": conditions, "vlan_targets": vlan_targets,
             "vlan_visibility": coverage, "complete": False, "safe_to_apply": False}
 
 
