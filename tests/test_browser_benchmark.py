@@ -19,10 +19,19 @@ class BrowserBenchmarkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             name = "config-audit-private-example.json"
             data = fixture()
+            data.update(region="https://de1.example",inventory=[{"inventory":{"serial":"A"}}])
+            for scope in data["results"]["ACCESS_SWITCH"]["scopes"]:
+                if scope["kind"] == "device":
+                    scope["metadata"] = {"serial":scope["id"]}
             data["library"]["assignments"]["rows"] = [{"profile-type": "layer2-vlan", "profile-instance": "30",
                 "scope-id": "3", "device-function": "ACCESS_SWITCH"}]
             (Path(directory) / name).write_text(json.dumps(data))
-            result = browser_benchmark(directory, name, repeat=1,
+            from copy import deepcopy
+            previous = "config-audit-private-previous.json"
+            prior = deepcopy(data)
+            prior["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"][2]["effective_view"]["profiles"]["20"]["name"] = "Private prior value"
+            (Path(directory)/previous).write_text(json.dumps(prior))
+            result = browser_benchmark(directory, name, repeat=1, previous=previous,
                 executable=shutil.which("google-chrome") or shutil.which("chromium"))
             self.assertEqual(result["central_api_requests"], 0)
             self.assertIn("advisor_inspector", result["stages"])
@@ -30,6 +39,8 @@ class BrowserBenchmarkTests(unittest.TestCase):
             self.assertIn("dashboard", result["stages"])
             self.assertIn("assignments", result["stages"])
             self.assertIn("assignments_inspector", result["stages"])
+            self.assertIn("history_drift",result["stages"])
+            self.assertIn("history_drift_inspector",result["stages"])
             for stage in ("field_search", "field_search_alternate", "field_search_multi_term", "grouped_search"):
                 self.assertIn(stage, result["stages"])
                 self.assertGreater(result["stages"][stage]["first_navigation_seconds"], 0)
@@ -40,6 +51,8 @@ class BrowserBenchmarkTests(unittest.TestCase):
             self.assertGreater(result["stages"]["coverage"]["samples"][0]["html_bytes"], 0)
             exported = json.dumps(result)
             self.assertNotIn(name, exported)
+            self.assertNotIn(previous,exported)
+            self.assertNotIn("Private prior value",exported)
             self.assertNotIn("Switch A", exported)
             self.assertNotIn("127.0.0.1", exported)
 
