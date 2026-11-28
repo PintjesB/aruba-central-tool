@@ -191,6 +191,33 @@ def rule_review(module, body, limit=2000):
     return review_security_rules(security["policy-rule"],result,limit)
 
 
+# Vendor-documented shapes only. These are structural diagnostics, not
+# qualification of protocols, services, addresses or actions.
+PREDICATE_FIELDS = ("type","rule-type","source","destination","services","transport-fields",
+                    "ip-header","icmp-fields","ethernet-header")
+PREDICATE_KINDS = ("RULE_ANY","RULE_TCP","RULE_UDP","RULE_ICMP","RULE_ACL_IP",
+                   "RULE_ACL_IPV6","RULE_ACL_MAC")
+ADDRESS_KINDS = ("ADDRESS_ANY","ADDRESS_ROLE")
+PREDICATE_SHAPE_KEYS = ("condition_shape","rule_kind","source_kind","destination_kind",
+                        "service_fields","transport_fields","header_fields","additional_fields")
+
+
+def predicate_shape(rule):
+    condition = rule.get("condition") if isinstance(rule,dict) else None
+    if not isinstance(condition,dict):
+        return ("not_object","unknown","unknown","unknown",False,False,False,False)
+    def kind(value,allowed):
+        return value if isinstance(value,str) and value in allowed else "missing" if value is None else "other"
+    def addr(value):
+        return kind(value.get("type"),ADDRESS_KINDS) if isinstance(value,dict) else "missing" if value is None else "other"
+    return (kind(condition.get("type"),("CONDITION_DEFAULT",)),
+            kind(condition.get("rule-type"),PREDICATE_KINDS),
+            addr(condition.get("source")),addr(condition.get("destination")),
+            "services" in condition,"transport-fields" in condition,
+            bool({"ip-header","icmp-fields","ethernet-header"} & condition.keys()),
+            bool(condition.keys()-set(PREDICATE_FIELDS)))
+
+
 def review_security_rules(rules,result,limit):
     result["rules"] = len(rules)
     positions = [r.get("position") if isinstance(r, dict) else None for r in rules]
@@ -207,6 +234,40 @@ def review_security_rules(rules,result,limit):
     matches = [simple_match(r) if reason is None else None for r,reason in zip(ordered,reasons)]
     result["qualified_match_rules"] = sum(m is not None for m in matches)
     result["unsupported_rules"] = len(rules) - result["qualified_match_rules"]
+    shapes = Counter((reason,*predicate_shape(rule)) for rule,reason in zip(ordered,reasons) if reason is not None)
+    result["unsupported_predicate_shapes"] = [
+        {"reason":reason,**dict(zip(PREDICATE_SHAPE_KEYS,shape)),"rules":count}
+        for (reason,*shape),count in sorted(shapes.items(),key=lambda item:(-item[1],item[0]))]
+    # Compare exact unsupported condition records independently of semantic
+    # findings. Extra rule fields may impose additional matching restrictions;
+    # keep them out of the condition-only comparison.
+    result["structural_condition_pairs"] = []
+    result["structural_condition_pairs_truncated"] = False
+    groups = {}
+    for rule,match in zip(ordered,matches):
+        if match is not None or set(rule)-{"position","description","condition","action"}:
+            continue
+        condition,action=rule.get("condition"),rule.get("action")
+        if not isinstance(condition,dict) or not condition or not isinstance(action,dict) or not isinstance(action.get("type"),str) or not action["type"]:
+            continue
+        signature=canonical(condition)
+        # Keep a bounded representative per exact action body for this
+        # condition. Do not claim that two records match the same packets.
+        action_key=canonical(action)
+        group=groups.setdefault(signature,{})
+        previous=group.get(action_key)
+        if previous is None and group:
+            previous=next(iter(group.values()))
+        if previous is not None:
+            if len(result["structural_condition_pairs"]) >= limit:
+                result["structural_condition_pairs_truncated"]=True
+            else:
+                result["structural_condition_pairs"].append({
+                    "status":"identical_unsupported_condition_record",
+                    "earlier_position":previous["position"],"later_position":rule["position"],
+                    "same_action_body":canonical(previous["action"])==action_key,
+                    "earlier":previous,"later":rule})
+        group.setdefault(action_key,rule)
     # Exact repeated unsupported records are structural evidence only. Keep
     # all fields except the position; do not infer match or action semantics.
     seen = {}
