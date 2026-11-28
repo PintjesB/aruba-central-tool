@@ -20,6 +20,15 @@ def promotion_outcome(result):
     if result["assignment_observations"]:
         body += table(("Original source scope", "Exact Library assignment observed"), [
             tr(e(r["scope"]), "Yes" if r["observed"] else "Unverified") for r in result["assignment_observations"]])
+    comparison = result.get("assignment_comparison")
+    if comparison is not None:
+        body += '<h3>Observed assignment scope changes</h3><p>Before: ' + e(pretty(comparison["before_capture_status"])) + ' · After: ' + e(pretty(comparison["after_capture_status"])) + '</p>'
+        body += '<p>Includes all observed assignments of this Library identity, across functions. Outside-source observations require review; newly observed does not prove newly created, and no longer observed does not prove removed.</p>'
+        body += table(("Function", "Scope", "Selected source", "Before observed", "After observed", "Evidence"), [
+            tr(e(r["persona"]), e(r["scope"]), "Yes" if r["selected_source_scope"] else "Outside source",
+               "Yes" if r["before_observed"] else "Unverified", "Yes" if r["after_observed"] else "Unverified",
+               badge(pretty(r["status"]), "warn" if r["status"] != "observed_in_both" and not r["selected_source_scope"] else "neutral"))
+            for r in comparison["rows"]], search=True)
     body += '</section><section><h2>Local definition cleanup</h2>'
     body += table(("Source", "Observed outcome", "Evidence"), [
         tr(e(r["name"]), badge(pretty(r["status"])), inspect(r["name"], observation_comparison(
