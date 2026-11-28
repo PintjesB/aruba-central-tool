@@ -10,6 +10,8 @@ FIELDS={
                    "precedence_conflicts","port_conversion_conflicts","port_library_conflicts","port_visibility_conflicts",
                    "reference_target_collection_incomplete","reference_target_view_unqualified","reference_target_count_confirmed_absence","unresolved_reference_target_individual_identity",
                    "unresolved_references","conditional_nac_observations","conflicting_reference_observations",
+                   "reference_alternative_library_definition","reference_alternative_other_function_same_scope",
+                   "reference_alternative_same_site_observation","reference_alternative_any","reference_alternative_none",
                    "both_ends","source_only","target_only","other_conflict","unknown_identity","named_target_not_observed","named_target_unqualified"),
     "identity_collisions":("groups","same_context_groups","linked_individual_responses","linked_same_context_responses"),
     "variants":("groups","explicit","groups_with_conflicts","mixed_site_groups"),
@@ -56,6 +58,7 @@ def engineering_qualification(bundle, *, include_reference_patterns=False):
               "central_api_requests":0,"complete":False,"safe_to_apply":False}
     if engineering is not None:
         result["reference_identity_patterns"] = reference_identity_patterns(engineering["references"])
+        result["named_reference_gaps"] = named_reference_gaps(engineering["references"])
     return result
 
 
@@ -97,6 +100,25 @@ def reference_identity_patterns(references):
     return [{"source_module":s, "target_module":t, "field":f, "path_shape":p,
              "source_view":v, "observations":count}
             for (s,t,f,p,v),count in sorted(counts.items(), key=lambda item:(-item[1],item[0]))]
+
+
+def named_reference_gaps(references):
+    """Count named unresolved edges by fixed vendor module and evidence categories."""
+    from collections import Counter
+    from .central_tool import CONFIG_MODULES
+    contexts = {"library_definition","other_function_same_scope","same_site_observation"}
+    reasons = {"target_view_unqualified","target_collection_incomplete","identity_unqualified","count_confirmed_absence"}
+    counts = Counter()
+    for row in references:
+        if row.get("status") != "unresolved" or row.get("target") is None or row.get("source_evidence") == "nac_enforcement":
+            continue
+        source,target = (row.get(k) if row.get(k) in CONFIG_MODULES else "other" for k in ("source_module","target_module"))
+        reason = row.get("target_evidence") if row.get("target_evidence") in reasons else "other"
+        positive = tuple(sorted({obs.get("context") for obs in row.get("target_alternative_observations",[])
+                                 if obs.get("status") == "identity_observed" and obs.get("context") in contexts}))
+        counts[source,target,reason,positive] += 1
+    return [{"source_module":s,"target_module":t,"reason":r,"positive_contexts":list(p),"observations":n}
+            for (s,t,r,p),n in sorted(counts.items(),key=lambda item:(-item[1],item[0]))]
 
 
 def main():
