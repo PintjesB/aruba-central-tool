@@ -43,7 +43,7 @@ def validate_selection(workspace, manifest):
     attach_dependency_review(chosen, workspace.advanced_snapshot(bundle)["references"])
     indexes = {}
     known, unknown = set(), set()
-    touched, promotions = defaultdict(set), defaultdict(set)
+    touched, promotions, recipient_touches = defaultdict(set), defaultdict(set), defaultdict(set)
     reuses, fallbacks = [], []
     missing = 0
     for f, selection in zip(chosen, selections):
@@ -54,6 +54,9 @@ def validate_selection(workspace, manifest):
         recipients = source_recipient_evidence(entry, f["sources"], index=indexes[persona])
         def add_recipient(target, rows):
             target.update((persona, d["scope"]) for d in rows)
+            if target is known:
+                for d in rows:
+                    recipient_touches[persona, module, identity, d["scope"]].add(fid)
         add_recipient(known, recipients["known"])
         add_recipient(unknown, recipients["unknown"])
         def key(sid):
@@ -90,6 +93,9 @@ def validate_selection(workspace, manifest):
     for group in touched.values():
         for a, b in combinations(group, 2):
             collision(a, b, "scope_overlap")
+    for group in recipient_touches.values():
+        for a, b in combinations(group, 2):
+            collision(a, b, "recipient_overlap")
     for group in promotions.values():
         for a, b in combinations(group, 2):
             collision(a, b, "library_promotion_overlap")
@@ -129,7 +135,10 @@ def validate_selection(workspace, manifest):
     return {"schema": 1, "kind": "offline_selection_validation",
             "proposal_count": len(ids), "observed_recipient_pairs": len(known),
             "uncertain_recipient_pairs": len(unknown), "missing_destinations": missing,
-            "overlapping_proposal_conflicts": len(collision_pairs), "dependency_order_blocked": blocked,
+            "overlapping_proposal_conflicts": len(collision_pairs),
+            "conflicts_by_reason": {reason: sum(pair[2] == reason for pair in collision_pairs)
+                                    for reason in sorted({pair[2] for pair in collision_pairs})},
+            "dependency_order_blocked": blocked,
             "review_export_gates_passed": not (missing or collision_pairs or blocked),
             "complete": False, "safe_to_apply": False}
 

@@ -77,3 +77,31 @@ class SelectionManifestTests(unittest.TestCase):
                 self.assertEqual(report["overlapping_proposal_conflicts"], 0)
                 self.assertEqual(report["dependency_order_blocked"], 2)
                 self.assertFalse(report["review_export_gates_passed"])
+
+
+    def test_different_scopes_with_same_observed_profile_recipient_block_combination(self):
+        from unittest.mock import patch
+        from copy import deepcopy
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(fixture()))
+            workspace = Workspace(directory)
+            bundle = workspace.reviewed_snapshot(name)
+            first = deepcopy(next(f for f in workspace.consolidation_snapshot(bundle) if f["action"] == "promote_local"))
+            second = deepcopy(first)
+            first["action"] = second["action"] = "reuse_library"
+            first["sources"] = [{"scope": "1", "kind": "global", "name": "Global"}]
+            second["sources"] = [{"scope": "3", "kind": "device", "name": "Switch A"}]
+            first["fallbacks"] = second["fallbacks"] = []
+            second["id"] = "synthetic-second"
+            manifest = {"schema": 1, "kind": "consolidation_selection", "snapshot": name,
+                        "snapshot_binding": snapshot_binding(workspace, name, bundle),
+                        "selections": [{"id": f["id"], "destination": None} for f in (first, second)]}
+            with patch.object(workspace, "consolidation_snapshot", return_value=[first, second]):
+                report = validate_selection(workspace, manifest)
+                self.assertEqual(report["conflicts_by_reason"], {"recipient_overlap": 1})
+                self.assertFalse(report["review_export_gates_passed"])
+                manifest["selections"].reverse()
+                self.assertEqual(validate_selection(workspace, manifest), report)
+                second["identity"] = "different-profile"
+                self.assertTrue(validate_selection(workspace, manifest)["review_export_gates_passed"])
