@@ -24,6 +24,8 @@ class QualificationSuiteTests(unittest.TestCase):
             self.assertEqual(report["browser"], {"count": 2})
             self.assertNotIn("private-name", json.dumps(report))
             self.assertFalse(report["qualification"]["safe_to_apply"])
+            self.assertTrue(report["planner"]["review_choice_validation_passed"])
+            self.assertFalse(report["planner"]["safe_to_apply"])
 
     def test_changed_capture_aborts_before_remaining_stages(self):
         with tempfile.TemporaryDirectory() as directory:
