@@ -26,6 +26,9 @@ class QualificationSuiteTests(unittest.TestCase):
             self.assertFalse(report["qualification"]["safe_to_apply"])
             self.assertTrue(report["planner"]["review_choice_validation_passed"])
             self.assertFalse(report["planner"]["safe_to_apply"])
+            self.assertEqual(report["engineering"]["central_api_requests"],0)
+            self.assertFalse(report["engineering"]["safe_to_apply"])
+            self.assertIn("conditional_nac_observations",report["engineering"]["counts"]["engineering"])
 
     def test_changed_capture_aborts_before_remaining_stages(self):
         with tempfile.TemporaryDirectory() as directory:
