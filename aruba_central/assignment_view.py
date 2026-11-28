@@ -61,6 +61,10 @@ def assignments_view(workspace, query):
                      ("Overlapping assignments", len(result["overlaps"]), "Known recipient/module combinations"),
                      ("Invalid assignment records", len(result["invalid_rows"]), "Whole capture; identity incomplete"),
                      ("Individual evidence conflicts", conflict_count, "Assignments requiring review")])
+    scope_counts=Counter(r["scope_resolution"] for r in rows if not r["scope_resolved"])
+    if scope_counts:
+        body += '<section><h2>Why assignment scopes are unresolved</h2><p>Exact scope IDs in another function are diagnostic evidence only. They do not establish recipients in the requested function.</p>'+table(("Reason","Assignments"),[
+            tr(e(pretty(reason)),str(count)) for reason,count in sorted(scope_counts.items())])+'</section>'
     listing = []
     for index, row in enumerate(rows):
         counts = Counter(d["status"] for d in row["recipients"])
@@ -70,6 +74,8 @@ def assignments_view(workspace, query):
             profile += '<small>' + badge("Individual evidence conflict", "warn") + '</small>'
         scope_label = e(row["scope_name"]) + '<small>' + badge("Scope resolved" if row["scope_resolved"] else "Scope unresolved",
                     "neutral" if row["scope_resolved"] else "warn") + '</small>'
+        if not row["scope_resolved"]:
+            scope_label += '<small>'+e(pretty(row["scope_resolution"]))+'</small>'
         listing.append(tr(e(module_label(row["module"])), profile, e(persona_label(row["persona"])),
                           scope_label, e(pretty(row["scope_kind"])), str(row["known_count"]), str(row["unknown_count"]),
                           str(counts["matching_shared"]), str(counts["different_body"]), str(counts["not_visible"]),
@@ -86,6 +92,11 @@ def assignments_view(workspace, query):
 
 def assignment_detail(row):
     detail = ""
+    if not row["scope_resolved"]:
+        detail += '<p>Scope resolution: '+e(pretty(row["scope_resolution"]))+'</p>'
+        if row["other_scope_contexts"]:
+            detail += '<h3>Other function observations for this exact scope ID</h3><p>Not verified assignment recipients.</p>'+table(("Function","Type","Scope"),[
+                tr(e(persona_label(c["persona"])),e(pretty(c["kind"])),e(c["name"])) for c in row["other_scope_contexts"]])
     if row.get("library_individual_conflict"):
         detail += '<h3>Conflicting Library evidence</h3>' + raw(row["library_individual_conflict"])
     detail += table(("Device", "Result", ""), [
