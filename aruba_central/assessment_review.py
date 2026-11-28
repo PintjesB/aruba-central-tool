@@ -43,6 +43,9 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
     body_shapes=Counter(row.get("body_shape") if row.get("body_shape") in POLICY_BODY_SHAPES else "unknown" for row in rules if row["status"] == "rule_schema_unqualified")
     library_relations=Counter(row.get("library_body_relation") for row in rules if row["status"] == "rule_schema_unqualified" and row.get("library_body_relation") in POLICY_LIBRARY_RELATIONS)
     previews=[row["library_preview"] for row in sequences if "library_preview" in row]
+    from .central_tool import canonical
+    unique_library_candidates={canonical(finding) for row in previews for finding in row["findings"]}
+    conditional_previews=[row["conditional_security_preview"] for row in rules if "conditional_security_preview" in row]
     for row in rules:
         if row.get("module") == "policies":
             security_reasons.update(row.get("unsupported_reasons", {}))
@@ -149,6 +152,12 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "observations": sum(len(row["findings"]) for row in rules),
                 "groups_with_unsupported_rules": sum(bool(row["unsupported_rules"]) or row["status"] == "rule_schema_unqualified" for row in rules),
                 "unsupported_schema_groups":sum(row["status"]=="rule_schema_unqualified" for row in rules),
+                "conditional_preview_groups":len(conditional_previews),
+                "conditional_preview_order_verified":sum(row["order_verified"] for row in conditional_previews),
+                "conditional_preview_rules":sum(row["rules"] for row in conditional_previews),
+                "conditional_preview_predicates":sum(row["qualified_match_rules"] for row in conditional_previews),
+                "conditional_preview_candidates":sum(len(row["findings"]) for row in conditional_previews),
+                "conditional_preview_truncated":sum(row["truncated"] for row in conditional_previews),
                 **{"schema_" + key: schema_reasons[key] for key in POLICY_SCHEMA_STATES + ("unknown",)},
                 **{"body_shape_" + key: body_shapes[key] for key in POLICY_BODY_SHAPES + ("unknown",)},
                 **{"library_relation_" + key: library_relations[key] for key in POLICY_LIBRARY_RELATIONS},
@@ -170,6 +179,11 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "cross_policy_candidates": sum(len(row["findings"]) for row in sequences),
                 "library_preview_captures":len(previews),
                 "library_preview_candidates":sum(len(row["findings"]) for row in previews),
+                "library_preview_distinct_candidate_bodies":len(unique_library_candidates),
+                "conditional_effective_targets":sum("conditional_security_rule_count" in ref for row in sequences for ref in row["references"]),
+                "conditional_effective_predicates":sum(ref.get("conditional_security_predicate_count",0) for row in sequences for ref in row["references"]),
+                "conditional_library_targets":sum("conditional_security_rule_count" in ref for row in previews for ref in row["references"]),
+                "conditional_library_predicates":sum(ref.get("conditional_security_predicate_count",0) for row in previews for ref in row["references"]),
                 "library_preview_unqualified_targets":sum(ref["status"]!="rules_observed" for row in previews for ref in row["references"]),
                 "library_preview_qualified_targets":sum(ref["status"]=="rules_observed" for row in previews for ref in row["references"]),
                 "library_preview_truncated":sum(row["truncated"] for row in previews),
