@@ -61,3 +61,42 @@ class PreviewDecisionTests(unittest.TestCase):
                     self.assertEqual(errors, [])
                 finally:
                     browser.close()
+
+
+    def test_browser_bulk_overlap_counts_all_pairs_and_matches_server_gate(self):
+        import json
+        import shutil
+        import tempfile
+        from pathlib import Path
+        from aruba_central.config_app import Workspace
+        from test_consolidation import fixture
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            self.skipTest("Browser test dependency unavailable")
+        # Exercise the actual browser function with synthetic proposals rather
+        # than modifying the production UI or exporting a live plan.
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(fixture()))
+            html = Workspace(directory).advisor({"snapshot": name, "finding": "promote_local"})
+            marker = "function selection(){"
+            self.assertIn(marker, html)
+            html = html.replace(marker, "window.testBulkReview=bulkReview;\n" + marker, 1)
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(executable_path=shutil.which("google-chrome") or shutil.which("chromium"), args=["--no-sandbox"])
+                try:
+                    tab = browser.new_page()
+                    tab.set_content(html)
+                    result = tab.evaluate("""() => {
+                        const chosen=['a','b','c'].map((id,i)=>({id,persona:'ACCESS_SWITCH',module:'layer2-vlan',
+                            identity:'20',action:'reuse_library',sources:[{scope:String(i+1)}],
+                            recipient_evidence:{known:[{scope:'3',name:'Switch A'}],unknown:[]},
+                            dependency_review:{dependencies:[]},fallbacks:[]}));
+                        return window.testBulkReview(chosen).collisions;
+                    }""")
+                    self.assertEqual(len(result), 3)
+                    self.assertTrue(all("observed device recipient" in row["reason"] for row in result))
+                    self.assertEqual({(row["first"], row["second"]) for row in result}, {("a","b"),("a","c"),("b","c")})
+                finally:
+                    browser.close()
