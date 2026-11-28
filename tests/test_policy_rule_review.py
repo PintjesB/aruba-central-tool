@@ -111,3 +111,19 @@ class PolicyRuleTests(unittest.TestCase):
         limited=rule_review("policies",policy([rule(1,extra=True),rule(2,extra=True)]),limit=0)
         self.assertTrue(limited["truncated"])
         self.assertFalse(limited["findings"])
+
+    def test_policy_schema_families_distinguish_documented_nonsecurity_and_invalid_shapes(self):
+        from aruba_central.policy_rule_review import rule_review, policy_schema_state
+        for kind,state in (("POLICY_NETWORK_ACL","network_acl"),("POLICY_QOS","qos"),
+                           ("POLICY_PBR","pbr"),("POLICY_MIRROR","mirror")):
+            result=rule_review("policies",{"type":kind})
+            self.assertEqual(result["schema_state"],state)
+            self.assertEqual(result["status"],"rule_schema_unqualified")
+            self.assertFalse(result["findings"])
+        for body,state in (({},"policy_type_missing"),({"type":[]},"policy_type_unrecognized"),
+                           ({"type":"POLICY_TYPE_SECURITY"},"security_body_missing"),
+                           ({"type":"POLICY_TYPE_SECURITY","security-policy":{}},"security_type_unqualified"),
+                           ({"type":"POLICY_TYPE_SECURITY","security-policy":{"type":"SECURITY_POLICY_TYPE_DEFAULT"}},"security_rule_list_unqualified")):
+            self.assertEqual(policy_schema_state("policies",body),state)
+        self.assertEqual(policy_schema_state("role-acls",{}),"acl_rule_list_unqualified")
+        self.assertEqual(policy_schema_state("role-acls",{"rules":[]}),"qualified")
