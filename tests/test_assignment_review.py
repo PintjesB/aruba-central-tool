@@ -46,3 +46,41 @@ class AssignmentReviewTests(unittest.TestCase):
             self.assertIn("Assignment worklist", html)
             self.assertIn("Overlapping assignment observations", html)
             self.assertIn("Export private report JSON", html)
+
+
+    def test_lazy_assignment_evidence_and_shared_analysis_cache(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from aruba_central.config_app import Workspace
+        from aruba_central.review_dispositions import snapshot_binding
+        from test_configuration_history import snapshot
+        bundle = snapshot()
+        bundle["library"]["assignments"] = {"status": "response_received", "rows": [
+            {"profile-type": "layer2-vlan", "profile-instance": "20", "device-function": "ACCESS_SWITCH", "scope-id": "1"}]}
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-test.json"
+            path = Path(directory) / name
+            path.write_text(json.dumps(bundle))
+            workspace = Workspace(directory)
+            reviewed = workspace.reviewed_snapshot(name)
+            binding = snapshot_binding(workspace, name, reviewed)
+            with patch("aruba_central.assignment_review.assignment_review", wraps=assignment_review) as analyze:
+                workspace.assessment_snapshot(reviewed)
+                html = workspace.assignments({"snapshot": name})
+                self.assertIn("data-inspect-url=", html)
+                self.assertNotIn("Library definition captured:", html)
+                self.assertEqual(analyze.call_count, 1)
+                query = {"snapshot": name, "detail": "assignment", "index": "0", "binding": binding}
+                self.assertIn("Library definition captured:", workspace.assignments(query))
+                self.assertEqual(analyze.call_count, 1)
+                self.assertIn("Export private report JSON", workspace.assignments({"snapshot": name, "export": "1", "binding": binding}))
+                with self.assertRaises(ValueError):
+                    workspace.assignments({**query, "binding": "stale"})
+                with self.assertRaises(ValueError):
+                    workspace.assignments({**query, "index": "999"})
+                path.write_text(json.dumps({**bundle, "tenant_name": "Changed"}))
+                with self.assertRaises(ValueError):
+                    workspace.assignments(query)
+                self.assertEqual(analyze.call_count, 2)
