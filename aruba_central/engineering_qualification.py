@@ -18,6 +18,8 @@ FIELDS={
     "identity_collisions":("groups","same_context_groups","linked_individual_responses","linked_same_context_responses"),
     "variants":("groups","explicit","groups_with_conflicts","mixed_site_groups"),
     "policy_rules":("groups","groups_with_findings","observations","groups_with_unsupported_rules","unsupported_schema_groups","unsupported_rule_occurrences","unsupported_order_occurrences",
+                    "conditional_preview_groups","conditional_preview_order_verified","conditional_preview_rules",
+                    "conditional_preview_predicates","conditional_preview_candidates","conditional_preview_truncated",
                     "unsupported_condition_occurrences","unsupported_acl_predicate_occurrences","unqualified_order",
                     "individual_conflict_groups","structural_security_repetitions","partial_overlap_candidates","reverse_containment_candidates","truncated")
                     + tuple("schema_" + key for key in POLICY_SCHEMA_STATES + ("unknown",))
@@ -27,7 +29,9 @@ FIELDS={
                     + tuple("acl_" + key for key in ACL_REASONS),
     "policy_sequences":("captures","unqualified_order","unqualified_targets","cross_policy_candidates","qualified_rule_occurrences","unsupported_rule_occurrences","targets_with_unsupported_rules",
                         "partial_overlap_candidates","conflicting_targets","truncated","library_preview_captures","library_preview_candidates",
-                        "library_preview_unqualified_targets","library_preview_qualified_targets","library_preview_truncated")
+                        "library_preview_unqualified_targets","library_preview_qualified_targets","library_preview_truncated",
+                        "library_preview_distinct_candidate_bodies","conditional_effective_targets","conditional_effective_predicates",
+                        "conditional_library_targets","conditional_library_predicates")
                     + tuple("gap_context_" + key for key in SEQUENCE_CONTEXTS)
                     + tuple("target_" + key for key in SEQUENCE_TARGET_STATES)
                     + tuple("schema_" + key for key in POLICY_SCHEMA_STATES + ("unknown",))
