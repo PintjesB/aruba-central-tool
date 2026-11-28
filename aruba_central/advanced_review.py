@@ -260,6 +260,12 @@ def duplicate_migration_preview(module, usage, keep, bundle=None):
 
 def target_reference_evidence(view, identity, *, definition=False):
     """Distinguish a missing identity from an incomplete or unavailable read."""
+    if isinstance(identity, tuple):
+        if view.get("status") != "list_parsed":
+            return "unresolved", "set_target_view_unqualified"
+        if view.get("count_confirmed") is True:
+            return "not_observed", "set_count_confirmed_absence"
+        return "unresolved", "set_target_collection_incomplete"
     if identity is None:
         return "unresolved", "identity_unqualified"
     if view.get("status") != "list_parsed":
@@ -311,7 +317,7 @@ def reference_value_shape(body,path):
     return "other"
 
 
-def profile_reference_observations(module, identity, body, vlans):
+def profile_reference_observations(module, identity, body, vlans, *, known_ids=None):
     """Use identical reference extraction for all qualified source reads."""
     handled = set()
     # Named VLAN is a mapping container, not itself an unresolved scalar.
@@ -361,6 +367,12 @@ def profile_reference_observations(module, identity, body, vlans):
     def numeric(value, path, allow_list=False):
         ids = parse_reference_ids(value, allow_list=allow_list)
         if ids:
+            if known_ids is not None and module == "ap-port-profiles" and tuple(path) in (("switchport","trunk-vlan-ranges"),("switchport","trunk-vlans")) and len(ids)>64:
+                from .vlan_membership import intervals
+                remaining=ids-known_ids
+                ids=ids & known_ids
+                if remaining:
+                    yield "layer2-vlan",intervals(remaining),path
             for vid in sorted(ids,key=int):
                 yield "layer2-vlan",vid,path
         else:
@@ -447,6 +459,8 @@ def advanced_analysis(bundle):
             content = {k: v for k, v in profile_body(profile).items() if k not in ("profile-name", "description")}
             port_library_index[canonical(content)].append(name)
     persona_views = {persona: effective_views(entry) for persona, entry in bundle["results"].items()}
+    from .vlan_membership import known_vlan_ids, target_fields, target_token
+    known_ids=known_vlan_ids(bundle,persona_views)
     for persona, entry in sorted(bundle["results"].items()):
         views = persona_views[persona]
         members = scope_memberships(entry["scopes"])
@@ -474,7 +488,7 @@ def advanced_analysis(bundle):
                 status, reason = target_reference_evidence(target_view, identity)
                 result["references"].append({"persona": persona, "device": names[sid], "scope": sid,
                     "source_module": source_module, "source": source, "source_view": "effective", "source_scope_kind": "device", "target_module": target,
-                    "target": identity, "path": list(path), "status": status, "target_evidence": reason,
+                    **target_fields(target_view,identity), "path": list(path), "status": status, "target_evidence": reason,
                     **({"source_value_shape":reference_value_shape(body,path)} if identity is None else {})})
             for module in sorted(views):
                 view = get(module)
@@ -486,7 +500,7 @@ def advanced_analysis(bundle):
                 vlans = vlan_view.get("profiles", {}) if vlan_view.get("status") == "list_parsed" else {}
                 for identity, raw in view["profiles"].items():
                     body = profile_body(raw)
-                    for target, ref, path in profile_reference_observations(module, identity, body, vlans):
+                    for target, ref, path in profile_reference_observations(module, identity, body, vlans, known_ids=known_ids):
                         emit(module, identity, target, ref, path, body)
                     if module == "ethernet-interfaces" and persona.endswith("_SWITCH"):
                         if body.get("routing") is True or PORT_TOPOLOGY & body.keys():
@@ -640,13 +654,13 @@ def advanced_analysis(bundle):
         vlans = vlan_view.get("profiles", {}) if vlan_view.get("status") == "list_parsed" else {}
         for identity, raw in profiles.items():
             body = profile_body(raw)
-            for target, target_id, path in profile_reference_observations(module, identity, body, vlans):
+            for target, target_id, path in profile_reference_observations(module, identity, body, vlans, known_ids=known_ids):
                 view = target_views.get(target, {})
                 # Existence in Library is not proof of device applicability.
                 state, reason = target_reference_evidence(view, target_id, definition=True)
                 result["references"].append({"persona": persona, "scope": sid, "device": name,
                     "source_scope_kind": kind, "source_view": "library" if kind == "library" else "saved", "source_module": module, "source": identity,
-                    "target_module": target, "target": target_id, "path": list(path), "status": state, "target_evidence": reason,
+                    "target_module": target, **target_fields(view,target_id), "path": list(path), "status": state, "target_evidence": reason,
                     **({"source_value_shape":reference_value_shape(body,path)} if target_id is None else {})})
     for persona, entry in sorted(bundle["results"].items()):
         views = persona_views[persona]
@@ -677,7 +691,7 @@ def advanced_analysis(bundle):
     for ref in result["references"]:
         key = (ref["persona"], str(ref["scope"]), ref["source_module"], ref["source"],
                ref["source_view"], tuple(ref["path"]), ref["target_module"])
-        existing[key].add(ref["target"])
+        existing[key].add(target_token(ref))
     details = (bundle.get("keyed_profile_details") or {}).get("profiles", {})
     for persona, scopes in sorted(details.items()):
         entry = bundle["results"].get(persona, {})
@@ -702,7 +716,7 @@ def advanced_analysis(bundle):
                         continue
                     vlan_view = targets.get("layer2-vlan", {})
                     vlans = vlan_view.get("profiles", {}) if vlan_view.get("status") == "list_parsed" else {}
-                    for target, target_id, path in profile_reference_observations(module, identity, profile_body(body), vlans):
+                    for target, target_id, path in profile_reference_observations(module, identity, profile_body(body), vlans, known_ids=known_ids):
                         key = (persona, scope_id, module, identity, source_view, tuple(path), target)
                         if target_id in existing[key]:
                             continue
@@ -713,7 +727,7 @@ def advanced_analysis(bundle):
                             state = "conflicting_observation"
                         result["references"].append({"persona": persona, "scope": scope_id, "device": label,
                             "source_scope_kind": kind, "source_view": source_view, "source_module": module,
-                            "source": identity, "target_module": target, "target": target_id,
+                            "source": identity, "target_module": target, **target_fields(view,target_id),
                             "path": list(path), "status": state, "target_evidence": reason, "source_evidence": "individual",
                             "collection_conflict": conflict,
                             **({"source_value_shape":reference_value_shape(profile_body(body),path)} if target_id is None else {})})

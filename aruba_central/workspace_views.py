@@ -876,6 +876,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     from .review_dispositions import snapshot_binding, digest
     from .history_view import private_export
     from .dependency_evidence import reference_semantics, REFERENCE_SEMANTICS
+    from .vlan_membership import target_matches
     binding = digest([snapshot_binding(workspace, name, bundle), workflow])
     params = {"snapshot": name, "workflow": workflow}
     if query.get("reference_detail") is not None:
@@ -898,7 +899,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
         path = r.get("path", [])
         return canonical([{"index":"*"} if type(p) is int else p for p in path]) if isinstance(path, list) else "[]"
     source, field_filter = query.get("ref_source", ""), query.get("ref_field", "")
-    evidence_reasons = ("identity_unqualified", "target_view_unqualified", "identity_observed", "count_confirmed_absence", "target_collection_incomplete")
+    evidence_reasons = ("identity_unqualified", "target_view_unqualified", "identity_observed", "count_confirmed_absence", "target_collection_incomplete", "set_target_view_unqualified", "set_target_collection_incomplete", "set_count_confirmed_absence")
     reason = query.get("ref_evidence", "")
     contexts = ("library_definition","other_function_same_scope","same_site_observation")
     context = query.get("ref_context","")
@@ -931,7 +932,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                 and (not role_state or r.get("role_vlan_name_review",{}).get("status")==role_state)
                 and (not set_group or (set_member(r) and set_id(r)==set_group))
                 and (not context or (context == "no_positive_context" and r["status"] == "unresolved" and r.get("target") is not None and not positive_contexts(r)) or context in positive_contexts(r))
-                and all(term in " ".join(str(r.get(k, "")) for k in (*fields,"role_vlan_name_review")).casefold() for term in terms)]
+                and all(term in " ".join(str(r.get(k, "")) for k in (*fields,"role_vlan_name_review")).casefold() or (r.get("target_member_ranges") and target_matches(r,"layer2-vlan",term)) for term in terms)]
     filters = {**params, "ref_state": state, "ref_persona": persona, "ref_module": module, "ref_evidence": reason, "ref_q": keyword,
                "ref_source": source, "ref_field": field_filter, "ref_context": context, "ref_semantics":semantics,"ref_role_name":role_state,"ref_set_group":set_group}
     if query.get("reference_export") == "1":
@@ -989,8 +990,11 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                e(g["sample"]["source_module"]+" / "+g["sample"]["source"]),
                e(str(g["sample"].get("path",[]))),str(g["count"]),
                f'<a href="{url(root,"advanced",**{**filters,"ref_set_group":set_id(g["sample"])})}">Inspect members</a>') for g in groups_by_size])+'</details>'
+    compact=[r for _,r in selected if r.get("target_member_ranges")]
+    if compact:
+        controls += '<p><strong>'+str(len(compact))+' compact VLAN membership observations</strong> representing '+str(sum(r["target_member_count"] for r in compact))+' exact members. Search an individual VLAN ID to locate membership; these are not required definitions.</p>'
     groups = Counter((r["source_module"], r["target_module"], field(r)) for _, r in selected
-                     if r["status"] == "unresolved" and r.get("target") is None)
+                     if r["status"] == "unresolved" and r.get("target") is None and not r.get("target_member_ranges"))
     if field_filter:
         controls += f'<p>Exact field pattern: {e(field_filter)} <a href="{url(root,"advanced",**{**filters,"ref_field":""})}">Clear field filter</a></p>'
     if groups and workflow == "references" and not field_filter:
@@ -1009,7 +1013,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
         control = f'<button class="quiet inspect-trigger" type="button" data-inspect data-inspect-url="{detail_url}">Inspect</button>'
         rows.append(tr(e(r["device"]), e(persona_label(r["persona"])),
                        f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
-                       f'{e(module_label(r["target_module"]))}<small>{e(r["target"] if r["target"] is not None else "Unknown")}</small>',
+                       f'{e(module_label(r["target_module"]))}<small>{e(r["target"] if r["target"] is not None else str(r["target_member_count"])+" VLAN set members" if r.get("target_member_ranges") else "Unknown")}</small>',
                        status(r["status"]) + (f'<small>{e(pretty(r["target_evidence"]))}</small>' if r.get("target_evidence") else "")
                        + (f'<small>Individual target: {e(pretty(r["target_individual_status"]))}</small>' if r.get("target_individual_status") else "")
                        + (f'<small>Observed elsewhere: {e(", ".join(pretty(v) for v in sorted(positive_contexts(r))))}</small>' if positive_contexts(r) else "")

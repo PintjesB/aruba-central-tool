@@ -80,10 +80,15 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                             coverage["count_confirmed"] += 1
     reference_reasons=Counter()
     absent_semantics = Counter()
+    compact_fields=Counter()
     absent_fields = set()
     for ref in engineering["references"]:
         if ref.get("source_evidence")=="nac_enforcement":
             continue
+        if ref.get("target_member_ranges"):
+            compact_fields["fields"]+=1
+            compact_fields["members"]+=ref["target_member_count"]
+            compact_fields[ref["status"]]+=1
         if ref["status"] == "not_observed" and ref.get("target_evidence") == "count_confirmed_absence":
             semantics = reference_semantics(ref)
             absent_semantics[semantics] += 1
@@ -93,7 +98,7 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
             source,target=bool(ref.get("source_body_conflict")),bool(ref.get("target_body_conflict"))
             reason="both_ends" if source and target else "source_only" if source else "target_only" if target else "other_conflict"
         elif ref["status"] not in ("observed","definition_observed"):
-            reason="unknown_identity" if ref["target"] is None else "named_target_not_observed" if ref["status"]=="not_observed" else "named_target_unqualified"
+            reason="compact_membership" if ref.get("target_member_ranges") else "unknown_identity" if ref["target"] is None else "named_target_not_observed" if ref["status"]=="not_observed" else "named_target_unqualified"
         else:
             continue
         reference_reasons[reason]+=1
@@ -128,13 +133,17 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "reference_target_view_unqualified": sum(r.get("target_evidence") == "target_view_unqualified" for r in engineering["references"]),
                 **{"reference_absence_"+key:absent_semantics[key] for key in REFERENCE_SEMANTICS},
                 "reference_absent_set_source_fields":len(absent_fields),
+                "compact_membership_fields":compact_fields["fields"],
+                "compact_membership_members":compact_fields["members"],
+                "compact_membership_unresolved_fields":compact_fields["unresolved"],
+                "compact_membership_absent_fields":compact_fields["not_observed"],
                 "reference_target_count_confirmed_absence": sum(r.get("target_evidence") == "count_confirmed_absence" for r in engineering["references"]),
                 "unresolved_reference_target_individual_identity": sum(r.get("status") == "unresolved" and r.get("target_individual_status") == "identity_observed" for r in engineering["references"]),
                 **{"reference_alternative_"+key:reference_alternatives[key] for key in reference_contexts+("any","none")},
                 "unresolved_references": sum(ref["status"] not in ("observed", "definition_observed") and ref.get("source_evidence")!="nac_enforcement" for ref in engineering["references"]),
                 "conditional_nac_observations":sum(ref.get("source_evidence")=="nac_enforcement" for ref in engineering["references"]),
                 "conflicting_reference_observations":sum(ref.get("status")=="conflicting_observation" for ref in engineering["references"]),
-                **{key:reference_reasons[key] for key in ("both_ends","source_only","target_only","other_conflict","unknown_identity","named_target_not_observed","named_target_unqualified")}},
+                **{key:reference_reasons[key] for key in ("both_ends","source_only","target_only","other_conflict","unknown_identity","named_target_not_observed","named_target_unqualified","compact_membership")}},
             "assignments": {"observed": len(assignments["rows"]), "overlaps": len(assignments["overlaps"]),
                 "unknown_scopes": sum(not row["scope_resolved"] for row in assignments["rows"]),
                 **{"unresolved_function_" + key: function_contexts[key] for key in ASSIGNMENT_FUNCTION_CONTEXTS},

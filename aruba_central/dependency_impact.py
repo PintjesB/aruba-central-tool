@@ -1,5 +1,6 @@
 """Trace captured dependency paths without merging unrelated scope identities."""
 from collections import defaultdict, deque
+from .vlan_membership import target_matches
 
 RESOLVED = {"observed", "definition_observed"}
 
@@ -28,12 +29,12 @@ def dependency_impact(references, module, identity, *, persona="", scope="", lim
         if persona and ref["persona"] != persona or scope and str(ref["scope"]) != scope:
             continue
         source = (ref["source_module"], ref["source"])
-        target = (ref["target_module"], ref["target"])
+        target = root if target_matches(ref,module,identity) else (ref["target_module"], ref["target"])
         view = ref.get("source_view", "effective")
         context = (ref["persona"], str(ref["scope"]), view)
         if source == root or target == root:
             direct.append(ref)
-        if ref["target_module"] == module and ref["target"] is None:
+        if ref["target_module"] == module and ref["target"] is None and (not ref.get("target_member_ranges") or target == root):
             unresolved.append(ref)
         if view in ("effective","library") and (ref["status"] not in RESOLVED or ref["target"] is None):
             unqualified[context].append((source,target,ref))
