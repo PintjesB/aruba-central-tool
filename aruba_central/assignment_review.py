@@ -25,6 +25,11 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
             return {"collection_state": "count_confirmed_absent", "individual_body": individual}
         return None
     scopes, memberships, views = {}, {}, {}
+    scope_contexts = defaultdict(list)
+    for function, entry in entries.items():
+        for scope in entry["scopes"]:
+            scope_contexts[str(scope["id"])].append({"persona":function,"kind":scope["kind"],
+                                                    "name":scope.get("name") or str(scope["id"])})
     def index_persona(persona):
         if persona in scopes or persona not in entries:
             return
@@ -57,6 +62,13 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
         seen.add(key)
         index_persona(persona)
         source = scopes.get(persona, {}).get(sid)
+        # Other-function scope evidence is diagnostic only. Do not convert
+        # a matching ID into a verified assignment or infer membership.
+        other_contexts = [c for c in scope_contexts[sid] if c["persona"] != persona]
+        scope_state = ("resolved" if source else
+                       "function_not_collected" if persona not in entries else
+                       "scope_observed_other_function" if other_contexts else
+                       "scope_not_observed")
         lib = collections.get(module, {})
         expected = lib.get("profiles", {}).get(identity) if lib.get("status") == "list_parsed" else None
         known, unknown = [], []
@@ -109,6 +121,7 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
         row = {"module": module, "identity": identity, "persona": persona, "scope": sid,
                      "scope_name": source.get("name") or sid if source else sid, "scope_kind": source["kind"] if source else "unknown",
                      "library_present": expected is not None, "scope_resolved": source is not None,
+                     "scope_resolution":scope_state,"other_scope_contexts":other_contexts,
                      "recipients": recipients, "known_count": len(known), "unknown_count": len(unknown)}
         if library_conflict:
             row["library_individual_conflict"] = library_conflict
