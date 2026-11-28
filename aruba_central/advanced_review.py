@@ -273,8 +273,31 @@ def target_reference_evidence(view, identity, *, definition=False):
 
 def profile_reference_observations(module, identity, body, vlans):
     """Use identical reference extraction for all qualified source reads."""
+    handled = set()
+    # HPE WLAN SSID explicitly distinguishes a named-VLAN profile from
+    # literal VLAN-ID ranges; the name is not a layer2-vlan display name.
+    # https://developer.arubanetworks.com/new-central-config/reference/updatewlanssidswlanssidbyid
+    if module == "wlan-ssids":
+        selector = body.get("vlan-selector")
+        if selector == "NAMED_VLAN" and "vlan-id-range" not in body:
+            handled.update(("vlan-selector", "vlan-name"))
+            name = body.get("vlan-name")
+            yield "named-vlan", name if isinstance(name, str) and name.strip() else None, ["vlan-name"]
+        elif selector == "VLAN_RANGES" and "vlan-name" not in body:
+            from .central_tool import parse_reference_ids
+            handled.update(("vlan-selector", "vlan-id-range"))
+            ids = parse_reference_ids(body.get("vlan-id-range"), allow_list=True)
+            if ids:
+                for vid in sorted(ids, key=int):
+                    yield "layer2-vlan", vid, ["vlan-id-range"]
+            else:
+                yield "layer2-vlan", None, ["vlan-id-range"]
+    # GVRP mode is an enum, not a VLAN identity.
+    # https://developer.arubanetworks.com/new-central-config/reference/updateethernetinterfacesinterfacebyid
+    if module == "ethernet-interfaces" and body.get("unknown-vlans") in ("BLOCK", "DISABLE", "LEARN"):
+        handled.add("unknown-vlans")
     if module != "layer2-vlan":
-        vlan_refs = reference_candidates(body, vlans)
+        vlan_refs = reference_candidates({k: v for k, v in body.items() if k not in handled} if handled else body, vlans)
         for ref in vlan_refs["references"]:
             for vid in ref["vlan_ids"]:
                 yield "layer2-vlan", vid, ref["path"]
