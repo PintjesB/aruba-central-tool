@@ -101,5 +101,17 @@ class PreviewDecisionTests(unittest.TestCase):
                     self.assertEqual(len(result), 3)
                     self.assertTrue(all("observed device recipient" in row["reason"] for row in result))
                     self.assertEqual({(row["first"], row["second"]) for row in result}, {("a","b"),("a","c"),("b","c")})
+                    result = tab.evaluate("""() => {
+                        const chosen=['a','b'].map((id,i)=>({id,persona:'ACCESS_SWITCH',module:'dns',
+                            identity:'dns-'+id,action:'reuse_library',sources:[{scope:String(i+1)}],
+                            recipient_evidence:{known:[{scope:'3',name:'Switch A'}],unknown:[]},
+                            dependency_review:{dependencies:[]},fallbacks:[]}));
+                        const atomic=window.testBulkReview(chosen).collisions;
+                        chosen.forEach(f=>f.module='layer2-vlan');
+                        return {atomic, additive:window.testBulkReview(chosen).collisions};
+                    }""")
+                    self.assertEqual(len(result["atomic"]), 1)
+                    self.assertIn("atomic module", result["atomic"][0]["reason"])
+                    self.assertEqual(result["additive"], [])
                 finally:
                     browser.close()

@@ -60,9 +60,13 @@ def _selection_review(workspace, manifest, *, reconstruct):
     reuses, fallbacks = [], []
     reconstructed = {}
     missing = 0
+    from .inheritance_review import ATOMIC
     for f, selection in zip(chosen, selections):
         fid, persona, module, identity = (f[k] for k in ("id", "persona", "module", "identity"))
         entry = bundle["results"][persona]
+        # Atomic modules replace settings at a scope as a unit; different
+        # profile names do not establish independent recipient changes.
+        touch_identity = None if module in ATOMIC else identity
         if persona not in indexes:
             indexes[persona] = source_recipient_index(entry)
         recipients = source_recipient_evidence(entry, f["sources"], index=indexes[persona])
@@ -70,11 +74,11 @@ def _selection_review(workspace, manifest, *, reconstruct):
             target.update((persona, d["scope"]) for d in rows)
             if target is known:
                 for d in rows:
-                    recipient_touches[persona, module, identity, d["scope"]].add(fid)
+                    recipient_touches[persona, module, touch_identity, d["scope"]].add(fid)
         add_recipient(known, recipients["known"])
         add_recipient(unknown, recipients["unknown"])
         def key(sid):
-            return (persona, module, identity, sid)
+            return (persona, module, touch_identity, sid)
         for source in f["sources"]:
             touched[key(source["scope"])].add(fid)
         destination = selection["destination"]

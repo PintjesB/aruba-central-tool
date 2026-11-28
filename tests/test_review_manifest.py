@@ -167,3 +167,33 @@ class SelectionManifestTests(unittest.TestCase):
             self.assertFalse(json.loads(output.read_text())["safe_to_apply"])
             with patch("sys.argv", args), redirect_stderr(StringIO()), self.assertRaises(SystemExit):
                 main()
+
+
+    def test_atomic_module_different_names_share_scope_and_recipient_gate(self):
+        from unittest.mock import patch
+        from copy import deepcopy
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(fixture()))
+            workspace = Workspace(directory)
+            bundle = workspace.reviewed_snapshot(name)
+            first = deepcopy(next(f for f in workspace.consolidation_snapshot(bundle) if f["action"] == "promote_local"))
+            second = deepcopy(first)
+            for proposal, identity, scope, kind in ((first, "dns-first", "1", "global"), (second, "dns-second", "3", "device")):
+                proposal.update(action="reuse_library", module="dns", identity=identity,
+                                sources=[{"scope": scope, "kind": kind, "name": scope}], fallbacks=[])
+            second["id"] = "atomic-second"
+            manifest = {"schema": 1, "kind": "consolidation_selection", "snapshot": name,
+                        "snapshot_binding": snapshot_binding(workspace, name, bundle),
+                        "selections": [{"id": f["id"], "destination": None} for f in (first, second)]}
+            with patch.object(workspace, "consolidation_snapshot", return_value=[first, second]):
+                result = validate_selection(workspace, manifest)
+                self.assertEqual(result["conflicts_by_reason"], {"recipient_overlap": 1})
+                self.assertFalse(result["review_export_gates_passed"])
+                manifest["selections"].reverse()
+                self.assertEqual(validate_selection(workspace, manifest), result)
+                first["sources"] = second["sources"]
+                self.assertEqual(validate_selection(workspace, manifest)["conflicts_by_reason"],
+                                 {"recipient_overlap": 1, "scope_overlap": 1})
+                second["sources"] = [{"scope": "4", "kind": "device", "name": "Other"}]
+                self.assertTrue(validate_selection(workspace, manifest)["review_export_gates_passed"])
