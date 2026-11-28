@@ -4,7 +4,7 @@ from .advanced_review import advanced_analysis
 from .assignment_review import assignment_review
 from .consolidation import profile_recommendations
 from .policy_variants import policy_variants
-from .policy_rule_review import policy_rule_groups
+from .policy_rule_review import policy_rule_groups, POLICY_SCHEMA_STATES
 from .policy_sequence_review import policy_sequence_reviews
 
 SECURITY_REASONS = ("rule_not_object", "additional_rule_fields", "condition_not_object",
@@ -14,6 +14,10 @@ ACL_REASONS = ("rule_not_object", "additional_rule_fields", "source_role_unquali
     "action_unqualified", "literal_destination_unqualified", "family_unqualified", "order_unqualified")
 SEQUENCE_CONTEXTS = ("unfiltered_function", "function_not_collected", "scope_not_observed",
     "policy_view_not_collected", "policy_view_unqualified", "policy_view_parsed", "unknown")
+ALTERNATIVE_POLICY_CONTEXTS = ("other_function_same_scope", "unfiltered_same_scope", "library_definition")
+ASSIGNMENT_FUNCTION_CONTEXTS = ("function_collected", "function_adapter_unqualified", "hybrid_nac_not_network_scope",
+    "function_outside_network_adapter", "function_in_inventory_not_collected", "function_inventory_unavailable",
+    "function_not_observed_in_inventory", "unknown")
 SEQUENCE_TARGET_STATES = ("rules_observed", "rule_schema_unqualified", "not_observed",
     "target_unverified", "individual_evidence_conflict")
 
@@ -31,6 +35,8 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
     rules = policy_rule_groups(bundle) if rules is None else rules
     sequences = policy_sequence_reviews(bundle) if sequences is None else sequences
     security_reasons, acl_reasons = Counter(), Counter()
+    schema_reasons = Counter(row.get("schema_state", "unknown") for row in rules if row["status"] == "rule_schema_unqualified")
+    sequence_schema_reasons, alternative_targets = Counter(), Counter()
     for row in rules:
         if row.get("module") == "policies":
             security_reasons.update(row.get("unsupported_reasons", {}))
@@ -46,6 +52,12 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
             sequence_target_states[ref["status"]] += 1
             if ref["status"] != "rules_observed":
                 sequence_context_gaps[context] += 1
+                if ref["status"] == "rule_schema_unqualified":
+                    sequence_schema_reasons[ref.get("schema_state", "unknown")] += 1
+                alternatives = {v.get("context") for v in ref.get("alternative_observations", []) if v.get("status") == "identity_observed"}
+                alternative_targets.update(alternatives)
+                if alternatives:
+                    alternative_targets["any"] += 1
     coverage = Counter()
     for entry in bundle["results"].values():
         for module in entry["modules"].values():
@@ -70,6 +82,7 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
             continue
         reference_reasons[reason]+=1
     scope_reasons=Counter(row.get("scope_resolution","unknown") for row in assignments["rows"] if not row["scope_resolved"])
+    function_contexts = Counter(row.get("function_context", "unknown") for row in assignments["rows"] if not row["scope_resolved"])
     unresolved_assignment_reads=Counter(row.get("assignment_evidence_state","not_collected") for row in assignments["rows"] if not row["scope_resolved"])
     actions = Counter(f["action"] for f in findings)
     review = [f for f in findings if f["action"] in ("remove_override", "promote_local", "reuse_library")]
@@ -95,6 +108,7 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 **{key:reference_reasons[key] for key in ("both_ends","source_only","target_only","other_conflict","unknown_identity","named_target_not_observed","named_target_unqualified")}},
             "assignments": {"observed": len(assignments["rows"]), "overlaps": len(assignments["overlaps"]),
                 "unknown_scopes": sum(not row["scope_resolved"] for row in assignments["rows"]),
+                **{"unresolved_function_" + key: function_contexts[key] for key in ASSIGNMENT_FUNCTION_CONTEXTS},
                 **{"unresolved_scope_keyed_"+key:unresolved_assignment_reads[key] for key in ("identity_observed","body_difference_observed","scope_only_observed","multiple_observations","not_collected","individual_read_unqualified")},
                 **{key:scope_reasons[key] for key in ("function_not_collected","scope_observed_other_function","scope_not_observed","unknown")},
                 "invalid": len(assignments["invalid_rows"]),
@@ -109,6 +123,7 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "observations": sum(len(row["findings"]) for row in rules),
                 "groups_with_unsupported_rules": sum(bool(row["unsupported_rules"]) or row["status"] == "rule_schema_unqualified" for row in rules),
                 "unsupported_schema_groups":sum(row["status"]=="rule_schema_unqualified" for row in rules),
+                **{"schema_" + key: schema_reasons[key] for key in POLICY_SCHEMA_STATES + ("unknown",)},
                 "unsupported_rule_occurrences":sum(row["unsupported_rules"] for row in rules),
                 "unsupported_order_occurrences":sum(sum(count for reason,count in row.get("unsupported_reasons",{}).items() if reason in ("security_order_unqualified","acl_order_or_family_unqualified")) for row in rules),
                 "unsupported_condition_occurrences":sum(sum(count for reason,count in row.get("unsupported_reasons",{}).items() if reason.startswith("unsupported_") or reason=="condition_not_object") for row in rules),
@@ -132,6 +147,8 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "conflicting_targets":sum(ref["status"]=="individual_evidence_conflict" for row in sequences for ref in row["references"]),
                 "truncated": sum(row["truncated"] for row in sequences),
                 **{"gap_context_" + key: sequence_context_gaps[key] for key in SEQUENCE_CONTEXTS},
+                **{"schema_" + key: sequence_schema_reasons[key] for key in POLICY_SCHEMA_STATES + ("unknown",)},
+                **{"alternative_" + key: alternative_targets[key] for key in ALTERNATIVE_POLICY_CONTEXTS + ("any",)},
                 **{"target_" + key: sequence_target_states[key] for key in SEQUENCE_TARGET_STATES}},
             "checkpoint": bundle.get("collection_checkpoint", {}), "captured_at": bundle.get("captured_at"),
             "complete": False, "safe_to_apply": False}
