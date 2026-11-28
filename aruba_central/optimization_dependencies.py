@@ -4,13 +4,17 @@ from collections import defaultdict
 
 def attach_dependency_review(findings, references):
     incoming, outgoing, unresolved = defaultdict(list), defaultdict(list), defaultdict(list)
+    all_incoming, all_outgoing, all_unresolved = defaultdict(list), defaultdict(list), defaultdict(list)
     for ref in references:
         context = ref["persona"]
         outgoing[(context, ref["source_module"], ref["source"])].append(ref)
+        all_outgoing[ref["source_module"], ref["source"]].append(ref)
         if ref["target"] is None:
             unresolved[(context, ref["target_module"])].append(ref)
+            all_unresolved[ref["target_module"]].append(ref)
         else:
             incoming[(context, ref["target_module"], ref["target"])].append(ref)
+            all_incoming[ref["target_module"], ref["target"]].append(ref)
     for finding in findings:
         persona, module, identity = (finding[k] for k in ("persona", "module", "identity"))
         contexts = (persona, "Library")
@@ -19,8 +23,17 @@ def attach_dependency_review(findings, references):
         unknown = [r for c in contexts for r in unresolved[(c, module)]]
         gaps = [r for r in consumers + dependencies if r["status"] not in ("observed", "definition_observed")]
         devices = {(r["persona"], r["scope"]) for r in consumers if r.get("source_scope_kind") == "device" and r.get("source_view") == "effective"}
+        # A Library identity can be visible to several device functions.
+        # Preserve other-function observations separately: identical names
+        # do not establish that those consumers use the proposed definition.
+        cross_consumers = [r for r in all_incoming[module, identity] if r["persona"] not in contexts]
+        cross_dependencies = [r for r in all_outgoing[module, identity] if r["persona"] not in contexts]
+        cross_unknown = [r for r in all_unresolved[module] if r["persona"] not in contexts]
         finding["dependency_review"] = {"consumers": consumers, "dependencies": dependencies,
                                         "unresolved_target_observations": unknown, "unqualified_edges": gaps,
                                         "observed_consumer_devices": len(devices),
+                                        "other_function_consumers": cross_consumers,
+                                        "other_function_dependencies": cross_dependencies,
+                                        "other_function_unresolved_targets": cross_unknown,
                                         "complete": False, "safe_to_apply": False}
     return findings
