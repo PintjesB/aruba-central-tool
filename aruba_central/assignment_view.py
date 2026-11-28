@@ -81,7 +81,7 @@ def assignments_view(workspace, query):
             exact = states["identity_observed"] + states["body_difference_observed"]
             contexts = sorted({c["persona"] for r in members for c in r.get("other_scope_contexts", [])})
             link = url(root, "assignments", snapshot=name, module=module, persona=function, identity=identity, scope=sid, state=state)
-            group_rows.append(tr(e(persona_label(function)), e(sid), e(pretty(members[0]["scope_resolution"])),
+            group_rows.append(tr(e(persona_label(function)), e(sid), e(pretty(members[0]["scope_resolution"])) + '<small>' + e(pretty(members[0].get("function_context","unknown"))) + '</small>',
                 str(len(members)), str(len({r["module"] for r in members})), str(exact),
                 e(", ".join(persona_label(p) for p in contexts) or "None observed"), f'<a href="{link}">Inspect assignments</a>'))
         body += '<section><h2>Unresolved scope groups</h2><p>'+str(len(groups))+' distinct function/scope pairs. An exact individual identity confirms an assignment observation, not the device recipients.</p>'+table(("Function","Scope ID","Reason","Assignments","Modules","Exact individual identities","Other observed functions",""), group_rows, search=True)+'</section>'
@@ -119,7 +119,7 @@ def assignment_detail(row):
     if row.get("individual_assignment_observations"):
         detail += raw(row["individual_assignment_observations"])
     if not row["scope_resolved"]:
-        detail += '<p>Scope resolution: '+e(pretty(row["scope_resolution"]))+'</p>'
+        detail += '<p>Scope resolution: '+e(pretty(row["scope_resolution"]))+'</p><p>Function context: '+e(pretty(row.get("function_context","unknown")))+'</p><p>Missing inventory observations do not establish absence of devices or assignments.</p>'
         if row["other_scope_contexts"]:
             detail += '<h3>Other function observations for this exact scope ID</h3><p>Not verified assignment recipients.</p>'+table(("Function","Type","Scope"),[
                 tr(e(persona_label(c["persona"])),e(pretty(c["kind"])),e(c["name"])) for c in row["other_scope_contexts"]])
