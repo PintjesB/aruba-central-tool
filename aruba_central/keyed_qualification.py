@@ -89,12 +89,61 @@ def schema_fields(raw):
                     yield from fields("list_record", row)
 
 
+def case_candidate_evidence(bundle, persona, scope, module, identity, side, raw):
+    """Compare only captured collections in the exact request context."""
+    from .central_tool import observed_profile_candidates, profile_body
+    views = []
+    if persona == "Library" and side == "library":
+        views.append((bundle.get("library") or {}).get("modules", {}).get(module, {}))
+        views.append((bundle.get("unadapted_profiles") or {}).get(module, {}).get("library", {}))
+    else:
+        entry = bundle.get("results", {}).get(persona, {}).get("modules", {}).get(module, {})
+        for row in entry.get("scope_results", []):
+            if str(row.get("scope")) == str(scope):
+                views.append(row.get(side + "_view", {}))
+        for row in (bundle.get("unadapted_profiles") or {}).get(module, {}).get("source_views", []):
+            if row.get("persona") == persona and str(row.get("scope")) == str(scope):
+                views.append(row.get("committed" if side == "local" else side, {}))
+    candidates = {}
+    for view in views:
+        for name, profile in observed_profile_candidates(view, "name").items():
+            if name.casefold() == identity.casefold():
+                candidates.setdefault(name, set()).add(canonical(profile_body(profile)))
+    if len(candidates) > 1:
+        return "observed_case_collision"
+    if identity not in candidates:
+        return "requested_collection_identity_unobserved"
+    if len(candidates[identity]) != 1:
+        return "conflicting_collection_bodies"
+    import json
+    saved = json.loads(next(iter(candidates[identity])))
+    observed = profile_body(raw)
+    # This is a diagnostic, not an equivalence or source qualification rule.
+    saved = {k: v for k, v in saved.items() if k != "name"}
+    observed = {k: v for k, v in observed.items() if k != "name"}
+    return "body_matches_except_name" if canonical(saved) == canonical(observed) else "body_differs_beyond_name"
+
+
+def server_count_relationship(read, diff):
+    path = diff.get("path")
+    value = diff.get("local_value")
+    if (not isinstance(path, list) or len(path) != 1 or diff.get("kind") != "missing_reference"
+            or type(value) is not int):
+        return None
+    profile = read.get("profile")
+    servers = profile.get("servers") if isinstance(profile, dict) else None
+    if not isinstance(servers, list):
+        return "server_list_unavailable"
+    return "equals_observed_server_count" if value == len(servers) else "differs_from_observed_server_count"
+
+
 def keyed_qualification(bundle):
     schemas, differences, profiles, structures = Counter(), Counter(), Counter(), Counter()
     relationships, locations = Counter(), Counter()
+    case_candidates, integer_relationships = Counter(), Counter()
     private_paths = {}
-    for scopes in (bundle.get("keyed_profile_details") or {}).get("profiles", {}).values():
-        for modules in scopes.values():
+    for persona, scopes in (bundle.get("keyed_profile_details") or {}).get("profiles", {}).items():
+        for scope, modules in scopes.items():
             for module, identities in modules.items():
                 if module not in MODULE_KEYS:
                     continue
@@ -104,7 +153,11 @@ def keyed_qualification(bundle):
                         if read.get("status") == "schema_unresolved":
                             shape = response_structure(read.get("raw"), MODULE_KEYS[module], str(identity))
                             schemas[(module, side, *shape)] += 1
-                            relationships[(module, side, identity_relationship(read.get("raw"), MODULE_KEYS[module], str(identity)))] += 1
+                            relation = identity_relationship(read.get("raw"), MODULE_KEYS[module], str(identity))
+                            relationships[(module, side, relation)] += 1
+                            if module in ("roles", "role-gpids") and relation == "case_only":
+                                outcome = case_candidate_evidence(bundle, persona, scope, module, str(identity), side, read["raw"])
+                                case_candidates[(module, side, outcome)] += 1
                             for level, field, kind in schema_fields(read.get("raw")):
                                 structures[(module, side, level, field, kind)] += 1
                         diffs = read.get("differences")
@@ -117,6 +170,10 @@ def keyed_qualification(bundle):
                                 continue
                             kind = difference_category(diff)
                             categories.append(kind)
+                            if module == "server-groups":
+                                relationship = server_count_relationship(read, diff)
+                                if relationship is not None:
+                                    integer_relationships[(module, side, relationship)] += 1
                             path = diff.get("path")
                             field = path[0] if isinstance(path, list) and path and path[0] in PUBLIC_FIELDS else "other"
                             if isinstance(path, list):
@@ -150,5 +207,9 @@ def keyed_qualification(bundle):
             "difference_locations": [{"module": m, "view": v, "anonymous_path_number": p, "path_shape": s,
                                        "field": f, "category": k, "occurrences": n}
                                       for (m, v, p, s, f, k), n in sorted(locations.items())],
+            "role_case_collection_evidence": [{"module": m, "view": v, "relationship": k, "reads": n}
+                                              for (m, v, k), n in sorted(case_candidates.items())],
+            "server_group_integer_relationships": [{"module": m, "view": v, "relationship": k, "occurrences": n}
+                                                   for (m, v, k), n in sorted(integer_relationships.items())],
             "applicability": applicability_evidence(bundle),
             "safe_to_apply": False, "order_equivalence_qualified": False}
