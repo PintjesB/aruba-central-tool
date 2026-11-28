@@ -306,11 +306,15 @@ def advanced_analysis(bundle):
         names = {s["id"]: s.get("name") or s["id"] for s in entry["scopes"]}
         scope_kinds = {s["kind"] for s in entry["scopes"]}
         precedence_conflicts = {}
+        precedence_local = {module: {row["scope"]: row.get("local_view", {}) for row in entry["modules"][module]["scope_results"]}
+                            for module in ADDITIVE & views.keys()}
         def scope_contradiction(module, scope, identity):
             key = (module, scope)
             if key not in precedence_conflicts:
-                precedence_conflicts[key] = conflicting_profiles(bundle, persona, module, scope, views[module].get(scope, {}))
-            return precedence_conflicts[key].get(identity)
+                precedence_conflicts[key] = {
+                    "effective": conflicting_profiles(bundle, persona, module, scope, views[module].get(scope, {})),
+                    "local": conflicting_profiles(bundle, persona, module, scope, precedence_local[module].get(scope, {}), side="local")}
+            return {side: conflicts[identity] for side, conflicts in precedence_conflicts[key].items() if identity in conflicts}
         port_groups = defaultdict(list)
         port_saved_views = {v["scope"]: v for v in entry["modules"].get("ethernet-interfaces", {}).get("scope_results", [])}
         port_conflicts, profile_conflicts = {}, {}
@@ -385,12 +389,12 @@ def advanced_analysis(bundle):
                                 unknown_higher = True
                             continue
                         effective = views[module].get(scope_id, {})
-                        if effective.get("status") != "list_parsed":
-                            unknown_higher = True
-                            continue
                         conflict = scope_contradiction(module, scope_id, identity)
                         if conflict:
                             record_conflict(scope_id, conflict)
+                            unknown_higher = True
+                            continue
+                        if effective.get("status") != "list_parsed":
                             unknown_higher = True
                             continue
                         candidate = effective["profiles"].get(identity)
@@ -414,11 +418,11 @@ def advanced_analysis(bundle):
                         if not ancestor:
                             continue
                         upstream = views[module].get(ancestor, {})
-                        if upstream.get("status") != "list_parsed" or identity not in upstream["profiles"]:
-                            continue
                         conflict = scope_contradiction(module, ancestor, identity)
                         if conflict:
                             record_conflict(ancestor, conflict)
+                            continue
+                        if upstream.get("status") != "list_parsed" or identity not in upstream["profiles"]:
                             continue
                         other = profile_body(upstream["profiles"][identity])
                         result["shadowed"].append({"persona": persona, "module": module,
