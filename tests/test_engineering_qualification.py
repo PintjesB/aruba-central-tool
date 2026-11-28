@@ -65,3 +65,18 @@ class EngineeringQualificationTests(unittest.TestCase):
         self.assertEqual(counts["policy_sequences"]["unqualified_targets"],3)
         self.assertEqual(counts["policy_sequences"]["target_not_observed"],1)
         self.assertNotIn("private-",json.dumps(counts))
+
+    def test_engineering_contradiction_counts_remain_anonymous(self):
+        from aruba_central.assessment_review import assessment
+        from test_consolidation import fixture
+        engineering={"library_duplicates":[],"shadowed":[],"precedence_conflicts":[{"private":"scope"}],
+            "port_groups":[{"ports":[{},{}],"conversion_review":[{"status":"individual_evidence_conflict"}],
+                "conflicting_library_matches":[{"identity":"private-profile"}],
+                "matching_library_profiles":[{"visibility":[{"status":"individual_evidence_conflict"}]}]}],
+            "references":[{"status":"unresolved","target":"private-target","target_evidence":"target_collection_incomplete"}]}
+        report=assessment(fixture(),engineering=engineering)
+        with patch("aruba_central.engineering_qualification.refresh_configuration_review",return_value={}),patch("aruba_central.engineering_qualification.assessment",return_value=report):
+            counts=engineering_qualification({})["counts"]["engineering"]
+        for key in ("precedence_conflicts","port_conversion_conflicts","port_library_conflicts","port_visibility_conflicts","reference_target_collection_incomplete"):
+            self.assertEqual(counts[key],1)
+        self.assertNotIn("private-",json.dumps(counts))
