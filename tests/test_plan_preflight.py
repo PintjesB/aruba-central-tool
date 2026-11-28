@@ -79,3 +79,35 @@ class PlanPreflightTests(unittest.TestCase):
             self.assertEqual(len(row["profile_evidence_changes"]),1)
             self.assertEqual(row["profile_evidence_changes"][0]["scope"],"5")
             self.assertFalse(report["safe_to_apply"])
+
+
+    def test_prerequisite_body_change_is_detected_without_changing_reference_identity(self):
+        from copy import deepcopy
+        with tempfile.TemporaryDirectory() as directory:
+            names=["config-audit-before.json","config-audit-after.json"]
+            before=fixture()
+            before.update(captured_at="2026-01-01T00:00:00+00:00",region="https://de1.example",inventory=[{"inventory":{"serial":"A"}}])
+            entry=before["results"]["ACCESS_SWITCH"]
+            for scope in entry["scopes"]:
+                if scope["kind"]=="device":
+                    scope["metadata"]={"serial":scope["id"]}
+            body={"profile-name":"Test","switchport":{"access-vlan":20}}
+            entry["modules"]["sw-port-profiles"]={"scope_results":[
+                {"scope":sid,"scope_kind":"device","local_view":{"status":"list_parsed","profiles":{"Test":deepcopy(body)}},
+                 "effective_view":{"status":"list_parsed","profiles":{"Test":deepcopy(body)}}} for sid in ("3","4")]}
+            after=deepcopy(before)
+            after["captured_at"]="2026-01-02T00:00:00+00:00"
+            after["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"][2]["effective_view"]["profiles"]["20"]["name"]="Changed target"
+            for name,data in zip(names,[before,after]):
+                (Path(directory)/name).write_text(json.dumps(data))
+            w=Workspace(directory)
+            bundle=w.reviewed_snapshot(names[0])
+            f=next(f for f in w.consolidation_snapshot(bundle) if f["module"]=="sw-port-profiles" and f["action"]=="promote_local")
+            manifest={"schema":1,"kind":"consolidation_selection","snapshot":names[0],
+                      "snapshot_binding":snapshot_binding(w,names[0],bundle),"selections":[{"id":f["id"],"destination":"library"}]}
+            report=revalidate_plan(w,manifest,names[1],confirmed=True)
+            row=report["rows"][0]
+            self.assertIn("prerequisite_profile_evidence_changed",row["reasons"])
+            self.assertEqual(row["prerequisite_evidence"]["changes"][0]["identity"],"20")
+            self.assertEqual(row["profile_evidence_changes"],[])
+            self.assertFalse(report["observed_review_matches"])

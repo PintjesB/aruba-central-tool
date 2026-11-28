@@ -93,7 +93,8 @@ def preflight_result(workspace, report):
     body += table(("Action","Module","Profile","Function","Outcome","Reasons"),[
         tr(e(pretty(r["action"])),e(r["module"]),e(r["identity"]),e(r["persona"]),badge(pretty(r["status"])),
            ("<br>".join(e(pretty(reason)) for reason in r["reasons"]) or "No observed differences")
-           + (f'<small>{len(r.get("profile_evidence_changes", []))} exact scope/view observations changed; see private export.</small>' if r.get("profile_evidence_changes") else ""))
+           + (f'<small>{len(r.get("profile_evidence_changes", []))} exact scope/view observations changed; see private export.</small>' if r.get("profile_evidence_changes") else "")
+           + (f'<small>{len(r["prerequisite_evidence"]["changes"])} prerequisite target contexts changed; see private export.</small>' if r.get("prerequisite_evidence",{}).get("changes") else ""))
         for r in report["rows"]],search=True)
     if report["combined_reasons"]:
         body += '<h3>Combined review blockers</h3><p>' + e(", ".join(pretty(r) for r in report["combined_reasons"])) + '</p>'

@@ -55,3 +55,26 @@ def compare_profile_evidence(before,after,persona,module,identity,library_destin
         if canonical(old) != canonical(new):
             changes.append({"persona":function,"scope":sid,"view":side,"before":old,"after":new})
     return changes
+
+
+def compare_prerequisite_evidence(before,after,proposal,library_destination):
+    """Compare captured target definitions, not just unchanged graph edges."""
+    review=proposal["dependency_review"]
+    targets=set()
+    refs=list(review["dependencies"])
+    if library_destination:
+        refs.extend(review.get("other_function_dependencies",[]))
+    for ref in refs:
+        if ref["target"] is None:
+            continue
+        function=proposal["persona"] if ref["persona"]=="Library" else ref["persona"]
+        if function not in before["results"] and function not in after["results"]:
+            continue
+        targets.add((function,ref["target_module"],ref["target"],
+                     library_destination or ref["persona"]=="Library"))
+    changes=[]
+    for function,module,identity,include_library in sorted(targets):
+        observations=compare_profile_evidence(before,after,function,module,identity,include_library)
+        if observations:
+            changes.append({"persona":function,"module":module,"identity":identity,"observations":observations})
+    return {"target_contexts_checked":len(targets),"changes":changes}
