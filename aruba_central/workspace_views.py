@@ -1363,7 +1363,7 @@ def coverage_view(workspace, query):
                      ("Qualified modules", f"{counts['qualified']}/{len(records)}", "All requested scopes interpretable"),
                      ("Observed types without adapter", len(unknown), "Raw evidence only"),
                      ("Distinct Library collections", len(set(library.get("modules", {})) | set(additional)), "Structured and supplemental evidence deduplicated")])
-    from .coverage_navigation import coverage_navigation, gap_summary, COVERAGE_CSS
+    from .coverage_navigation import coverage_navigation, gap_summary, coverage_batch, COVERAGE_CSS
     transport = bundle.get("http_get_transport")
     body += coverage_navigation(bundle, transport, additional)
     if isinstance(transport, dict):
@@ -1381,10 +1381,11 @@ def coverage_view(workspace, query):
         raise ValueError("Unknown collection gap reason")
     body += '<section id="coverage-gaps"><h2>Collection gaps requiring review</h2><p>Failed requests, incomplete counts and unverified empty responses are not evidence of absent configuration. Counts below represent observations, not missing profiles. Reused identical responses are not counted twice.</p>'
     body += gap_summary(root, name, gaps, reason)
+    selected_gaps = [g for g in gaps if not reason or g["reason"] == reason]
+    gap_batch, gap_controls = coverage_batch(root, name, query, "gaps", selected_gaps,
+        lambda g: " ".join((g["module"], module_label(g["module"]), g["source"], g["reason"], str(g["observations"]))))
     gap_rows = []
-    for g in gaps:
-        if reason and g["reason"] != reason:
-            continue
+    for g in gap_batch:
         module, source = g["module"], g["source"]
         if source.startswith("Supplemental"):
             link = url(root, "unadapted", snapshot=name, module=module)
@@ -1395,7 +1396,7 @@ def coverage_view(workspace, query):
                        module=module, view="diagnostics")
         gap_rows.append(tr(e(module_label(module)), e(source), e(g["reason"]),
                            str(g["observations"]), '<a href="' + link + '">Inspect evidence</a>'))
-    body += f'<p class="filter-hint">{len(gap_rows)} matching module/context/reason groups of {len(gaps)}.</p>'
+    body += f'<p class="filter-hint">{len(selected_gaps)} matching module/context/reason groups of {len(gaps)}.</p>' + gap_controls
     body += table(("Module", "Collection context", "Coverage gap", "Observations", "Action"), gap_rows, search=True) + '</section>'
     health = bundle.get("configuration_health")
     if health:
@@ -1458,13 +1459,21 @@ def coverage_view(workspace, query):
             if individual.get("selector_rejections"):
                 body += '<h4>Selectors not queried</h4>' + table(("Reason", "Records"), [
                     tr(e(pretty(k)), str(v)) for k, v in sorted(individual["selector_rejections"].items())])
+            assignment_batch, assignment_controls = coverage_batch(root, name, query, "hierarchy",
+                list(enumerate(individual.get("records", []))),
+                lambda item: " ".join(str(value) for value in (
+                    *item[1]["selector"].values(), persona_label(item[1]["selector"]["device-function"]),
+                    module_label(item[1]["selector"]["profile-type"]), pretty(item[1]["status"]),
+                    "Identical" if item[1].get("body_matches_inventory") is True else
+                    "Different" if item[1].get("body_matches_inventory") is False else "Unavailable")))
+            body += assignment_controls
             body += table(("Scope", "Device function", "Module", "Profile", "Status", "Body comparison", ""), [
                 tr(e(r["selector"]["scope-id"]), e(persona_label(r["selector"]["device-function"])),
                    e(module_label(r["selector"]["profile-type"])), e(r["selector"]["profile-instance"]),
                    status(r["status"]), "Identical" if r.get("body_matches_inventory") is True else
                    "Different" if r.get("body_matches_inventory") is False else "Unavailable",
                    evidence("assignment", index))
-                for index, r in enumerate(individual.get("records", []))], search=True)
+                for index, r in assignment_batch], search=True)
         body += '</section>'
     from .library_visibility import visibility_summary
     visibility = visibility_summary(bundle)
@@ -1550,9 +1559,15 @@ def coverage_view(workspace, query):
                   "mixed_outcomes": "Mixed outcomes", "response_received": "Response received"}
         from .coverage_policy import keyed_gap_context, gap_handling
         gap_context = keyed_gap_context(bundle)
+        ordered_operations = sorted(operations, key=lambda r: ({"no_response": 0, "mixed_outcomes": 1, "not_attempted": 2,
+                                                      "response_received": 3}.get(r["status"], 4), r["path"]))
+        operation_batch, operation_controls = coverage_batch(root, name, query, "operations", ordered_operations,
+            lambda r: " ".join((*r["groups"], r["path"], labels.get(r["status"], r["status"]),
+                str(r["attempted"]), str(r["received"]), " ".join(f"{pretty(k)}: {v}" for k, v in r["outcomes"].items()),
+                gap_handling(r, gap_context))))
+        body += operation_controls
         operation_rows = []
-        for row in sorted(operations, key=lambda r: ({"no_response": 0, "mixed_outcomes": 1, "not_attempted": 2,
-                                                      "response_received": 3}.get(r["status"], 4), r["path"])):
+        for row in operation_batch:
             outcomes = ", ".join(f"{pretty(k)}: {v}" for k, v in sorted(row["outcomes"].items()))
             operation_rows.append(tr(e(", ".join(row["groups"])), e(row["path"]),
                                      e(labels.get(row["status"], row["status"])),
