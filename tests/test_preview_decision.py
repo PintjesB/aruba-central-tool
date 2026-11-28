@@ -115,3 +115,41 @@ class PreviewDecisionTests(unittest.TestCase):
                     self.assertEqual(result["additive"], [])
                 finally:
                     browser.close()
+
+
+    def test_browser_reuse_export_records_exact_assignment_destination(self):
+        import json
+        import shutil
+        import tempfile
+        from pathlib import Path
+        from aruba_central.config_app import Workspace
+        from aruba_central.review_manifest import reconstruct_selection
+        from test_consolidation import fixture
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            self.skipTest("Browser test dependency unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory)/name).write_text(json.dumps(fixture()))
+            workspace = Workspace(directory)
+            html = workspace.advisor({"snapshot":name,"finding":"reuse_library"})
+            with sync_playwright() as playwright:
+                browser=playwright.chromium.launch(executable_path=shutil.which("google-chrome") or shutil.which("chromium"),args=["--no-sandbox"])
+                try:
+                    tab=browser.new_page()
+                    tab.set_content(html)
+                    row=tab.locator('#advisor-table tr[data-action="reuse_library"]:visible').first
+                    row.locator(".choose").check()
+                    tab.locator("#open-preview").click()
+                    self.assertIn("Review export available",tab.locator(".preview-decision").inner_text())
+                    with tab.expect_download() as pending:
+                        tab.locator("#export-plan").click()
+                    export=json.loads(Path(pending.value.path()).read_text())
+                    self.assertIsNone(export["selection_manifest"]["selections"][0]["destination"])
+                    plan=reconstruct_selection(workspace,export["selection_manifest"])
+                    self.assertEqual(export["recommendations"][0]["selected_destination"],
+                                     plan["recommendations"][0]["selected_destination"])
+                    self.assertTrue(plan["recommendations"][0]["selected_destination"]["reuse_existing"])
+                finally:
+                    browser.close()
