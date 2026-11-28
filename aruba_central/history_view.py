@@ -49,13 +49,18 @@ def drift_group_detail(group):
             + '<p class="note">Matching transitions across scopes do not prove a common cause. Each observation remains available in the detailed change worklist.</p>')
 
 
-def drift_batch(records, query, prefix, fields):
+DRIFT_STATES = {"changes": "Observed changes", "gaps": "Coverage and identity gaps", "all": "All observations"}
+OBSERVED_DRIFT = {"changed", "source_changed", "added", "removed", "assignment_observation_changed", "scope_presence_changed"}
+
+
+def drift_batch(records, query, prefix, fields, *, predicate=None):
     keyword = query.get(prefix + "_q", "")
     if len(keyword) > 200:
         raise ValueError("Invalid drift search")
     terms = keyword.casefold().split()
     matches = [(i, row) for i, row in enumerate(records)
-               if all(term in " ".join(str(row.get(k, "")) for k in fields).casefold() for term in terms)]
+               if (predicate is None or predicate(row))
+               and all(term in " ".join(str(row.get(k, "")) for k in fields).casefold() for term in terms)]
     try:
         offset = int(query.get(prefix + "_offset", "0"))
     except (ValueError, TypeError):
@@ -65,16 +70,18 @@ def drift_batch(records, query, prefix, fields):
     return matches[offset:offset+50], len(matches), offset, keyword
 
 
-def drift_batch_controls(root, common, prefix, total, offset, keyword):
+def drift_batch_controls(root, common, prefix, total, offset, keyword, *, state=None):
     body = (f'<form class="filter-bar" method="get" action="{e(root+"drift")}#{prefix}-drift">'
             + "".join(f'<input type="hidden" name="{e(key)}" value="{e(value)}">' for key,value in common.items() if key != "binding")
+            + (select("record_state", list(DRIFT_STATES.items()), state, "Observation type") if state is not None else "")
             + f'<label>Search all observations<input name="{prefix}_q" maxlength="200" value="{e(keyword)}"></label>'
             + '<button type="submit">Filter</button></form>')
     body += '<p>' + ("Showing "+str(offset+1)+"–"+str(min(total,offset+50))+" of "+str(total) if total else "No matching observations") + '</p>'
     for label,next_offset in (("Previous",offset-50),("Next",offset+50)):
         if 0 <= next_offset < total:
             href=url(root,"drift",**{k:v for k,v in common.items() if k!="binding"},
-                     **{prefix+"_q":keyword,prefix+"_offset":next_offset})
+                     **{prefix+"_q":keyword,prefix+"_offset":next_offset},
+                     **({"record_state":state} if state is not None else {}))
             body += f'<a class="button" href="{href}#{prefix}-drift">{label}</a> '
     return body
 
@@ -148,13 +155,20 @@ def drift_view(workspace, query):
                str(group["effective_device_count"]),str(group["saved_scope_count"]),str(group["higher_effective_count"]),str(group["library_count"]),
                drift_control(root,common,"group",index,"Review impact")) for index,group in batch])
         body += '</section>'
-        batch,total,offset,keyword=drift_batch(result["records"],query,"record",("persona","scope","scope_name","module","view","identity","status"))
+        state = query.get("record_state", "changes")
+        if state not in DRIFT_STATES:
+            raise ValueError("Invalid drift observation type")
+        def in_state(row):
+            return state == "all" or (row["status"] in OBSERVED_DRIFT) == (state == "changes")
+        batch,total,offset,keyword=drift_batch(result["records"],query,"record",("persona","scope","scope_name","module","view","identity","status","before_status","after_status"),predicate=in_state)
         body += '<section id="record-drift"><div class="section-head"><h2>Change worklist</h2>'
         body += f'<a class="button" href="{url(root,"drift",**common,export="1")}">Export private report JSON</a></div>'
-        body += drift_batch_controls(root,common,"record",total,offset,keyword)
+        change_count = sum(r["status"] in OBSERVED_DRIFT for r in result["records"])
+        body += '<p>Observed changes: '+str(change_count)+' · Coverage and identity gaps: '+str(len(result["records"])-change_count)+'. All observations remain in the private export.</p>'
+        body += drift_batch_controls(root,common,"record",total,offset,keyword,state=state)
         body += table(("Function","Scope","Module","View","Profile","Change",""),[
             tr(e(persona_label(row["persona"])),e(row["scope_name"]),e(module_label(row["module"])),e(pretty(row["view"])),
-               e(row["identity"] or "Collection"),badge(pretty(row["status"])),drift_control(root,common,"record",index,"Compare"))
+               e(row["identity"] or "Collection"),badge(pretty(row["status"])) + (('<small>'+e(pretty(row["before_status"]))+' → '+e(pretty(row["after_status"]))+'</small>') if "before_status" in row and "after_status" in row else ""),drift_control(root,common,"record",index,"Compare"))
             for index,row in batch])
         body += '<p class="note">Missing fields are not explicit defaults. A changed observation is not proof of who changed it or that the configuration was deployed. Captures are not atomic; coverage remains incomplete.</p></section>'
         from .additional_drift_view import additional_drift_panel

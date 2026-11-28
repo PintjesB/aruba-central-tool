@@ -14,7 +14,13 @@ def additional_drift_panel(report, root, name, previous, query, *, binding):
         offset = int(query.get("additional_offset","0"))
     except (TypeError,ValueError):
         raise ValueError("Invalid additional evidence page") from None
-    records = [(i,r) for i,r in enumerate(report["records"]) if not family or r["family"] == family]
+    keyword = query.get("additional_q","")
+    if len(keyword)>200:
+        raise ValueError("Invalid additional evidence search")
+    terms=keyword.casefold().split()
+    records = [(i,r) for i,r in enumerate(report["records"])
+               if (not family or r["family"] == family)
+               and all(term in " ".join(str(r.get(k,"")) for k in ("persona","scope","scope_name","module","view","identity","status","before_status","after_status")).casefold() for term in terms)]
     common = {"snapshot":name,"previous":previous,"confirmed":"yes","binding":binding}
     if offset < 0 or offset % 50 or (offset and offset >= len(records)):
         raise ValueError("Invalid additional evidence page")
@@ -26,9 +32,11 @@ def additional_drift_panel(report, root, name, previous, query, *, binding):
         for f,c in report["counts"].items()])
     body += (f'<form class="filter-bar" method="get" action="{e(root+"drift")}#additional-drift">'
              f'<input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="previous" value="{e(previous)}"><input type="hidden" name="confirmed" value="yes">'
-             +select("additional_family",list(families.items()),family,"Evidence source")+'<button type="submit">Filter observations</button></form>')
+             +select("additional_family",list(families.items()),family,"Evidence source")
+             +f'<label>Search all observations<input name="additional_q" maxlength="200" value="{e(keyword)}"></label>'
+             +'<button type="submit">Filter observations</button></form>')
     listing = [tr(e(families[r["family"]]),e(persona_label(r["persona"])),e(r["scope_name"]),e(module_label(r["module"])),
-                  e(pretty(r["view"])),e(r["identity"] or "Response"),badge(pretty(r["status"])),
+                  e(pretty(r["view"])),e(r["identity"] or "Response"),badge(pretty(r["status"])) + (('<small>'+e(pretty(r["before_status"]))+' → '+e(pretty(r["after_status"]))+'</small>') if "before_status" in r and "after_status" in r else ""),
                   drift_control(root,common,"additional",i,"Compare")) for i,r in records[offset:offset+50]]
     body += table(("Evidence","Function","Scope","Module","View","Profile","Observation",""),listing)
     if records:
@@ -37,5 +45,5 @@ def additional_drift_panel(report, root, name, previous, query, *, binding):
         body += '<p>No changed or newly unqualified observations for this source. Check the coverage counts above.</p>'
     for label,next_offset in (("Previous",offset-50),("Next",offset+50)):
         if 0 <= next_offset < len(records):
-            body += f'<a class="button" href="{url(root,"drift",snapshot=name,previous=previous,confirmed="yes",additional_family=family,additional_offset=next_offset)}#additional-drift">{label}</a> '
+            body += f'<a class="button" href="{url(root,"drift",snapshot=name,previous=previous,confirmed="yes",additional_family=family,additional_offset=next_offset,additional_q=keyword)}#additional-drift">{label}</a> '
     return body+'</section>'
