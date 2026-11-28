@@ -79,3 +79,21 @@ class PolicySequenceTests(unittest.TestCase):
         self.assertTrue(limited["truncated"])
         self.assertEqual(limited["references"][1]["qualified_rule_count"],1)
         self.assertFalse(limited["findings"])
+
+    def test_sequence_target_contexts_explain_unverified_targets_without_inference(self):
+        raw=capture([{"name":"private-name","position":1}])
+        contexts=[("ALL_DEVICE_FUNCTIONS","1"),("OTHER","1"),("CAMPUS_AP","9"),
+                  ("CAMPUS_AP","2"),("CAMPUS_AP","3"),("CAMPUS_AP","1")]
+        data={"unadapted_profiles":{"policy-groups":{"source_views":[
+            {"persona":p,"scope":s,"effective":raw} for p,s in contexts],"library":raw}},
+            "results":{"CAMPUS_AP":{"scopes":[{"id":s,"kind":"site"} for s in ("1","2","3")],
+            "modules":{"policies":{"scope_results":[
+                {"scope":"1","effective_view":{"status":"list_parsed","count_confirmed":True,"profiles":{}}},
+                {"scope":"3","effective_view":{"status":"read_failed"}}]}}}}}
+        reports=policy_sequence_reviews(data)
+        self.assertEqual([r["target_context"] for r in reports],[
+            "unfiltered_function","function_not_collected","scope_not_observed",
+            "policy_view_not_collected","policy_view_unqualified","policy_view_parsed","policy_view_not_collected"])
+        self.assertEqual(reports[5]["references"][0]["status"],"not_observed")
+        self.assertTrue(all(not r["findings"] and not r["safe_to_apply"] for r in reports))
+        self.assertTrue(all(r["references"][0]["status"]=="target_unverified" for r in reports[:5]))

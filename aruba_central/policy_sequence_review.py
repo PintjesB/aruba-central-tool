@@ -95,20 +95,36 @@ def policy_sequence_reviews(bundle):
     from .standard_evidence import conflicting_profiles
     evidence = bundle.get("unadapted_profiles", {}).get("policy-groups", {})
     output = []
+    scopes, views = {}, {}
+    for persona, entry in bundle["results"].items():
+        for source in entry.get("scopes", []):
+            scopes.setdefault((persona, str(source["id"])), source)
+        for row in entry.get("modules", {}).get("policies", {}).get("scope_results", []):
+            views.setdefault((persona, str(row["scope"])), row.get("effective_view", {}))
     for capture in evidence.get("source_views", []):
         persona, scope = capture["persona"], str(capture["scope"])
-        entry = bundle["results"].get(persona, {})
-        source = next((s for s in entry.get("scopes", []) if str(s["id"]) == scope), {})
-        view = next((s.get("effective_view", {}) for s in entry.get("modules", {}).get("policies", {}).get("scope_results", [])
-                     if str(s["scope"]) == scope), {})
+        key = (persona, scope)
+        source = scopes.get(key, {})
+        view = views.get(key, {})
+        context = ("unfiltered_function" if persona == "ALL_DEVICE_FUNCTIONS" else
+                   "function_not_collected" if persona not in bundle["results"] else
+                   "scope_not_observed" if key not in scopes else
+                   "policy_view_not_collected" if key not in views else
+                   "policy_view_unqualified" if view.get("status") != "list_parsed" else
+                   "policy_view_parsed")
         # Unfiltered observations preserve order evidence but cannot establish
         # target policy visibility for a specific function.
         report = compare_sequence(sequence_entries(capture.get("effective", {})), view,
                                   conflicts=conflicting_profiles(bundle,persona,"policies",scope,view))
-        output.append({"persona": persona, "scope": scope, "name": source.get("name") or scope, **report})
+        output.append({"persona": persona, "scope": scope, "name": source.get("name") or scope,
+                       "target_context": context, **report})
     if "library" in evidence:
-        view=bundle.get("library", {}).get("modules", {}).get("policies", {})
+        modules=(bundle.get("library") or {}).get("modules", {})
+        view=modules.get("policies", {})
+        context = ("policy_view_not_collected" if "policies" not in modules else
+                   "policy_view_parsed" if view.get("status") == "list_parsed" else "policy_view_unqualified")
         report = compare_sequence(sequence_entries(evidence["library"]),view,
                                   conflicts=conflicting_profiles(bundle,"Library","policies","",view,side="library"))
-        output.append({"persona": "Library", "scope": "", "name": "Library", **report})
+        output.append({"persona": "Library", "scope": "", "name": "Library",
+                       "target_context": context, **report})
     return output
