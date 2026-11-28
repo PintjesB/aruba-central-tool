@@ -25,7 +25,9 @@ def history_qualification(directory, snapshot, previous, *, repeat=3):
         query={"snapshot":snapshot,"previous":previous,"confirmed":"yes"}
         overview=measure("overview_render",lambda:workspace.drift(query))
         current={"structured_records":len(report["records"]),"profile_groups":len(report["profile_change_groups"]),
-                 "structured_counts":report["counts"],"additional_counts":report["additional_evidence"]["counts"],
+                 "structured_counts":report["counts"],"structured_unavailable_reasons":report["unavailable_reasons"],
+                 "additional_counts":report["additional_evidence"]["counts"],
+                 "additional_noncomparable_reasons":report["additional_evidence"]["noncomparable_reasons"],
                  "additional_record_count":len(report["additional_evidence"]["records"]),
                  "overview_bytes":len(overview.encode("utf-8"))}
         for kind,records in (("group",report["profile_change_groups"]),("record",report["records"]),
