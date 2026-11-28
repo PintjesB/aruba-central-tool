@@ -57,9 +57,9 @@ def reduction_scenario(row):
     """
     count = row["instances"]
     action = row["category"]
+    if action in ("remove_override", "promote_local", "reuse_library") and row["next_step"] == "Evidence blocks preview":
+        return {"count": None, "unit": "definitions", "reason": "Preview blocked by evidence; no reduction estimated."}
     if action == "remove_override":
-        if row["next_step"] == "Evidence blocks preview":
-            return {"count": None, "unit": "definitions", "reason": "Removal preview blocked; no reduction estimated."}
         return {"count": count, "unit": "definitions", "reason": "If all listed local copies can be removed and the inherited definitions remain unchanged."}
     if action == "reuse_library":
         return {"count": count, "unit": "definitions", "reason": "If the existing Library definition can replace every listed local copy; excludes assignment objects."}

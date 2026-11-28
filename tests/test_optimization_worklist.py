@@ -48,6 +48,10 @@ class OptimizationWorklistTests(unittest.TestCase):
         self.assertIsNone(estimate("remove_override", next_step="Evidence blocks preview")["count"])
         self.assertEqual(estimate("promote_local")["count"], 3)
         self.assertEqual(estimate("reuse_library")["count"], 4)
+        for category in ("promote_local", "reuse_library"):
+            blocked = estimate(category, next_step="Evidence blocks preview")
+            self.assertIsNone(blocked["count"])
+            self.assertIn("blocked", blocked["reason"])
         self.assertEqual(estimate("duplicates")["count"], 3)
         self.assertEqual(estimate("duplicates")["unit"], "Library names")
         self.assertIsNone(estimate("ports")["count"])
