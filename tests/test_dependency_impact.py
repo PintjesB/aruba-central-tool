@@ -67,3 +67,17 @@ class ImpactTests(unittest.TestCase):
         self.assertEqual({r["unqualified_edge"]["status"] for r in boundaries},{"conflicting_observation","unresolved"})
         self.assertTrue(all(len(r["resolved_prefix"])==1 for r in boundaries))
         self.assertTrue(dependency_impact(refs,*root,limit=1)["boundary_truncated"])
+
+
+    def test_conditional_tenant_candidates_remain_visible_for_scoped_selection(self):
+        root=("roles","employee")
+        refs=[edge(("wlan-ssids","Office"),root),edge(("authz-policies","policy"),root,scope="NAC",persona="NAC",view="tenant",state="conditional_enforcement_candidate"),
+              edge(("authz-policies","other"),("roles","Other"),scope="NAC",persona="NAC",view="tenant",state="conditional_enforcement_candidate")]
+        for r in refs[1:]:
+            r["source_evidence"]="nac_enforcement"
+        report=dependency_impact(refs,*root,persona="ACCESS_SWITCH",scope="1")
+        self.assertEqual(report["direct"],refs[:1])
+        self.assertEqual(report["conditional_tenant_observations"],refs[1:2])
+        self.assertEqual(len(report["paths"]),1)
+        self.assertEqual(report["paths"][0]["persona"],"ACCESS_SWITCH")
+        self.assertFalse(report["complete"])
