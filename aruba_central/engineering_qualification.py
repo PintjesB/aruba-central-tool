@@ -1,7 +1,7 @@
 """Anonymous qualification of aggregate engineering observations."""
 from .central_tool import refresh_configuration_review
 from .assessment_review import (assessment, SECURITY_REASONS, ACL_REASONS, SEQUENCE_CONTEXTS, SEQUENCE_TARGET_STATES,
-    POLICY_SCHEMA_STATES, ALTERNATIVE_POLICY_CONTEXTS, ASSIGNMENT_FUNCTION_CONTEXTS)
+    POLICY_SCHEMA_STATES, ALTERNATIVE_POLICY_CONTEXTS, ASSIGNMENT_FUNCTION_CONTEXTS, POLICY_BODY_SHAPES, POLICY_LIBRARY_RELATIONS)
 
 # Fixed output keys only. Do not serialize action names, checkpoint data,
 # timestamps, names, identities, values or any raw report structures.
@@ -17,10 +17,13 @@ FIELDS={
                     "unsupported_condition_occurrences","unsupported_acl_predicate_occurrences","unqualified_order",
                     "individual_conflict_groups","structural_security_repetitions","partial_overlap_candidates","reverse_containment_candidates","truncated")
                     + tuple("schema_" + key for key in POLICY_SCHEMA_STATES + ("unknown",))
+                    + tuple("body_shape_" + key for key in POLICY_BODY_SHAPES + ("unknown",))
+                    + tuple("library_relation_" + key for key in POLICY_LIBRARY_RELATIONS)
                     + tuple("security_" + key for key in SECURITY_REASONS)
                     + tuple("acl_" + key for key in ACL_REASONS),
     "policy_sequences":("captures","unqualified_order","unqualified_targets","cross_policy_candidates","qualified_rule_occurrences","unsupported_rule_occurrences","targets_with_unsupported_rules",
-                        "partial_overlap_candidates","conflicting_targets","truncated")
+                        "partial_overlap_candidates","conflicting_targets","truncated","library_preview_captures","library_preview_candidates",
+                        "library_preview_unqualified_targets","library_preview_qualified_targets","library_preview_truncated")
                     + tuple("gap_context_" + key for key in SEQUENCE_CONTEXTS)
                     + tuple("target_" + key for key in SEQUENCE_TARGET_STATES)
                     + tuple("schema_" + key for key in POLICY_SCHEMA_STATES + ("unknown",))
@@ -70,7 +73,11 @@ def reference_identity_patterns(references):
         "rfc3576-server-list", "server-name", "net-service", "net-group",
         "exclude", "role", "policy", "name", "identity", "src-role",
         "default-role", "auth-server-group", "acct-server-group",
-        "object-group-ipv4", "object-group-ipv6"}
+        "object-group-ipv4", "object-group-ipv6", "vlan-id-ranges", "vlan-alias", "allowed-vlan-name",
+        "allowed-vlan-selector","trunk-vlan-ranges","trunk-vlans","trunk-vlan-all","named-vlan",
+        "trunk-native-vlan","wired-access-vlan-id","wired-access-vlan-name","trunk-allowed-vlans",
+        "trunk-allowed-vlan-names","trunk-native-vlan-name","private-vlan-port-type",
+        "rpvst-mstp-interconnect-vlan","mstp-vlans","vlans","vlan-log-state-transitions"}
     modules = set(CONFIG_MODULES)
     known_views = {"effective", "saved", "library"}
     counts = Counter()

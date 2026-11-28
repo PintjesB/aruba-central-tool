@@ -113,6 +113,7 @@ def policy_sequence_reviews(bundle):
                     unfiltered_reads[str(capture["scope"])].append(module_view(raw, "name"))
     library_view = (bundle.get("library") or {}).get("modules", {}).get("policies", {})
     library_conflicts = conflicting_profiles(bundle,"Library","policies","",library_view,side="library")
+    library_previews = {}
     for persona, entry in bundle["results"].items():
         for source in entry.get("scopes", []):
             scopes.setdefault((persona, str(source["id"])), source)
@@ -157,9 +158,12 @@ def policy_sequence_reviews(bundle):
         # and exclusively Library bodies. Never mix Library and effective rules
         # or replace an unresolved scope target with a definition.
         if report["status"] == "order_observed" and any(ref["status"] != "rules_observed" for ref in report["references"]):
-            preview = compare_sequence({"status": report["status"], "entries": report["entries"]},
-                                       library_view, conflicts=library_conflicts)
-            report["library_preview"] = {**preview, "context": "library_definition_only"}
+            signature = canonical(report["entries"])
+            if signature not in library_previews:
+                preview = compare_sequence({"status": report["status"], "entries": report["entries"]},
+                                           library_view, conflicts=library_conflicts)
+                library_previews[signature] = {**preview, "context": "library_definition_only"}
+            report["library_preview"] = library_previews[signature]
         output.append({"persona": persona, "scope": scope, "name": source.get("name") or scope,
                        "target_context": context, **report})
     if "library" in evidence:

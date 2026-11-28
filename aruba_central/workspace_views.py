@@ -1001,6 +1001,10 @@ def policy_rule_detail(finding):
         detail += '<h3>Contradictory individual policy evidence</h3>' + raw(finding["individual_conflict"])
     if finding.get("schema_state"):
         detail += '<p>Policy schema: '+e(pretty(finding["schema_state"]))+'</p>'
+    if finding.get("body_shape"):
+        detail += '<p>Captured body shape: '+e(pretty(finding["body_shape"]))+'</p>'
+    if finding.get("library_body_relation"):
+        detail += '<p>Library body comparison: '+e(pretty(finding["library_body_relation"]))+'</p><p>Library values do not fill missing effective configuration fields.</p>'
     if finding.get("unsupported_reasons"):
         detail += '<h3>Unsupported rule observations</h3>'+table(("Reason","Rules"),[
             tr(e(pretty(reason)),str(count)) for reason,count in sorted(finding["unsupported_reasons"].items())])
@@ -1047,6 +1051,9 @@ def policy_sequence_detail(report):
         detail += '<p class="note">Comparison limit reached; more relationships may exist.</p>'
     if report["status"] != "order_observed":
         detail += raw(report["entries"], "Unqualified entries")
+    preview = report.get("library_preview")
+    if preview is not None:
+        detail += '<details><summary>Library-only definition preview · '+str(len(preview["findings"]))+' candidate overlaps</summary><p>This is a hypothetical comparison using the observed order and Library definitions only. It is not an effective device policy and cannot establish deployment or actual behavior.</p>'+policy_sequence_detail({**preview,"target_context":"library_definition_only"})+'</details>'
     return detail
 
 
@@ -1263,7 +1270,7 @@ def engineering_view(workspace, query):
             observations = finding["findings"]
             rows.append(tr(e(module_label(finding["module"])), e(finding["identity"]), e(persona_label(finding["persona"])),
                            str(len(finding["locations"])), str(finding["rules"]), str(finding["unsupported_rules"]),
-                           str(len(observations)), badge(pretty(finding["status"])),
+                           str(len(observations)), badge(pretty(finding["status"])) + ('<small>'+e(pretty(finding["body_shape"]))+'</small>' if finding.get("body_shape") and finding["status"]=="rule_schema_unqualified" else ""),
                            policy_control("rules", index, "Review rules")))
     panel("rules", "Policy rule review", "Inspect duplicate conditions, differing actions, partial intersections and broader matches within captured ordered policies. Role ACLs also compare literal IPv4 and IPv6 destinations within the same explicit source role and VRF. Unsupported matches and missing order remain unqualified; do not treat these as proven unreachable rules.",
           ("Module", "Policy", "Function", "Locations", "Rules", "Unsupported", "Observations", "Evidence", ""), rows, counts["rules"])
@@ -1274,8 +1281,9 @@ def engineering_view(workspace, query):
                                     e(pretty(report.get("target_context","unknown"))),
                                     str(len(report["entries"])), str(sum(v["status"] != "rules_observed" for v in report["references"])),
                                     str(sum(v.get("unsupported_rule_count", 0) > 0 for v in report["references"])),
-                                    str(len(report["findings"])), policy_control("sequences", index, "Review order")))
-        section = '<section><h2>Policy group evaluation order</h2><p>Compare only policy bodies visible in the same captured scope and function. Missing policy definitions or ambiguous order are not interpreted.</p>' + table(("Scope", "Function", "Sequence evidence", "Target context", "Entries", "Unqualified targets", "Targets with unsupported rules", "Cross-policy candidates", ""), sequence_rows, search=True) + '</section>'
+                                    str(len(report["findings"])),
+                                    str(len(report["library_preview"]["findings"])) if "library_preview" in report else "—", policy_control("sequences", index, "Review order")))
+        section = '<section><h2>Policy group evaluation order</h2><p>Compare only policy bodies visible in the same captured scope and function. Missing policy definitions or ambiguous order are not interpreted.</p>' + table(("Scope", "Function", "Sequence evidence", "Target context", "Entries", "Unqualified targets", "Targets with unsupported rules", "Effective candidates", "Library-only candidates", ""), sequence_rows, search=True) + '</section>'
         key, label, count, content = panels[-1]
         panels[-1] = (key, label, count, content + section)
     rows = []
