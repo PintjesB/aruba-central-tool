@@ -84,3 +84,14 @@ class PolicyRuleTests(unittest.TestCase):
         self.assertEqual(pairs[1,2]["status"],"partial_overlap_different_action")
         self.assertEqual(pairs[1,3]["condition_relationship"],"later_contains_earlier")
         self.assertFalse(result["safe_to_apply"])
+
+
+    def test_unsupported_rule_reasons_reconcile_and_action_must_be_qualified(self):
+        malformed=rule(2)
+        malformed["action"]={"type":42}
+        extra=rule(3,**{"time-profile":"office"})
+        result=rule_review("policies",policy([rule(1),malformed,extra]))
+        self.assertEqual(result["qualified_match_rules"],1)
+        self.assertEqual(result["unsupported_reasons"],{"action_unqualified":1,"additional_rule_fields":1})
+        self.assertEqual(sum(result["unsupported_reasons"].values()),result["unsupported_rules"])
+        self.assertEqual(result["findings"],[])
