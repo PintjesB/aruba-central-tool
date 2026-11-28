@@ -48,3 +48,52 @@ class PlanVerificationTests(unittest.TestCase):
             path.write_text(path.read_text()+" ")
             with self.assertRaises(ValueError):
                 verify_plan(workspace,manifest,after_name,confirmed=True)
+
+
+    def test_browser_import_sends_only_manifest_and_renders_results(self):
+        import shutil
+        from http.server import ThreadingHTTPServer
+        from threading import Thread
+        from urllib.parse import urlencode
+        from aruba_central.config_app import handler_for
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            self.skipTest("Browser test dependency unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            before_name,after_name="config-audit-before.json","config-audit-after.json"
+            for name,time in ((before_name,"2026-01-01T00:00:00+00:00"),(after_name,"2026-01-02T00:00:00+00:00")):
+                data=fixture()
+                data.update(captured_at=time,region="https://de1.example",inventory=[{"inventory":{"serial":"A"}}])
+                (Path(directory)/name).write_text(json.dumps(data))
+            workspace=Workspace(directory)
+            before=workspace.reviewed_snapshot(before_name)
+            proposal=next(f for f in workspace.consolidation_snapshot(before) if f["action"]=="promote_local")
+            manifest={"schema":1,"kind":"consolidation_selection","snapshot":before_name,
+                      "snapshot_binding":snapshot_binding(workspace,before_name,before),
+                      "selections":[{"id":proposal["id"],"destination":"library"}]}
+            server=ThreadingHTTPServer(("127.0.0.1",0),handler_for(workspace))
+            thread=Thread(target=server.serve_forever,daemon=True)
+            thread.start()
+            try:
+                with sync_playwright() as playwright:
+                    browser=playwright.chromium.launch(executable_path=shutil.which("google-chrome") or shutil.which("chromium"),args=["--no-sandbox"])
+                    try:
+                        tab=browser.new_page()
+                        url=f"http://127.0.0.1:{server.server_port}/{workspace.token}/remediation?"+urlencode({"snapshot":after_name})
+                        tab.goto(url)
+                        form=tab.locator("#verify-exported-plan")
+                        form.locator("input[type=file]").set_input_files({"name":"preview.json","mimeType":"application/json","buffer":json.dumps({"selection_manifest":manifest,"recommendations":["untrusted-private-marker"]}).encode()})
+                        form.locator("input[name=confirmed]").check()
+                        with tab.expect_request(lambda request:request.method=="POST" and request.url.endswith("/verify-plan")) as sent:
+                            form.get_by_role("button",name="Verify entire plan").click()
+                        self.assertNotIn("untrusted-private-marker",sent.value.post_data)
+                        tab.get_by_role("heading",name="Plan verification results").wait_for()
+                        self.assertIn("Reopen individual verification",tab.locator("body").inner_text())
+                        self.assertNotIn("untrusted-private-marker",tab.locator("body").inner_text())
+                    finally:
+                        browser.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()

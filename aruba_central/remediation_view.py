@@ -15,6 +15,8 @@ def remediation_view(workspace, query):
     previous = query.get("previous", "")
     confirmed = query.get("confirmed") == "yes"
     body = intro("Remediation verification", "Compare an earlier consolidation opportunity with a newer capture after manual changes.", picker)
+    from .plan_verification_view import plan_form
+    body += plan_form(workspace, root, name)
     others = [(p.name, p.name) for p in audit_files(workspace.directory) if p.name != name]
     body += (f'<section><form class="filter-bar" method="get" action="{e(root + "remediation")}">'
              f'<input type="hidden" name="snapshot" value="{e(name)}">'
