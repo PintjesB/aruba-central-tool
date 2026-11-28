@@ -307,7 +307,7 @@ def advisor_view(workspace, query):
         placement = e(f["target"] if action == "remove_override" else ACTION_GUIDE[action][2])
         if action == "promote_local":
             choices = [("", "Choose destination for review"), ("library", "Library / exact source scopes")]
-            choices += [(p["scope"], f'{pretty(p["kind"])} / {p["name"]} · {len(p["additional_devices"])} extra, {len(p["unknown_membership"])} unknown')
+            choices += [(p["scope"], f'{pretty(p["kind"])} / {p["name"]} · {len(p["additional_devices"])} extra ({len(p["additional_not_confirmed_matching"])} not confirmed matching), {len(p["unknown_membership"])} unknown')
                         for p in f["placement_options"]]
             placement = '<select class="destination" aria-label="Proposed destination">' + "".join(
                 f'<option value="{e(key)}">{e(value)}</option>' for key, value in choices) + '</select>'
@@ -316,7 +316,7 @@ def advisor_view(workspace, query):
             device_rows = [tr(e(d["name"]), status(k)) for k in ("matching", "different", "absent", "unknown") for d in observed.get(k, [])]
             scope_rows = [tr(e(s["name"]), e(pretty(s["kind"])), status(s["effective"])) for s in f["scope_references"]]
             placement_rows = [tr(e(p["name"]), e(pretty(p["kind"])), str(len(p["intended_devices"])),
-                               str(len(p["additional_devices"])), str(len(p["unknown_membership"])), status(p["effective"]))
+                               str(len(p["additional_devices"])), str(len(p["additional_not_confirmed_matching"])), str(len(p["unknown_membership"])), status(p["effective"]))
                               for p in f["placement_options"]]
             reference_label = "Library" if action == "reuse_library" else "Nearest inherited" if action == "remove_override" and f["preview_selectable"] else "Global" if action in ("remove_override", "default_review") else "Reference"
             comparison = ""
@@ -359,7 +359,7 @@ def advisor_view(workspace, query):
             details = (
                 f'<div class="review-decision"><div><strong>{e(f["target"] if action == "remove_override" else ACTION_GUIDE[action][2])}</strong><p>{e(ACTION_GUIDE[action][1])}</p></div></div>'
                 + fallback_html + comparison + dependency_html
-                + ('<h3>Destination impact</h3>' + table(("Destination", "Type", "Intended", "Additional", "Unknown", "Current"), placement_rows) if placement_rows else "")
+                + ('<h3>Destination impact</h3>' + table(("Destination", "Type", "Intended", "Additional", "Additional not confirmed matching", "Unknown", "Current"), placement_rows) if placement_rows else "")
                 + '<h3>Proposed workflow</h3>' + list_items(f["steps"], ordered=True)
                 + '<h3>Validation required</h3>' + list_items(f["blockers"])
                 + '<details><summary>Affected scopes and devices</summary>' + source_table
@@ -646,7 +646,22 @@ function preview(){
   if(f.action==='remove_override'){
    const fallbacks=el('ul','');for(const x of f.fallbacks||[])fallbacks.append(el('li',x.name+' → '+(x.source?.name||'Unknown source')));after.append(fallbacks);
   }else if(f.action==='promote_local'&&f.selected_destination&&f.selected_destination.kind!=='library'){
-   after.append(el('p',f.selected_destination.additional_devices.length+' additional recipients; '+f.selected_destination.unknown_membership.length+' uncertain members.'));
+   const dest=f.selected_destination;
+   after.append(el('p',dest.additional_devices.length+' additional recipients; '+dest.unknown_membership.length+' uncertain members.'));
+   const notMatching=dest.additional_not_confirmed_matching||[];
+   if(notMatching.length||dest.unknown_membership.length){
+    const caution=el('div','');caution.className='preview-decision';
+    caution.append(el('strong','Destination impact requires review'),
+     el('p',notMatching.length+' additional recipients are not confirmed to have matching effective settings. This review choice may extend the configuration beyond the intended recipients.'));
+    const list=el('ul','');
+    for(const d of notMatching)list.append(el('li',d.name+' · not confirmed matching'));
+    for(const d of dest.unknown_membership)list.append(el('li',d.name+' · uncertain membership'));
+    caution.append(list);after.append(caution);
+   }else if(!dest.additional_devices.length){
+    after.append(el('p','Exact observed recipient set. Effective behavior still requires fresh verification.'));
+   }else{
+    after.append(el('p','Additional recipients have matching observed settings. This does not establish safe deployment.'));
+   }
   }
   const goal=el('p','Expected goal: retain effective settings at intended recipients. Not a simulated or verified outcome.');
   flow.append(before,after);item.append(flow,goal);
