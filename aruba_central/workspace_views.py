@@ -1024,6 +1024,23 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
             tr(e(module_label(source_module)),e(module_label(target_module)),e(pattern),str(count),
                f'<a href="{url(root,"advanced",**{**filters,"ref_source":source_module,"ref_module":target_module,"ref_field":pattern,"ref_state":"unresolved","ref_context":"no_positive_context","ref_target_kind":"scalar"})}">Inspect field</a>')
             for (source_module,target_module,pattern),count in sorted(named_gaps.items(),key=lambda item:(-item[1],item[0]))[:50]])+'</details>'
+    if named_gaps and workflow=="references" and not exact_target:
+        target_groups={}
+        for _,r in selected:
+            if r["status"]!="unresolved" or r.get("target") is None or positive_contexts(r):
+                continue
+            key=(r["target_module"],r["target"])
+            group=target_groups.setdefault(key,{"count":0,"scopes":set(),"reasons":Counter(),"sources":set()})
+            group["count"]+=1
+            group["scopes"].add((r["persona"],r["scope"]))
+            group["reasons"][r.get("target_evidence","unknown")]+=1
+            group["sources"].add(r["source_module"])
+        controls += '<details open><summary>Distinct named targets without positive alternative evidence ('+str(len(target_groups))+')</summary><p>Grouped by exact module and target identity, across captured scopes and views. A shared identity is not proof of shared deployment or applicability.</p>'+table(("Target module","Exact target","Observations","Function/scope contexts","Source modules","Evidence reasons",""),[
+            tr(e(module_label(module)),e(identity),str(group["count"]),str(len(group["scopes"])),
+               e(", ".join(module_label(m) for m in sorted(group["sources"]))),
+               e(", ".join(pretty(reason)+": "+str(count) for reason,count in sorted(group["reasons"].items()))),
+               f'<a href="{url(root,"advanced",**{**filters,"ref_module":module,"ref_target":identity,"ref_target_kind":"scalar","ref_state":"unresolved","ref_context":"no_positive_context"})}">Review target</a>')
+            for (module,identity),group in sorted(target_groups.items(),key=lambda item:(-item[1]["count"],item[0]))[:50]])+'</details>'
     rows = []
     for index, r in selected[offset:offset+50]:
         detail_url = url(root, "advanced", **params, reference_detail=index, binding=binding)
