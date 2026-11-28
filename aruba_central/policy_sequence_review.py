@@ -5,7 +5,7 @@ https://developer.arubanetworks.com/new-central-config/reference/replacepolicygr
 The resultant policy still depends on role and device applicability.
 """
 from .central_tool import canonical, profile_body
-from .policy_rule_review import condition_relationship, simple_match
+from .policy_rule_review import condition_relationship, simple_match, unsupported_security_reason
 
 
 def sequence_entries(evidence):
@@ -60,15 +60,18 @@ def compare_sequence(parsed, policy_view, limit=1000, *, conflicts=None):
         status = ("rules_observed" if rules is not None else "rule_schema_unqualified" if isinstance(body, dict)
                   else "not_observed" if policy_view.get("status") == "list_parsed" and policy_view.get("count_confirmed") is True
                   else "target_unverified")
-        result["references"].append({"name": name, "position": entry["position"], "status": status})
+        reference = {"name": name, "position": entry["position"], "status": status}
+        result["references"].append(reference)
         if rules is None:
             continue
+        qualified = [(rule, simple_match(rule)) for rule in rules if unsupported_security_reason(rule) is None]
+        reference.update({"rule_count": len(rules), "qualified_rule_count": len(qualified),
+                          "unsupported_rule_count": len(rules) - len(qualified)})
+        if result["truncated"]:
+            continue
         candidates = []
-        for rule in rules:
-            match = simple_match(rule)
-            action = rule.get("action")
-            if not match or not isinstance(action, dict) or not action.get("type"):
-                continue
+        for rule, match in qualified:
+            action = rule["action"]
             candidates.append((name, entry["position"], rule, match))
             for prev_name, prev_position, prev_rule, prev_match in earlier:
                 comparisons += 1
