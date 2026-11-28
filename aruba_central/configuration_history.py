@@ -206,6 +206,11 @@ def reference_compliance(bundle, persona, module, reference, target_scope, *, ba
 
     current_views = {name: effective_views(entry, name) for name in modules}
     expected_views = {name: effective_views(baseline_entry, name).get(reference, {}) for name in modules}
+    from .standard_evidence import conflicting_profiles
+    reference_bundle = baseline if historical else bundle
+    reference_conflicts = {name:conflicting_profiles(reference_bundle,persona,name,reference,expected_views[name],
+                           {r["identity"] for r in field_rules if r["module"]==name} if field_rules is not None else None)
+                           for name in modules}
     findings = []
     for sid in sorted(targets):
         changes = []
@@ -213,15 +218,27 @@ def reference_compliance(bundle, persona, module, reference, target_scope, *, ba
         for name in modules:
             expected = expected_views[name]
             actual = current_views[name].get(sid, {})
+            selected_rules = [rule for rule in field_rules if rule["module"] == name] if field_rules is not None else None
+            actual_conflicts = conflicting_profiles(bundle,persona,name,sid,actual,
+                               {r["identity"] for r in selected_rules} if selected_rules is not None else None)
+            conflicts = reference_conflicts[name].keys() | actual_conflicts.keys()
+            if conflicts:
+                def exclude(view):
+                    return {**view,"profiles":{k:v for k,v in view.get("profiles",{}).items() if k not in conflicts}}
+                expected,actual=exclude(expected),exclude(actual)
             if expected.get("status") != "list_parsed":
                 observations = [{"identity": "", "status": "reference_unavailable"}]
             elif not expected.get("profiles") and not expected.get("count_confirmed"):
                 observations = [{"identity": "", "status": "reference_unavailable"}]
             elif field_rules is not None:
                 from .field_standards import compare_fields
-                observations = compare_fields(expected, actual, [rule for rule in field_rules if rule["module"] == name])
+                observations = compare_fields(expected, actual, [rule for rule in selected_rules if rule["identity"] not in conflicts])
             else:
                 observations = view_changes(expected, actual, include_source=False)
+            observations.extend({"identity":identity,"status":"individual_evidence_conflict",
+                                 "reference_conflict":reference_conflicts[name].get(identity),
+                                 "target_conflict":actual_conflicts.get(identity)}
+                                for identity in sorted(conflicts))
             for change in observations:
                 if change["status"] == "changed" and all(
                         d["kind"] in ("missing_local", "missing_reference", "null_vs_value")
