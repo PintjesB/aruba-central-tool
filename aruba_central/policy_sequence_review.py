@@ -5,7 +5,7 @@ https://developer.arubanetworks.com/new-central-config/reference/replacepolicygr
 The resultant policy still depends on role and device applicability.
 """
 from .central_tool import canonical, profile_body
-from .policy_rule_review import covers, simple_match
+from .policy_rule_review import condition_relationship, simple_match
 
 
 def sequence_entries(evidence):
@@ -75,8 +75,9 @@ def compare_sequence(parsed, policy_view, limit=1000, *, conflicts=None):
                 if comparisons > 100000 or len(result["findings"]) >= limit:
                     result["truncated"] = True
                     break
-                if covers(prev_match, match):
-                    result["findings"].append({"earlier_policy": prev_name, "earlier_policy_position": prev_position,
+                relationship=condition_relationship(prev_match,match)
+                if relationship is not None:
+                    result["findings"].append({"condition_relationship":relationship,"earlier_policy": prev_name, "earlier_policy_position": prev_position,
                          "earlier_rule": prev_rule, "later_policy": name, "later_policy_position": entry["position"],
                          "later_rule": rule, "same_action": canonical(prev_rule["action"]) == canonical(action),
                          "status": "candidate_cross_policy_overlap"})

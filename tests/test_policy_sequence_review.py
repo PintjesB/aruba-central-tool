@@ -52,3 +52,12 @@ class PolicySequenceTests(unittest.TestCase):
         result=policy_sequence_reviews(data)[0]
         self.assertEqual([r["status"] for r in result["references"]],["individual_evidence_conflict","rules_observed"])
         self.assertFalse(result["findings"])
+
+
+    def test_cross_policy_partial_overlap_distinguished_from_full_containment(self):
+        parsed=sequence_entries(capture([{"name":"a","position":1},{"name":"b","position":2}]))
+        view={"status":"list_parsed","profiles":{"a":policy([rule(1,source="guest")]),
+              "b":policy([rule(1,source=None,destination="staff",action="OTHER_ACTION")])}}
+        result=compare_sequence(parsed,view)
+        self.assertEqual(result["findings"][0]["condition_relationship"],"partial_overlap")
+        self.assertFalse(result["findings"][0]["same_action"])

@@ -33,6 +33,19 @@ def covers(earlier, later):
     return all(a == ("any",) or a == b for a, b in zip(earlier, later))
 
 
+def condition_relationship(earlier,later):
+    """Only compare exact qualified role/any predicates; no role hierarchy."""
+    if earlier==later:
+        return "same_condition"
+    if covers(earlier,later):
+        return "earlier_contains_later"
+    if covers(later,earlier):
+        return "later_contains_earlier"
+    if all(a==b or a==("any",) or b==("any",) for a,b in zip(earlier,later)):
+        return "partial_overlap"
+    return None
+
+
 def rule_review(module, body, limit=2000):
     result = {"findings": [], "rules": 0, "qualified_match_rules": 0, "unsupported_rules": 0,
               "order_verified": False, "truncated": False, "safe_to_apply": False}
@@ -95,13 +108,18 @@ def rule_review(module, body, limit=2000):
             earlier = ordered[j]
             if not matches[j] or not isinstance(earlier.get("action"), dict) or not earlier["action"].get("type"):
                 continue
-            if not covers(matches[j], matches[i]):
+            relationship=condition_relationship(matches[j],matches[i])
+            if relationship is None:
                 continue
-            same_condition = matches[j] == matches[i]
             same_action = canonical(earlier["action"]) == canonical(later["action"])
+            if relationship=="same_condition":
+                status="duplicate_condition_same_action" if same_action else "same_condition_different_action"
+            elif relationship=="earlier_contains_later":
+                status="broader_earlier_same_action" if same_action else "broader_earlier_different_action"
+            else:
+                status=relationship+("_same_action" if same_action else "_different_action")
             result["findings"].append({
-                "status": ("duplicate_condition_same_action" if same_action else "same_condition_different_action")
-                          if same_condition else ("broader_earlier_same_action" if same_action else "broader_earlier_different_action"),
+                "status":status,"condition_relationship":relationship,
                 "earlier_position": earlier["position"], "later_position": later["position"],
                 "earlier": earlier, "later": later})
     result["status"] = "captured_order_review"
