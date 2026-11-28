@@ -42,7 +42,11 @@ def qualification_suite(directory, snapshot=None, *, repeat=3, executable=None, 
 
     performance = benchmark(directory, selected, repeat=repeat, ui=True)
     unchanged()
-    qualification = keyed_qualification(read_audit(Path(directory), selected))
+    from .engineering_qualification import engineering_qualification
+    capture=read_audit(Path(directory),selected)
+    qualification = keyed_qualification(capture)
+    engineering=engineering_qualification(capture)
+    del capture
     unchanged()
     planner = planner_qualification(directory, selected)
     unchanged()
@@ -59,6 +63,7 @@ def qualification_suite(directory, snapshot=None, *, repeat=3, executable=None, 
     return {"schema": 1, "kind": "anonymous_offline_qualification_suite",
             "central_api_requests": 0, "same_capture_verified": True,
             "performance": performance, "qualification": qualification, "planner": planner, "browser": browser,
+            "engineering":engineering,
             **({"history": history, "same_capture_pair_verified": True} if history is not None else {})}
 
 
