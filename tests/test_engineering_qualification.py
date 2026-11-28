@@ -182,3 +182,21 @@ class EngineeringQualificationTests(unittest.TestCase):
         report=reference_absence_patterns(refs)
         self.assertEqual(sum(r["observations"] for r in report),93)
         self.assertNotIn("private",json.dumps(report))
+
+    def test_conditional_preview_and_distinct_library_candidates_do_not_inflate_effective_findings(self):
+        from aruba_central.assessment_review import assessment
+        from test_consolidation import fixture
+        preview={"order_verified":True,"rules":2,"qualified_match_rules":2,"findings":[{"private":"body"}],"truncated":False}
+        rule={"findings":[],"unsupported_rules":0,"status":"rule_schema_unqualified","order_verified":False,
+              "truncated":False,"module":"policies","conditional_security_preview":preview}
+        ref={"status":"rule_schema_unqualified","conditional_security_rule_count":2,"conditional_security_predicate_count":2}
+        seq={"status":"order_observed","references":[ref],"findings":[],"truncated":False,
+             "library_preview":{"findings":[{"private":"body"}],"references":[ref],"truncated":False}}
+        report=assessment(fixture(),rules=[rule],sequences=[seq,seq])
+        self.assertEqual(report["policy_rules"]["conditional_preview_candidates"],1)
+        self.assertEqual(report["policy_rules"]["observations"],0)
+        self.assertEqual(report["policy_sequences"]["library_preview_candidates"],2)
+        self.assertEqual(report["policy_sequences"]["library_preview_distinct_candidate_bodies"],1)
+        self.assertEqual(report["policy_sequences"]["conditional_effective_targets"],2)
+        self.assertEqual(report["policy_sequences"]["conditional_library_predicates"],4)
+        self.assertEqual(report["policy_sequences"]["cross_policy_candidates"],0)
