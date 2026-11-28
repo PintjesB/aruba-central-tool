@@ -120,3 +120,22 @@ class EngineeringQualificationTests(unittest.TestCase):
         self.assertEqual(counts["policy_sequences"]["alternative_library_definition"],1)
         self.assertEqual(counts["policy_sequences"]["alternative_other_function_same_scope"],0)
         self.assertNotIn("private-marker",json.dumps(counts))
+
+    def test_library_preview_counts_remain_separate_from_effective_candidates(self):
+        from aruba_central.assessment_review import assessment
+        from test_consolidation import fixture
+        rules=[{"findings":[],"unsupported_rules":0,"status":"rule_schema_unqualified","order_verified":False,
+                "truncated":False,"module":"policies","body_shape":"identity_only","library_body_relation":"different_body"}]
+        sequences=[{"status":"order_observed","target_context":"unfiltered_function","references":[{"status":"target_unverified"}],
+                    "findings":[],"truncated":False,"library_preview":{"findings":[{"private":"marker"}],"truncated":False,
+                    "references":[{"status":"rules_observed"},{"status":"rule_schema_unqualified"}]}}]
+        report=assessment(fixture(),rules=rules,sequences=sequences)
+        with patch("aruba_central.engineering_qualification.refresh_configuration_review",return_value={}),patch("aruba_central.engineering_qualification.assessment",return_value=report):
+            counts=engineering_qualification({})["counts"]
+        self.assertEqual(counts["policy_rules"]["body_shape_identity_only"],1)
+        self.assertEqual(counts["policy_rules"]["library_relation_different_body"],1)
+        self.assertEqual(counts["policy_sequences"]["cross_policy_candidates"],0)
+        self.assertEqual(counts["policy_sequences"]["library_preview_candidates"],1)
+        self.assertEqual(counts["policy_sequences"]["library_preview_qualified_targets"],1)
+        self.assertEqual(counts["policy_sequences"]["library_preview_unqualified_targets"],1)
+        self.assertNotIn("private",json.dumps(counts))
