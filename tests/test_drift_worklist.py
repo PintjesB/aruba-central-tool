@@ -41,3 +41,28 @@ class DriftWorklistTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     workspace.drift({**query,"detail":"record","index":str(idx),"binding":binding})
                 self.assertEqual(compare.call_count,2)
+
+
+    def test_observed_changes_first_and_gap_filter_retains_exact_details(self):
+        with tempfile.TemporaryDirectory() as directory:
+            names=["config-audit-before.json","config-audit-after.json"]
+            for name,value in zip(names,["old","new"]):
+                data=snapshot(value)
+                data["results"]["ACCESS_SWITCH"]["modules"]["dns"]={"scope_results":[
+                    {"scope":"4","scope_kind":"device","local_view":{"status":"request_rejected"},
+                     "effective_view":{"status":"request_rejected"}}]}
+                data["unadapted_profiles"]={"example":{"source_views":[
+                    {"persona":"ACCESS_SWITCH","scope":"4","effective":{"status":"response_received","raw":{"value":value}}}]}}
+                (Path(directory)/name).write_text(json.dumps(data))
+            w=Workspace(directory)
+            query={"snapshot":names[1],"previous":names[0],"confirmed":"yes"}
+            html=w.drift(query)
+            self.assertIn("Observed changes: 3",html)
+            self.assertNotIn("Request rejected → Request rejected",html)
+            gaps=w.drift({**query,"record_state":"gaps"})
+            self.assertIn("Request rejected → Request rejected",gaps)
+            self.assertIn("Showing 1–2 of 2",gaps)
+            additional=w.drift({**query,"additional_family":"supplemental","additional_q":"no-match"})
+            self.assertIn("No changed or newly unqualified observations for this source",additional)
+            with self.assertRaises(ValueError):
+                w.drift({**query,"record_state":"invalid"})
