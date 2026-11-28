@@ -5,7 +5,7 @@ https://arubanetworking.hpe.com/techdocs/VSG/docs/002-central/central-040-policy
 https://developer.arubanetworks.com/new-central/docs/wlan-config-open-ssid
 Never claim that a captured policy has the same resultant device behavior.
 """
-from collections import defaultdict
+from collections import defaultdict, Counter
 from .central_tool import canonical, profile_body
 
 
@@ -46,9 +46,31 @@ def condition_relationship(earlier,later):
     return None
 
 
+def unsupported_security_reason(rule):
+    if not isinstance(rule,dict):
+        return "rule_not_object"
+    if set(rule)-{"position","description","condition","action"}:
+        return "additional_rule_fields"
+    condition=rule.get("condition")
+    if not isinstance(condition,dict):
+        return "condition_not_object"
+    if set(condition)!={"type","rule-type","source","destination"}:
+        return "unsupported_condition_fields"
+    if condition["type"]!="CONDITION_DEFAULT":
+        return "unsupported_condition_type"
+    if condition["rule-type"]!="RULE_ANY":
+        return "unsupported_rule_type"
+    if not address(condition["source"]) or not address(condition["destination"]):
+        return "unsupported_address_shape"
+    action=rule.get("action")
+    if not isinstance(action,dict) or not isinstance(action.get("type"),str) or not action["type"]:
+        return "action_unqualified"
+    return None
+
+
 def rule_review(module, body, limit=2000):
     result = {"findings": [], "rules": 0, "qualified_match_rules": 0, "unsupported_rules": 0,
-              "order_verified": False, "truncated": False, "safe_to_apply": False}
+              "order_verified": False, "truncated": False, "safe_to_apply": False,"unsupported_reasons":{}}
     if module == "role-acls":
         rules = body.get("rules")
         if not isinstance(rules, list):
@@ -74,6 +96,9 @@ def rule_review(module, body, limit=2000):
         result["findings"].extend(semantic.pop("findings"))
         semantic["truncated"] |= result["truncated"]
         result.update(semantic)
+        if result["unsupported_rules"]:
+            reason="acl_order_or_family_unqualified" if not result["order_verified"] else "acl_predicate_unqualified"
+            result["unsupported_reasons"]={reason:result["unsupported_rules"]}
         result["status"] = "literal_acl_prefix_review" if result["order_verified"] else "structural_acl_review"
         return result
     security = body.get("security-policy")
@@ -88,10 +113,14 @@ def rule_review(module, body, limit=2000):
     if any(type(p) is not int or p < 0 for p in positions) or len(set(positions)) != len(positions):
         result["status"] = "rule_order_unqualified"
         result["unsupported_rules"] = len(rules)
+        if rules:
+            result["unsupported_reasons"]={"security_order_unqualified":len(rules)}
         return result
     result["order_verified"] = True
     ordered = sorted(rules, key=lambda r: r["position"])
-    matches = [simple_match(r) for r in ordered]
+    reasons=[unsupported_security_reason(r) for r in ordered]
+    result["unsupported_reasons"]=dict(Counter(reason for reason in reasons if reason is not None))
+    matches = [simple_match(r) if reason is None else None for r,reason in zip(ordered,reasons)]
     result["qualified_match_rules"] = sum(m is not None for m in matches)
     result["unsupported_rules"] = len(rules) - result["qualified_match_rules"]
     # Bound comparisons for unusually large customer policy lists. Never hide truncation.
