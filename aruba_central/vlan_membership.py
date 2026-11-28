@@ -73,3 +73,9 @@ def target_matches(ref, module, identity):
     if not isinstance(identity,str) or parse_reference_ids(identity)!={identity}:
         return False
     return any(low<=int(identity)<=high for low,high in ref["target_member_ranges"])
+
+def target_label(ref):
+    """Do not present exact numeric membership as an unknown identity."""
+    if ref.get("target_member_ranges"):
+        return str(ref["target_member_count"])+" VLAN set members"
+    return str(ref["target"]) if ref.get("target") is not None else "Unknown"
