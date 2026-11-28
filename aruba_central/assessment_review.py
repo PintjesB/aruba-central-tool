@@ -86,6 +86,15 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
         else:
             continue
         reference_reasons[reason]+=1
+    reference_contexts = ("library_definition","other_function_same_scope","same_site_observation")
+    reference_alternatives = Counter()
+    for ref in engineering["references"]:
+        if ref["status"] != "unresolved" or ref.get("target") is None or ref.get("source_evidence") == "nac_enforcement":
+            continue
+        contexts = {obs.get("context") for obs in ref.get("target_alternative_observations",[])
+                    if obs.get("status") == "identity_observed" and obs.get("context") in reference_contexts}
+        reference_alternatives.update(contexts)
+        reference_alternatives["any" if contexts else "none"] += 1
     scope_reasons=Counter(row.get("scope_resolution","unknown") for row in assignments["rows"] if not row["scope_resolved"])
     function_contexts = Counter(row.get("function_context") if row.get("function_context") in ASSIGNMENT_FUNCTION_CONTEXTS else "unknown"
                                 for row in assignments["rows"] if not row["scope_resolved"])
@@ -108,6 +117,7 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "reference_target_view_unqualified": sum(r.get("target_evidence") == "target_view_unqualified" for r in engineering["references"]),
                 "reference_target_count_confirmed_absence": sum(r.get("target_evidence") == "count_confirmed_absence" for r in engineering["references"]),
                 "unresolved_reference_target_individual_identity": sum(r.get("status") == "unresolved" and r.get("target_individual_status") == "identity_observed" for r in engineering["references"]),
+                **{"reference_alternative_"+key:reference_alternatives[key] for key in reference_contexts+("any","none")},
                 "unresolved_references": sum(ref["status"] not in ("observed", "definition_observed") and ref.get("source_evidence")!="nac_enforcement" for ref in engineering["references"]),
                 "conditional_nac_observations":sum(ref.get("source_evidence")=="nac_enforcement" for ref in engineering["references"]),
                 "conflicting_reference_observations":sum(ref.get("status")=="conflicting_observation" for ref in engineering["references"]),
