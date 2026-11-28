@@ -384,8 +384,14 @@ def advisor_view(workspace, query):
                      "selectable" if selectable else "blocked" if action in OPPORTUNITIES else "review")
         readiness_text = {"destination": "Choose destination", "selectable": "Preview available",
                           "blocked": "Evidence blocks preview", "review": "Inspection only"}[readiness]
+        # Inspection-only findings cannot enter selection() or preview export.
+        # Keep only the fields required by the filtered CSV and row identity.
+        plan = f if selectable else {k: f[k] for k in ("id", "identity", "module", "persona", "action")}
+        if not selectable:
+            plan["sources"] = [{"name": source["name"]} for source in sources]
+            plan["observed_counts"] = {key: len(values) for key, values in observed.items()}
         rows.append(tr(
-            f'<input type="checkbox" class="choose" aria-label="Select {e(profile)}" data-plan="{e(json.dumps(f, ensure_ascii=False))}"{" disabled" if not selectable else ""}>',
+            f'<input type="checkbox" class="choose" aria-label="Select {e(profile)}" data-plan="{e(json.dumps(plan, ensure_ascii=False))}"{" disabled" if not selectable else ""}>',
             summary, badge(short[action], "warn" if action in ("conflict", "default_review") else "info" if action in OPPORTUNITIES else "neutral") + f'<small>{e(SHORT_REASON[action])}</small><small><strong>{e(readiness_text)}</strong></small>',
             f'<strong>{len(sources)}</strong><small>{e(names or "Library definition")}</small>', placement, device_summary,
             review_control,
@@ -660,10 +666,10 @@ $('advisor-export-csv').addEventListener('click',()=>{
  const records=[['Finding ID','Profile','Module','Device function','Recommendation','Readiness','Local copies','Source scopes','Suggested next step','Devices matching','Device observations','Devices not comparable','Selected for preview']];
  for(const row of filtered){
   const check=row.querySelector('.choose'),f=JSON.parse(check.dataset.plan);
-  const field=row.querySelector('.destination'),observed=f.observed_devices||{};
+  const field=row.querySelector('.destination'),observed=f.observed_counts||Object.fromEntries(Object.entries(f.observed_devices||{}).map(([key,values])=>[key,values.length]));
   records.push([f.id,f.identity,f.module,f.persona,f.action,row.dataset.readiness,f.sources.length,f.sources.map(s=>s.name).join('; '),
    field?field.selectedOptions[0]?.textContent:row.cells[4].textContent.trim(),
-   observed.matching?.length??'',Object.keys(observed).length?Object.values(observed).reduce((n,v)=>n+v.length,0):'',observed.unknown?.length??'',check.checked&&!check.disabled?'Yes':'No']);
+   observed.matching??'',Object.keys(observed).length?Object.values(observed).reduce((n,v)=>n+v,0):'',observed.unknown??'',check.checked&&!check.disabled?'Yes':'No']);
  }
  const content='\uFEFF'+records.map(row=>row.map(csvCell).join(',')).join('\r\n');
  const u=URL.createObjectURL(new Blob([content],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');
