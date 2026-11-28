@@ -97,3 +97,24 @@ class EngineeringQualificationTests(unittest.TestCase):
         self.assertEqual(counts["assignments"]["unknown_scopes"],1)
         self.assertEqual(counts["engineering"]["unresolved_reference_target_individual_identity"],1)
         self.assertNotIn("private-",json.dumps(counts))
+
+    def test_policy_family_and_alternate_context_counts_are_fixed_and_not_double_counted(self):
+        from aruba_central.assessment_review import assessment
+        from test_consolidation import fixture
+        base={"findings":[],"unsupported_rules":0,"status":"rule_schema_unqualified","order_verified":False,"truncated":False}
+        rules=[{**base,"module":"policies","schema_state":"network_acl"},{**base,"module":"policies","schema_state":"private-marker"}]
+        sequences=[{"status":"order_observed","target_context":"unfiltered_function","references":[
+            {"status":"rule_schema_unqualified","schema_state":"network_acl","alternative_observations":[
+                {"context":"library_definition","status":"identity_observed"},
+                {"context":"library_definition","status":"identity_observed"},
+                {"context":"other_function_same_scope","status":"individual_evidence_conflict"}]},
+            {"status":"target_unverified","alternative_observations":[{"context":"private-marker","status":"identity_observed"}]}],
+            "findings":[],"truncated":False}]
+        report=assessment(fixture(),rules=rules,sequences=sequences)
+        with patch("aruba_central.engineering_qualification.refresh_configuration_review",return_value={}),patch("aruba_central.engineering_qualification.assessment",return_value=report):
+            counts=engineering_qualification({})["counts"]
+        self.assertEqual(counts["policy_rules"]["schema_network_acl"],1)
+        self.assertEqual(counts["policy_sequences"]["schema_network_acl"],1)
+        self.assertEqual(counts["policy_sequences"]["alternative_library_definition"],1)
+        self.assertEqual(counts["policy_sequences"]["alternative_other_function_same_scope"],0)
+        self.assertNotIn("private-marker",json.dumps(counts))
