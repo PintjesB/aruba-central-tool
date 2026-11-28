@@ -1342,7 +1342,7 @@ def handler_for(workspace):
             # form pages or privacy settings may send an opaque/null Origin;
             # permit that only with same-origin fetch metadata and a CSRF token.
             origin_ok = origin == expected or (origin in (None, "null") and fetch_site == "same-origin")
-            if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials", root + "save-standard", root + "approve-exception", root + "revoke-exception", root + "review-disposition", root + "bulk-review-disposition", root + "save-filter", root + "delete-filter")
+            if (not self.valid_host() or self.path not in (root + "refresh", root + "credentials", root + "save-standard", root + "approve-exception", root + "revoke-exception", root + "review-disposition", root + "bulk-review-disposition", root + "save-filter", root + "delete-filter", root + "verify-plan")
                     or not origin_ok or fetch_site not in (None, "same-origin")):
                 self.reply("Forbidden: local session or origin check failed. Reopen the application.", 403)
                 return
@@ -1360,6 +1360,15 @@ def handler_for(workspace):
                 token = values.pop("csrf", [""])[0]
                 if not secrets.compare_digest(token.encode("utf-8"), workspace.csrf.encode("utf-8")):
                     self.reply("Forbidden: stale or invalid form token. Reopen the application.", 403)
+                    return
+                if self.path == root + "verify-plan":
+                    form = {key: value[0] for key, value in values.items()}
+                    if set(form) != {"snapshot", "manifest", "confirmed"} or form["confirmed"] != "yes":
+                        raise ValueError("Invalid plan verification form")
+                    from .plan_verification import verify_plan
+                    from .plan_verification_view import plan_result
+                    report = verify_plan(workspace, json.loads(form["manifest"]), form["snapshot"], confirmed=True)
+                    self.reply(plan_result(workspace, report))
                     return
                 if self.path in (root + "save-filter", root + "delete-filter"):
                     from .filter_presets import save_preset, delete_preset
