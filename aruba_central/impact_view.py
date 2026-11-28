@@ -122,7 +122,7 @@ def impact_view(workspace, query):
 
 
 def impact_batch_controls(root,common,kind,total,offset,keyword):
-    from .history_view import DRIFT_BATCH_SIZE
+    DRIFT_BATCH_SIZE = 50
     fields="".join(f'<input type="hidden" name="{e(key)}" value="{e(value)}">' for key,value in common.items())
     form=(f'<form method="get" class="filter-bar" action="{e(root+"impact")}">'+fields+
           f'<label>Search all observations<input name="{kind}_q" maxlength="200" value="{e(keyword)}"></label>'
