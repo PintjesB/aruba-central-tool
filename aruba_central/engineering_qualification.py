@@ -2,6 +2,7 @@
 from .central_tool import refresh_configuration_review
 from .assessment_review import (assessment, SECURITY_REASONS, ACL_REASONS, SEQUENCE_CONTEXTS, SEQUENCE_TARGET_STATES,
     POLICY_SCHEMA_STATES, ALTERNATIVE_POLICY_CONTEXTS, ASSIGNMENT_FUNCTION_CONTEXTS, POLICY_BODY_SHAPES, POLICY_LIBRARY_RELATIONS)
+from .dependency_evidence import REFERENCE_SEMANTICS, reference_semantics
 
 # Fixed output keys only. Do not serialize action names, checkpoint data,
 # timestamps, names, identities, values or any raw report structures.
@@ -12,7 +13,8 @@ FIELDS={
                    "unresolved_references","conditional_nac_observations","conflicting_reference_observations",
                    "reference_alternative_library_definition","reference_alternative_other_function_same_scope",
                    "reference_alternative_same_site_observation","reference_alternative_any","reference_alternative_none",
-                   "both_ends","source_only","target_only","other_conflict","unknown_identity","named_target_not_observed","named_target_unqualified"),
+                   "both_ends","source_only","target_only","other_conflict","unknown_identity","named_target_not_observed","named_target_unqualified",
+                   "reference_absent_set_source_fields") + tuple("reference_absence_"+key for key in REFERENCE_SEMANTICS),
     "identity_collisions":("groups","same_context_groups","linked_individual_responses","linked_same_context_responses"),
     "variants":("groups","explicit","groups_with_conflicts","mixed_site_groups"),
     "policy_rules":("groups","groups_with_findings","observations","groups_with_unsupported_rules","unsupported_schema_groups","unsupported_rule_occurrences","unsupported_order_occurrences",
@@ -59,6 +61,7 @@ def engineering_qualification(bundle, *, include_reference_patterns=False):
     if engineering is not None:
         result["reference_identity_patterns"] = reference_identity_patterns(engineering["references"])
         result["named_reference_gaps"] = named_reference_gaps(engineering["references"])
+        result["reference_absence_patterns"] = reference_absence_patterns(engineering["references"])
     return result
 
 
@@ -119,6 +122,20 @@ def named_reference_gaps(references):
         counts[source,target,reason,positive] += 1
     return [{"source_module":s,"target_module":t,"reason":r,"positive_contexts":list(p),"observations":n}
             for (s,t,r,p),n in sorted(counts.items(),key=lambda item:(-item[1],item[0]))]
+
+
+def reference_absence_patterns(references):
+    """Allowlisted counts; no identities, raw ranges, paths or tenant values."""
+    from collections import Counter
+    from .central_tool import CONFIG_MODULES
+    counts = Counter()
+    for row in references:
+        if row.get("status") != "not_observed" or row.get("target_evidence") != "count_confirmed_absence":
+            continue
+        source,target = (row.get(k) if row.get(k) in CONFIG_MODULES else "other" for k in ("source_module","target_module"))
+        counts[source,target,reference_semantics(row)] += 1
+    return [{"source_module":s,"target_module":t,"semantics":kind,"observations":n}
+            for (s,t,kind),n in sorted(counts.items(),key=lambda item:(-item[1],item[0]))]
 
 
 def main():

@@ -161,3 +161,24 @@ class EngineeringQualificationTests(unittest.TestCase):
         self.assertEqual(counts["reference_alternative_none"],1)
         self.assertEqual(counts["reference_alternative_same_site_observation"],1)
         self.assertEqual(counts["reference_alternative_library_definition"],0)
+
+    def test_absent_vlan_set_members_are_not_conflated_with_direct_references(self):
+        from aruba_central.assessment_review import assessment
+        from aruba_central.engineering_qualification import reference_absence_patterns
+        from test_consolidation import fixture
+        base={"status":"not_observed","target_evidence":"count_confirmed_absence","target_module":"layer2-vlan",
+              "persona":"ACCESS_SWITCH","scope":"private-scope","source":"private-source","source_view":"effective"}
+        refs=[{**base,"source_module":"stp","path":["mstp",0,"mstp-vlans"],"target":str(i)} for i in range(10,100)]
+        refs += [{**base,"source_module":"ethernet-interfaces","path":["switchport","native-vlan"],"target":"20"},
+                 {**base,"source_module":"named-vlan","path":["vlan","vlan-id-ranges"],"target":"30"},
+                 {**base,"source_module":"other","path":["mstp",0,"mstp-vlans"],"target":"40"},
+                 {**base,"source_module":"stp","path":["mstp",0,"mstp-vlans"],"target":"20","status":"conflicting_observation"}]
+        counts=assessment(fixture(),engineering={"references":refs,"port_groups":[],"library_duplicates":[],"shadowed":[]})["engineering"]
+        self.assertEqual(counts["reference_absence_vlan_stp_member"],90)
+        self.assertEqual(counts["reference_absence_vlan_selection_member"],1)
+        self.assertEqual(counts["reference_absence_direct_or_unclassified"],2)
+        self.assertEqual(counts["reference_absent_set_source_fields"],2)
+        self.assertEqual(counts["unresolved_references"],94)
+        report=reference_absence_patterns(refs)
+        self.assertEqual(sum(r["observations"] for r in report),93)
+        self.assertNotIn("private",json.dumps(report))
