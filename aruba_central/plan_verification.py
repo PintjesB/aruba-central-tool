@@ -5,7 +5,7 @@ log, causal analysis or deployment approval. No Central API access.
 """
 import argparse
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from .config_app import Workspace
@@ -14,6 +14,27 @@ from .review_manifest import reconstruct_selection
 from .remediation_review import comparable, _verify_override_candidate
 from .promotion_verification import _verify_promotion_candidate
 from .central_tool import write_private
+
+
+def combined_collateral_review(before, after, reports):
+    """Compare each affected module once outside all primary review pairs."""
+    from .remediation_collateral import collateral_review
+    groups = defaultdict(list)
+    for item in reports:
+        groups[item["report"]["candidate"]["module"]].append(item["report"])
+    results = []
+    for module, items in sorted(groups.items()):
+        if len(items) == 1:
+            result = items[0]["collateral"]
+        else:
+            covered = defaultdict(set)
+            for report in items:
+                candidate = report["candidate"]
+                for row in report["rows"]:
+                    covered[candidate["persona"], row["scope"]].add(candidate["identity"])
+            result = collateral_review(before, after, module, covered)
+        results.append({"proposal_count": len(items), **result})
+    return results
 
 
 def verify_plan(workspace, manifest, after_name, *, confirmed=False):
@@ -58,14 +79,17 @@ def verify_plan(workspace, manifest, after_name, *, confirmed=False):
             raise ValueError("Unsupported review workflow")
         counts[action] += 1
         reports.append({"id": fid, "action": action, "report": report})
+    combined_collateral = combined_collateral_review(before, after, reports)
     if (snapshot_binding(workspace, before_name, before) != before_binding or
             snapshot_binding(after_workspace, after_name, after) != after_binding):
         raise ValueError("Snapshot changed during plan verification")
     return {"schema": 1, "kind": "private_plan_verification", "selection_manifest": plan["selection_manifest"],
             "after_snapshot": after_name, "after_binding": after_binding, "identity_checks": identity_checks,
             "proposal_counts": dict(counts), "reports": reports, "review_order": plan["review_order"],
+            "combined_collateral": combined_collateral,
             "complete": False, "safe_to_apply": False,
-            "limitations": ["Each proposal is compared separately; collateral observations may include other selected proposals.",
+            "limitations": ["Each proposal is compared separately; its collateral observations may include other selected proposals.",
+                            "Combined module collateral excludes only exact profile/device pairs covered by primary results; it does not establish causation or full configuration coverage.",
                             "Captured settings do not establish causation, intermediate state, deployment or recovery."]}
 
 
