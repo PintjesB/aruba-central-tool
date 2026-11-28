@@ -16,20 +16,30 @@ def impact_view(workspace, query):
                      | set((bundle.get("library") or {}).get("modules", {})))
     data = workspace.advanced_snapshot(bundle)
     refs = data["references"]
-    modules = sorted(set(modules) | {r["target_module"] for r in refs})
+    modules = sorted(set(modules) | {r["target_module"] for r in refs} | {r["source_module"] for r in refs})
+    functions = sorted(set(bundle["results"]) | {r["persona"] for r in refs if r["persona"]!="Library"})
     body = intro("Dependency impact", "Find what uses a profile and what it depends on, before changing or removing it.", picker)
     body += (f'<section><form class="filter-bar" method="get" action="{e(root + "impact")}">'
              f'<input type="hidden" name="snapshot" value="{e(name)}">'
              + select("module", [("", "Select a module")] + [(m, module_label(m)) for m in modules], module, "Profile module")
              + f'<label>Exact profile name or ID<input name="identity" value="{e(identity)}" required maxlength="512"></label>'
-             + select("persona", [("", "All functions"), ("Library", "Library")] + [(p, persona_label(p)) for p in sorted(bundle["results"])], persona, "Device function")
+             + select("persona", [("", "All functions"), ("Library", "Library")] + [(p, persona_label(p)) for p in functions], persona, "Device function")
              + f'<label>Scope ID (optional)<input name="scope" value="{e(scope)}" maxlength="128"></label>'
              + '<button type="submit">Trace dependencies</button></form>'
              + '<p class="note">All matching names are reviewed separately per scope and function. A matching name is not proof of a shared Library source.</p></section>')
     if module and identity:
-        if module not in modules or persona not in ("", "Library", *bundle["results"]):
+        if module not in modules or persona not in ("", "Library", *functions):
             raise ValueError("Invalid dependency selection")
         result = dependency_impact(refs, module, identity, persona=persona, scope=scope)
+        from .review_dispositions import snapshot_binding
+        from .history_view import private_export
+        binding=snapshot_binding(workspace,name,bundle)
+        params={"snapshot":name,"module":module,"identity":identity,"persona":persona,"scope":scope}
+        if query.get("export")=="1":
+            if query.get("binding")!=binding:
+                raise ValueError("Snapshot changed; reopen dependency review")
+            return page("Dependency impact",intro("Private dependency report","Complete observed impact for the selected context, subject to traversal limits.",picker)
+                        +private_export("dependency-impact",{"selection":params,"report":result}),workspace.nav(name))
         paths = result["paths"]
         direct = result["direct"]
         counts = Counter(p["direction"] for p in paths)
@@ -78,7 +88,14 @@ def impact_view(workspace, query):
             body += '<p class="note">Traversal or boundary limit reached; additional unresolved observations may exist.</p>'
         body += '</section>'
         body += '<section><h2>Direct references</h2>' + table(headers, reference_rows(direct), search=True) + '</section>'
+        body += '<section><h2>Conditional tenant enforcement observations</h2><p>These NAC policy observations are independent of the selected device function or scope. They may refer to this profile or an unresolved identity in its module. No device recipient or client authorization is inferred.</p>'
+        tenant=result["conditional_tenant_observations"]
+        body += table(("Policy","Module","Target","Attribute evidence","Policy state","Rule state",""),[
+            tr(e(r["device"]),e(r["target_module"]),e(str(r["target"]) if r["target"] is not None else "Unknown"),
+               badge(pretty(r.get("attribute_status",r["status"]))),e(str(r.get("policy_enabled"))),e(str(r.get("rule_enabled"))),
+               inspect("Conditional enforcement evidence",raw(r))) for r in tenant],search=True)+'</section>'
         body += '<section><h2>Unresolved target identities in this module</h2>' + table(headers, reference_rows(result["unresolved_target_observations"]), search=True) + '<p class="note">These references may point elsewhere; do not assign them to the selected identity without more evidence.</p></section>'
+        body += f'<p><a class="button" href="{url(root,"impact",**params,export="1",binding=binding)}">Export private dependency report JSON</a></p>'
     return page("Dependency impact", body, workspace.nav(name), extra_css=IMPACT_CSS)
 
 
