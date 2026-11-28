@@ -44,3 +44,24 @@ class EngineeringQualificationTests(unittest.TestCase):
         self.assertEqual(counts["assignments"]["function_not_collected"],1)
         self.assertEqual(counts["assignments"]["unknown_scopes"],1)
         self.assertNotIn("private-",json.dumps(counts))
+
+    def test_policy_gap_breakdown_uses_only_fixed_category_names(self):
+        from aruba_central.assessment_review import assessment
+        from test_consolidation import fixture
+        base={"findings":[],"unsupported_rules":2,"status":"captured_order_review","order_verified":True,"truncated":False}
+        rules=[{**base,"module":"policies","unsupported_reasons":{"unsupported_address_shape":1,"private-rule":1}},
+               {**base,"module":"role-acls","acl_unsupported_reasons":{"vrf_unqualified":2,"private-acl":1}}]
+        sequences=[{"status":"order_observed","target_context":"unfiltered_function","references":[
+            {"status":"target_unverified"},{"status":"target_unverified"}],"findings":[],"truncated":False},
+            {"status":"order_observed","target_context":"private-context","references":[
+            {"status":"not_observed"}],"findings":[],"truncated":False}]
+        report=assessment(fixture(),rules=rules,sequences=sequences)
+        with patch("aruba_central.engineering_qualification.refresh_configuration_review",return_value={}),patch("aruba_central.engineering_qualification.assessment",return_value=report):
+            counts=engineering_qualification({})["counts"]
+        self.assertEqual(counts["policy_rules"]["security_unsupported_address_shape"],1)
+        self.assertEqual(counts["policy_rules"]["acl_vrf_unqualified"],2)
+        self.assertEqual(counts["policy_sequences"]["gap_context_unfiltered_function"],2)
+        self.assertEqual(counts["policy_sequences"]["gap_context_unknown"],1)
+        self.assertEqual(counts["policy_sequences"]["unqualified_targets"],3)
+        self.assertEqual(counts["policy_sequences"]["target_not_observed"],1)
+        self.assertNotIn("private-",json.dumps(counts))
