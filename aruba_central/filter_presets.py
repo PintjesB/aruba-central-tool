@@ -7,7 +7,7 @@ from pathlib import Path
 from .workspace_ui import e, page, intro, table, tr, badge
 
 ROUTES = {
-    "assessment": {"mode", "scope", "module", "category", "state", "persona", "group_by", "parent_kind", "drill", "previous", "confirmed"},
+    "assessment": {"mode", "scope", "module", "category", "state", "persona", "q", "group_by", "parent_kind", "drill", "previous", "confirmed"},
     "overrides": {"persona", "device", "module", "result", "readiness", "q"},
     "report": {"mode", "persona", "module", "scope", "view", "q", "evidence", "presentation", "group", "identity", "entity_category"},
     "compare": {"mode", "persona", "module", "left", "right", "view", "identity", "fields", "depth", *("scope" + str(i) for i in range(1, 6))},
