@@ -4,7 +4,7 @@ from .advanced_review import advanced_analysis
 from .assignment_review import assignment_review
 from .consolidation import profile_recommendations
 from .policy_variants import policy_variants
-from .policy_rule_review import policy_rule_groups, POLICY_SCHEMA_STATES, POLICY_BODY_SHAPES
+from .policy_rule_review import policy_rule_groups, POLICY_SCHEMA_STATES, POLICY_BODY_SHAPES, predicate_pattern_summary
 from .policy_sequence_review import policy_sequence_reviews
 from .dependency_evidence import reference_semantics, REFERENCE_SEMANTICS
 
@@ -158,6 +158,9 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "conditional_preview_predicates":sum(row["qualified_match_rules"] for row in conditional_previews),
                 "conditional_preview_candidates":sum(len(row["findings"]) for row in conditional_previews),
                 "conditional_preview_truncated":sum(row["truncated"] for row in conditional_previews),
+                "conditional_structural_condition_pairs":sum(len(row.get("structural_condition_pairs",[])) for row in conditional_previews),
+                "conditional_structural_truncated":sum(row.get("structural_condition_pairs_truncated") is True for row in conditional_previews),
+                "captured_structural_condition_pairs":sum(len(row.get("structural_condition_pairs",[])) for row in rules),
                 **{"schema_" + key: schema_reasons[key] for key in POLICY_SCHEMA_STATES + ("unknown",)},
                 **{"body_shape_" + key: body_shapes[key] for key in POLICY_BODY_SHAPES + ("unknown",)},
                 **{"library_relation_" + key: library_relations[key] for key in POLICY_LIBRARY_RELATIONS},
@@ -197,5 +200,6 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 **{"schema_" + key: sequence_schema_reasons[key] for key in POLICY_SCHEMA_STATES + ("unknown",)},
                 **{"alternative_" + key: alternative_targets[key] for key in ALTERNATIVE_POLICY_CONTEXTS + ("any",)},
                 **{"target_" + key: sequence_target_states[key] for key in SEQUENCE_TARGET_STATES}},
+            "policy_predicate_patterns":predicate_pattern_summary(rules),
             "checkpoint": bundle.get("collection_checkpoint", {}), "captured_at": bundle.get("captured_at"),
             "complete": False, "safe_to_apply": False}

@@ -103,6 +103,23 @@ def compare_sequence(parsed, policy_view, limit=1000, *, conflicts=None):
     return result
 
 
+def library_candidate_groups(reports):
+    """Deduplicate identical candidate bodies while retaining capture counts."""
+    groups={}
+    for index,report in enumerate(reports):
+        for finding in report.get("library_preview",{}).get("findings",[]):
+            signature=canonical(finding)
+            group=groups.setdefault(signature,{"finding":finding,"representative_index":index,
+                                               "occurrences":0,"capture_indices":set()})
+            group["occurrences"]+=1
+            group["capture_indices"].add(index)
+    result=[{**group,"captures":len(group["capture_indices"])} for group in groups.values()]
+    for group in result:
+        del group["capture_indices"]
+    return sorted(result,key=lambda group:(-group["occurrences"],group["representative_index"],
+                                          canonical(group["finding"])))
+
+
 def policy_sequence_reviews(bundle):
     from .standard_evidence import conflicting_profiles
     evidence = bundle.get("unadapted_profiles", {}).get("policy-groups", {})

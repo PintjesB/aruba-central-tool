@@ -20,6 +20,7 @@ FIELDS={
     "policy_rules":("groups","groups_with_findings","observations","groups_with_unsupported_rules","unsupported_schema_groups","unsupported_rule_occurrences","unsupported_order_occurrences",
                     "conditional_preview_groups","conditional_preview_order_verified","conditional_preview_rules",
                     "conditional_preview_predicates","conditional_preview_candidates","conditional_preview_truncated",
+                    "conditional_structural_condition_pairs","conditional_structural_truncated","captured_structural_condition_pairs",
                     "unsupported_condition_occurrences","unsupported_acl_predicate_occurrences","unqualified_order",
                     "individual_conflict_groups","structural_security_repetitions","partial_overlap_candidates","reverse_containment_candidates","truncated")
                     + tuple("schema_" + key for key in POLICY_SCHEMA_STATES + ("unknown",))
@@ -63,6 +64,7 @@ def engineering_qualification(bundle, *, include_reference_patterns=False):
     result = {"schema":1,"kind":"anonymous_engineering_qualification","counts":counts,
               "central_api_requests":0,"complete":False,"safe_to_apply":False}
     if engineering is not None:
+        result["policy_predicate_patterns"] = report["policy_predicate_patterns"]
         result["reference_identity_patterns"] = reference_identity_patterns(engineering["references"])
         result["named_reference_gaps"] = named_reference_gaps(engineering["references"])
         result["reference_absence_patterns"] = reference_absence_patterns(engineering["references"])

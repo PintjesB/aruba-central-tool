@@ -202,6 +202,32 @@ PREDICATE_SHAPE_KEYS = ("condition_shape","rule_kind","source_kind","destination
                         "service_fields","transport_fields","header_fields","additional_fields")
 
 
+def predicate_pattern_summary(groups):
+    """Aggregate only fixed documented structural categories and counts."""
+    reasons=("rule_not_object","additional_rule_fields","condition_not_object",
+             "unsupported_condition_fields","unsupported_condition_type","unsupported_rule_type",
+             "unsupported_address_shape","action_unqualified","security_order_unqualified")
+    counts=Counter()
+    allowed=("CONDITION_DEFAULT","missing","other","unknown","not_object")
+    def fixed(value,choices):
+        return value if isinstance(value,str) and value in choices else "unknown"
+    for group in groups:
+        for context,record in (("captured",group),("conditional",group.get("conditional_security_preview",{}))):
+            for shape in record.get("unsupported_predicate_shapes",[]):
+                n=shape.get("rules")
+                if type(n) is not int or n<0:
+                    continue
+                key=(context,fixed(shape.get("reason"),reasons),
+                     fixed(shape.get("condition_shape"),allowed),
+                     fixed(shape.get("rule_kind"),PREDICATE_KINDS+("missing","other","unknown")),
+                     fixed(shape.get("source_kind"),ADDRESS_KINDS+("missing","other","unknown")),
+                     fixed(shape.get("destination_kind"),ADDRESS_KINDS+("missing","other","unknown")),
+                     *(shape.get(k) is True for k in PREDICATE_SHAPE_KEYS[4:]))
+                counts[key]+=n
+    return [{"context":context,"reason":reason,**dict(zip(PREDICATE_SHAPE_KEYS,shape)),"rules":n}
+            for (context,reason,*shape),n in sorted(counts.items(),key=lambda item:(-item[1],item[0]))]
+
+
 def predicate_shape(rule):
     condition = rule.get("condition") if isinstance(rule,dict) else None
     if not isinstance(condition,dict):
