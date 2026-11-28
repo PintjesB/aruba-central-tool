@@ -40,6 +40,8 @@ def qualify_reference_edges(bundle, references, effective):
                        for module, data in entry["modules"].items()}
              for persona, entry in bundle["results"].items()}
     cache = {}
+    conflict_kinds={}
+    from .standard_evidence import body_conflict_kind
     def individual(persona, sid, module, identity, side):
         if identity is None:
             return {}
@@ -64,10 +66,10 @@ def qualify_reference_edges(bundle, references, effective):
         profile = collection.get("profiles", {}).get(identity)
         # Positive evidence can contradict only an observed body or a
         # count-confirmed absence, never an unqualified collection gap.
-        value = (collection.get("count_confirmed") is True if profile is None else
-                 canonical(profile_body(profile)) != canonical(profile_body(read["profile"])))
-        cache[key] = value
-        return value
+        kind = ("count_confirmed_absence" if collection.get("count_confirmed") is True else None) if profile is None else body_conflict_kind(profile_body(profile),profile_body(read["profile"]))
+        conflict_kinds[key]=kind
+        cache[key] = kind is not None
+        return cache[key]
 
     from collections import defaultdict
     from .consolidation import scope_memberships
@@ -209,6 +211,10 @@ def qualify_reference_edges(bundle, references, effective):
             ref["collection_conflict"] = True
             ref["source_body_conflict"] = source_conflict
             ref["target_body_conflict"] = target_conflict
+            if source_conflict:
+                ref["source_conflict_kind"]=conflict_kinds[persona,sid,ref["source_module"],ref["source"],side]
+            if target_conflict:
+                ref["target_conflict_kind"]=conflict_kinds[persona,sid,ref["target_module"],ref["target"],target_side]
         elif ref["status"] == "unresolved" and ref.get("target") is None:
             name = role_name(ref)
             if name is not None:
