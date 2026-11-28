@@ -63,6 +63,11 @@ def list_sample(client, endpoint, limit=10):
         if type(value) is int and value >= 0:
             result[field] = value
     result["next_cursor_present"] = bool(isinstance(raw.get("next"), str) and raw["next"])
+    if (any(field in raw and raw[field] is not None and
+            (type(raw[field]) is not int or raw[field] < 0) for field in ("count", "total"))
+            or (raw.get("next") is not None and not isinstance(raw["next"], str))):
+        result["status"] = "pagination_unqualified"
+        return result, []
     ids = [row.get("id") for row in rows if isinstance(row, dict)]
     if len(rows) > limit or len(ids) != len(rows) or not all(safe_id(v) for v in ids) or len(set(ids)) != len(ids):
         result["status"] = "identity_or_page_unqualified"
