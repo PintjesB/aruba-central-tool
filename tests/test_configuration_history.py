@@ -144,3 +144,26 @@ class HistoryTests(unittest.TestCase):
                                 "reference": "3", "target": "2"})
             self.assertIn("Approved baseline snapshot", html)
             self.assertIn("Reference standard results", html)
+
+
+    def test_standard_does_not_qualify_conflicting_reference_or_target_profile(self):
+        data=snapshot()
+        entry=data["results"]["ACCESS_SWITCH"]
+        for row in entry["modules"]["layer2-vlan"]["scope_results"]:
+            row["effective_view"]["profiles"]["30"]={"vlan":30,"name":"Other"}
+        target=entry["modules"]["layer2-vlan"]["scope_results"][-1]["effective_view"]
+        target["profiles"]["30"]["name"]="Changed"
+        data["keyed_profile_details"]={"profiles":{"ACCESS_SWITCH":{"4":{"layer2-vlan":{"20":{
+            "effective":{"status":"identity_observed","profile":{"vlan":20,"name":"Conflicting"}}}}}}}}
+        result=reference_compliance(data,"ACCESS_SWITCH","layer2-vlan","3","4")["findings"][0]
+        self.assertEqual(result["status"],"differences_observed")
+        self.assertTrue(result["has_gaps"])
+        self.assertEqual({r["status"] for r in result["differences"]},{"changed","individual_evidence_conflict"})
+        rules=[{"module":"layer2-vlan","identity":"20","path":["name"],"value":"Office"}]
+        result=reference_compliance(data,"ACCESS_SWITCH","layer2-vlan","3","4",field_rules=rules)["findings"][0]
+        self.assertEqual(result["status"],"verification_required")
+        self.assertEqual(result["differences"][0]["status"],"individual_evidence_conflict")
+        data["keyed_profile_details"]["profiles"]["ACCESS_SWITCH"]["3"]=data["keyed_profile_details"]["profiles"]["ACCESS_SWITCH"].pop("4")
+        result=reference_compliance(data,"ACCESS_SWITCH","layer2-vlan","3","4",field_rules=rules)["findings"][0]
+        self.assertIsNotNone(result["differences"][0]["reference_conflict"])
+        self.assertIsNone(result["differences"][0]["target_conflict"])
