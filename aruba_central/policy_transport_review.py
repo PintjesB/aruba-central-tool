@@ -26,6 +26,24 @@ def port_clause(value):
     return None
 
 
+PORT_CLAUSE_SHAPES=("not_object","additional_fields","missing_operator","eq_with_max",
+                    "eq_without_max","range","other_operator")
+
+
+def port_clause_shape(value):
+    if not isinstance(value,dict):
+        return "not_object"
+    if set(value)-{"operator","min","max"}:
+        return "additional_fields"
+    if "operator" not in value:
+        return "missing_operator"
+    if value["operator"]=="COMPARISON_EQ":
+        return "eq_with_max" if "max" in value else "eq_without_max"
+    if value["operator"]=="COMPARISON_RANGE":
+        return "range"
+    return "other_operator"
+
+
 def transport_review(body):
     security=body.get("security-policy")
     if not isinstance(security,dict) or not isinstance(security.get("policy-rule"),list):
@@ -57,7 +75,7 @@ def transport_review(body):
                 if key not in transport:
                     continue
                 clause=port_clause(transport[key])
-                row[field]={"state":"literal_observed",**clause} if clause is not None else {"state":"unqualified"}
+                row[field]={"state":"literal_observed",**clause} if clause is not None else {"state":"unqualified","shape":port_clause_shape(transport[key])}
                 if clause is None:
                     state="port_clause_unqualified"
             if "established" in transport:
