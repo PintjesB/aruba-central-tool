@@ -20,14 +20,14 @@ def assignments_view(workspace, query):
     rows = result["rows"]
     from .review_dispositions import snapshot_binding
     binding = snapshot_binding(workspace, name, bundle)
-    if query.get("detail") or query.get("export"):
+    if query.get("detail") or query.get("export") or query.get("evidence"):
         if query.get("binding") != binding:
             raise ValueError("Assignment evidence or snapshot changed; reopen the worklist")
         if query.get("export") == "1":
             body = intro("Export private assignment review", "Full filtered captured assignment evidence. Keep this data private.", picker)
             body += private_export("library-assignment-review", {"snapshot": name, "report": result})
             return page("Library assignments", body, workspace.nav(name))
-        kind = query.get("detail")
+        kind = query.get("detail") or query.get("evidence")
         if kind not in ("assignment", "overlap"):
             raise ValueError("Unknown assignment evidence type")
         try:
@@ -39,11 +39,15 @@ def assignments_view(workspace, query):
             raise ValueError("Unknown assignment evidence")
         row = records[index]
         content = assignment_detail(row) if kind == "assignment" else raw(row)
+        if query.get("evidence"):
+            return page("Assignment evidence", intro("Assignment evidence", row["identity"], picker) + content, workspace.nav(name))
         return '<template data-advisor-evidence><div class="inspector-title"><h2>' + e(row["identity"]) + '</h2></div>' + content + '</template>'
     common = {"snapshot": name, "module": module, "persona": persona, "identity": identity, "state": state, "binding": binding}
     def control(kind, index):
         endpoint = url(root, "assignments", **common, detail=kind, index=index)
-        return f'<button type="button" class="quiet inspect-trigger" data-inspect data-inspect-url="{endpoint}">Review</button>'
+        href = url(root, "assignments", **common, evidence=kind, index=index)
+        return (f'<button type="button" class="quiet inspect-trigger" data-inspect data-inspect-url="{endpoint}">Review</button>'
+                f'<noscript><a href="{href}">Review</a></noscript>')
     body = intro("Library assignments", "Inspect observed assignment scopes, known recipients, retained profile visibility and overlapping assignments.", picker)
     body += (f'<section><form class="filter-bar" method="get" action="{e(root + "assignments")}"><input type="hidden" name="snapshot" value="{e(name)}">'
              + select("module", [("", "All modules")] + [(m, module_label(m)) for m in sorted(modules)], module, "Module")
