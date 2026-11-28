@@ -405,6 +405,7 @@ class Workspace:
         self._optimization_worklist = None
         self._vlan_summary = None
         self._configuration_search_index = None
+        self._configuration_search_pages = {}
         self.state = "idle"
         self.phase = ""
         self.detail = ""
@@ -580,6 +581,7 @@ class Workspace:
             self._optimization_worklist = None
             self._vlan_summary = None
             self._configuration_search_index = None
+            self._configuration_search_pages.clear()
             bundle = refresh_configuration_review(read_audit(self.directory, name))
             if before != fingerprint():
                 raise ValueError("Snapshot changed while loading; open it again")
@@ -650,6 +652,34 @@ class Workspace:
                     self._configuration_search_index = (build_search_index(bundle, diagnostics=diagnostics), diagnostics)
                 return self._configuration_search_index[0]
         return None
+
+    def configuration_search_page(self, bundle, query, *, grouped=False, module="", persona="",
+                                  scope=None, offset=0, group=""):
+        """Reuse exact, bounded result pages even when indexing falls back."""
+        from .configuration_search import grouped_search, search_configuration
+        from .central_tool import canonical
+        key = (query, grouped, module, persona, scope, offset, group)
+        def active():
+            return self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle
+        with self.snapshot_lock:
+            if active() and key in self._configuration_search_pages:
+                result = self._configuration_search_pages.pop(key)
+                self._configuration_search_pages[key] = result
+                return result
+        index = self.configuration_search_index(bundle)
+        kwargs = dict(module=module, persona=persona, scope=scope, offset=offset, index=index)
+        result = (grouped_search(bundle, query, **kwargs) if grouped
+                  else search_configuration(bundle, query, group=group, **kwargs))
+        # Limit both entry count and individual serialized payload. Oversized
+        # pages remain fully accessible; they simply are not cached.
+        if len(canonical(result).encode("utf-8")) <= 1_000_000:
+            with self.snapshot_lock:
+                if active():
+                    self._configuration_search_pages.pop(key, None)
+                    self._configuration_search_pages[key] = result
+                    while len(self._configuration_search_pages) > 8:
+                        self._configuration_search_pages.pop(next(iter(self._configuration_search_pages)))
+        return result
 
     def configuration_search_diagnostics(self, bundle):
         with self.snapshot_lock:
