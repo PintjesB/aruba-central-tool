@@ -61,3 +61,21 @@ class PolicySequenceTests(unittest.TestCase):
         result=compare_sequence(parsed,view)
         self.assertEqual(result["findings"][0]["condition_relationship"],"partial_overlap")
         self.assertFalse(result["findings"][0]["same_action"])
+
+    def test_cross_policy_rule_qualification_matches_individual_review(self):
+        parsed=sequence_entries(capture([{"name":"a","position":1},{"name":"b","position":2}]))
+        invalid=rule(1,source=None)
+        invalid["action"]={"type":42}
+        view={"status":"list_parsed","profiles":{"a":policy([invalid,rule(2,source=None)]),
+              "b":policy([rule(1),rule(2,extra=True)])}}
+        result=compare_sequence(parsed,view)
+        self.assertEqual(len(result["findings"]),1)
+        self.assertEqual(result["findings"][0]["earlier_rule"]["position"],2)
+        for ref in result["references"]:
+            self.assertEqual(ref["rule_count"],2)
+            self.assertEqual(ref["qualified_rule_count"],1)
+            self.assertEqual(ref["unsupported_rule_count"],1)
+        limited=compare_sequence(parsed,view,limit=0)
+        self.assertTrue(limited["truncated"])
+        self.assertEqual(limited["references"][1]["qualified_rule_count"],1)
+        self.assertFalse(limited["findings"])
