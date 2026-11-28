@@ -95,3 +95,19 @@ class PolicyRuleTests(unittest.TestCase):
         self.assertEqual(result["unsupported_reasons"],{"action_unqualified":1,"additional_rule_fields":1})
         self.assertEqual(sum(result["unsupported_reasons"].values()),result["unsupported_rules"])
         self.assertEqual(result["findings"],[])
+
+    def test_exact_unsupported_rule_repetition_is_structural_only(self):
+        result=rule_review("policies",policy([rule(30,**{"time-profile":"office"}),
+            rule(10,**{"time-profile":"office"}),rule(20,**{"time-profile":"other"}),rule(40)]))
+        self.assertTrue(result["order_verified"])
+        self.assertEqual(result["qualified_match_rules"],1)
+        self.assertEqual(result["unsupported_rules"],3)
+        self.assertEqual(len(result["findings"]),1)
+        finding=result["findings"][0]
+        self.assertEqual(finding["status"],"identical_unsupported_security_rule_body")
+        self.assertEqual((finding["earlier_position"],finding["later_position"]),(10,30))
+        self.assertNotIn("condition_relationship",finding)
+        self.assertFalse(result["safe_to_apply"])
+        limited=rule_review("policies",policy([rule(1,extra=True),rule(2,extra=True)]),limit=0)
+        self.assertTrue(limited["truncated"])
+        self.assertFalse(limited["findings"])
