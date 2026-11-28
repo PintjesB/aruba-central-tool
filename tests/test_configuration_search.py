@@ -173,3 +173,25 @@ class ConfigurationSearchTests(unittest.TestCase):
             self.assertGreater(len(rows), 0)
         groups = grouped_search(bundle, "NAC")
         self.assertTrue(all(row["id"] == group_id(row["selector"]) for row in groups["groups"]))
+
+
+    def test_repeated_leaf_cache_keeps_exact_types_and_reduces_serialization(self):
+        from unittest.mock import patch
+        from aruba_central.configuration_search import matching_fields, group_id
+        from aruba_central.central_tool import canonical
+        bundle = {"results": {}, "nac_configuration": {
+            "authz-policies": {"status": "list_parsed", "profiles": {
+                str(i): {"flag": False, "number": 0, "float": -0.0 if i % 2 else 0.0,
+                         "value": "repeat-value", "empty": None}
+                for i in range(100)}}}}
+        with patch("aruba_central.configuration_search.canonical", wraps=canonical) as encode:
+            values = [value for _, matches in matching_fields(bundle, "repeat-value") for _, value in matches]
+            self.assertEqual(values, ["repeat-value"] * 100)
+            # Floats deliberately bypass caching. Repeated scalar encodings do not.
+            self.assertLessEqual(encode.call_count, 104)
+        groups = grouped_search(bundle, "NAC")["groups"]
+        self.assertEqual(sum(row["observations"] for row in groups), 500)
+        self.assertEqual(len(groups), 6)
+        self.assertTrue(all(row["id"] == group_id(row["selector"]) for row in groups))
+        self.assertEqual({canonical(row["selector"][-1]) for row in groups},
+                         {"false", "0", "0.0", "-0.0", '"repeat-value"', "null"})
