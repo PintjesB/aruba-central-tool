@@ -104,6 +104,60 @@ def qualify_reference_edges(bundle, references, effective):
                     if site is not None:
                         by_site[module,identity,site].append(observation)
 
+    # Root role access-vlan-name is documented for gateways. A captured
+    # name can be compared with explicit Layer2 VLAN display names, but
+    # neither a Library match nor a same-site match proves gateway binding.
+    # https://developer.arubanetworks.com/new-central-config/reference/updaterolesrolebyid
+    from .central_tool import parse_reference_ids
+    role_paths = (("access-vlan-name",), ("vlan-parameters","access-vlan-name"))
+    def role_name(ref):
+        path = tuple(ref.get("path", []))
+        if ref["source_module"] != "roles" or ref["target_module"] != "layer2-vlan" or path not in role_paths:
+            return None
+        persona, sid = ref["persona"], ref["scope"]
+        side = {"saved":"local","effective":"effective","library":"library"}.get(ref.get("source_view"))
+        if side is None:
+            return None
+        if ref.get("source_evidence") == "individual":
+            read = individual(persona,sid,"roles",ref["source"],side)
+            profile = read.get("profile") if read.get("status") == "identity_observed" else None
+        else:
+            view = (library.get("roles",{}) if persona == "Library" else
+                    (local if side == "local" else effective).get(persona,{}).get("roles",{}).get(sid,{}))
+            profile = view.get("profiles",{}).get(ref["source"]) if view.get("status") == "list_parsed" else None
+        if not isinstance(profile,dict):
+            return None
+        value = profile_body(profile)
+        for key in path:
+            if not isinstance(value,dict):
+                return None
+            value = value.get(key)
+        return value if isinstance(value,str) and value.strip() else None
+
+    name_needed = {name for ref in references if ref["status"] == "unresolved" and ref.get("target") is None
+                   if (name := role_name(ref)) is not None}
+    names_by_site, library_names = defaultdict(list), defaultdict(list)
+    def index_names(view,persona,sid,index,site=None):
+        if view.get("status") != "list_parsed":
+            return
+        for vid,profile in view.get("profiles",{}).items():
+            if not isinstance(profile,dict) or parse_reference_ids(vid) != {vid}:
+                continue
+            name = profile.get("name")
+            if not isinstance(name,str) or name not in name_needed:
+                continue
+            status = "individual_evidence_conflict" if contradiction(persona,sid,"layer2-vlan",vid,"library" if persona=="Library" else "effective") else "identity_observed"
+            key = name if site is None else (site,name)
+            index[key].append({"context":"library_vlan_name" if persona=="Library" else "same_site_vlan_name",
+                               "persona":persona,"scope":sid,"vlan_id":vid,"status":status})
+    if name_needed:
+        index_names(library.get("layer2-vlan",{}),"Library","",library_names)
+        for persona,modules in effective.items():
+            for sid,view in modules.get("layer2-vlan",{}).items():
+                site=sites.get((persona,sid))
+                if site is not None:
+                    index_names(view,persona,sid,names_by_site,site)
+
     alternatives_cache = {}
     def alternatives(persona,sid,module,identity):
         key = persona,sid,module,identity
@@ -155,6 +209,18 @@ def qualify_reference_edges(bundle, references, effective):
             ref["collection_conflict"] = True
             ref["source_body_conflict"] = source_conflict
             ref["target_body_conflict"] = target_conflict
+        elif ref["status"] == "unresolved" and ref.get("target") is None:
+            name = role_name(ref)
+            if name is not None:
+                site = sites.get((persona,sid))
+                observations = library_names.get(name,[]) + (names_by_site.get((site,name),[]) if site is not None else [])
+                positive = {obs["vlan_id"] for obs in observations if obs["status"] == "identity_observed"}
+                conflicted = any(obs["status"] == "individual_evidence_conflict" for obs in observations)
+                state = ("conflicting_evidence" if conflicted else "multiple_candidate_ids" if len(positive)>1 else
+                         "single_candidate_id" if positive else "no_observed_candidate")
+                ref["role_vlan_name_review"] = {"status":state,"configured_name":name,
+                    "field_context":"gateway_access_vlan_name" if ref["path"] == ["access-vlan-name"] else "nested_access_vlan_name",
+                    "observations":observations,"safe_to_apply":False}
         elif ref["status"] == "unresolved" and ref.get("target") is not None:
             observations = alternatives(persona,sid,ref["target_module"],ref["target"])
             if observations:
