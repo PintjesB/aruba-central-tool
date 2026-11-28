@@ -82,3 +82,33 @@ class KeyedEvidenceViewTests(unittest.TestCase):
         self.assertIn("equals the length of the observed individual server list", html)
         self.assertIn("does not establish a derived field", html)
         self.assertIn("Exact comparison", html)
+
+
+    def test_full_evidence_search_before_paging_and_saved_filters(self):
+        from aruba_central.filter_presets import selection
+        bundle = fixture()
+        bundle["keyed_profile_details"] = {"profiles": {"Library": {"": {"roles": {
+            f"profile-{i:03}": {"library": {"status": "schema_unresolved", "raw": {"name": str(i)}}}
+            for i in range(250)}}}}}
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(bundle))
+            workspace = Workspace(directory)
+            base = {"snapshot": name, "mode": "keyed", "persona": "Library"}
+            initial = workspace.assessment(base)
+            self.assertNotIn("profile-249", initial)
+            self.assertIn("250 matching observations", initial)
+            html = workspace.assessment({**base, "q": "PROFILE-249 library"})
+            self.assertIn("profile-249", html)
+            self.assertIn("1 matching observations", html)
+            self.assertNotIn("profile-248", html)
+            batch = workspace.assessment({**base, "q": "profile-", "offset": "200"})
+            self.assertIn("profile-249", batch)
+            self.assertIn("q=profile-", batch)
+            self.assertIn("250 matching observations", batch)
+            empty = workspace.assessment({**base, "q": "nonexistent", "offset": "200"})
+            self.assertIn("Return to first batch", empty)
+            with self.assertRaises(ValueError):
+                workspace.assessment({**base, "q": "x" * 201})
+            self.assertEqual(selection("assessment", {"mode": "keyed", "q": "profile-249"}),
+                             {"mode": "keyed", "q": "profile-249"})
