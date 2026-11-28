@@ -5,7 +5,7 @@ https://developer.arubanetworks.com/new-central-config/reference/replacepolicygr
 The resultant policy still depends on role and device applicability.
 """
 from .central_tool import canonical, profile_body
-from .policy_rule_review import condition_relationship, simple_match, unsupported_security_reason, policy_schema_state
+from .policy_rule_review import condition_relationship, simple_match, unsupported_security_reason, policy_schema_state, conditional_security_rules
 
 
 def sequence_entries(evidence):
@@ -29,12 +29,17 @@ def sequence_entries(evidence):
     return {"status": "order_observed", "entries": sorted(entries, key=lambda row: row["position"])}
 
 
-def qualified_rules(body):
-    sec = body.get("security-policy")
-    if (body.get("type") != "POLICY_TYPE_SECURITY" or not isinstance(sec, dict)
-            or sec.get("type") != "SECURITY_POLICY_TYPE_DEFAULT" or not isinstance(sec.get("policy-rule"), list)):
-        return None
-    rules = sec["policy-rule"]
+def qualified_rules(body, *, conditional=False):
+    if conditional:
+        rules = conditional_security_rules(body)
+        if rules is None:
+            return None
+    else:
+        sec = body.get("security-policy")
+        if (body.get("type") != "POLICY_TYPE_SECURITY" or not isinstance(sec, dict)
+                or sec.get("type") != "SECURITY_POLICY_TYPE_DEFAULT" or not isinstance(sec.get("policy-rule"), list)):
+            return None
+        rules = sec["policy-rule"]
     positions = [r.get("position") if isinstance(r, dict) else None for r in rules]
     if any(type(pos) is not int or pos < 0 for pos in positions) or len(set(positions)) != len(positions):
         return None
@@ -63,6 +68,11 @@ def compare_sequence(parsed, policy_view, limit=1000, *, conflicts=None):
         reference = {"name": name, "position": entry["position"], "status": status}
         if isinstance(body, dict):
             reference["schema_state"] = policy_schema_state("policies", profile_body(body))
+            if rules is None:
+                candidate = qualified_rules(profile_body(body),conditional=True)
+                if candidate is not None:
+                    reference["conditional_security_rule_count"] = len(candidate)
+                    reference["conditional_security_predicate_count"] = sum(unsupported_security_reason(rule) is None for rule in candidate)
         result["references"].append(reference)
         if rules is None:
             continue
