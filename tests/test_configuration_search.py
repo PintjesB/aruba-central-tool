@@ -161,7 +161,7 @@ class ConfigurationSearchTests(unittest.TestCase):
             for record in configuration_sources(bundle):
                 context = " ".join(str(record[k]) for k in ("persona", "module", "name", "scope", "identity", "view")).casefold()
                 for path, value in leaves(record["body"]):
-                    haystack = context + " " + ".".join(path).casefold() + " " + canonical(value).casefold()
+                    haystack = context + " " + ".".join(map(str, path)).casefold() + " " + canonical(value).casefold()
                     if all(term in haystack for term in query.casefold().split()):
                         expected.append((record, path, value))
             actual = [(record, path, value) for record, matches in matching_fields(bundle, query)
@@ -195,3 +195,21 @@ class ConfigurationSearchTests(unittest.TestCase):
         self.assertTrue(all(row["id"] == group_id(row["selector"]) for row in groups))
         self.assertEqual({canonical(row["selector"][-1]) for row in groups},
                          {"false", "0", "0.0", "-0.0", '"repeat-value"', "null"})
+
+
+    def test_grouped_paths_distinguish_object_keys_from_array_indices(self):
+        from aruba_central.configuration_search import display_path
+        bundle = {"results": {}, "nac_configuration": {
+            "authz-policies": {"status": "list_parsed", "profiles": {
+                "object": {"items": {"0": "needle"}},
+                "array": {"items": ["needle"]}}}}}
+        groups = grouped_search(bundle, "needle")["groups"]
+        self.assertEqual(len(groups), 2)
+        paths = {tuple(row["selector"][-2]) for row in groups}
+        self.assertEqual(paths, {("items", "0"), ("items", 0)})
+        self.assertEqual({display_path(path) for path in paths}, {'items["0"]', "items[0]"})
+        self.assertEqual(display_path(("a.b", "x")), '["a.b"].x')
+        for group in groups:
+            result = search_configuration(bundle, "needle", group=group["id"])
+            self.assertEqual(result["total"], 1)
+            self.assertEqual(result["matches"][0]["path"], group["selector"][-2])
