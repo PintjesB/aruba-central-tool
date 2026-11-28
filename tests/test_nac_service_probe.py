@@ -65,3 +65,15 @@ class NACServiceProbeTests(unittest.TestCase):
         for change in ({"total": 2}, {"count": 2}, {"next_cursor_present": True},
                        {"identity_count": 0}, {"status": "schema_unqualified"}):
             self.assertFalse(service_count_confirmed({**row, **change}))
+
+
+    def test_malformed_metadata_does_not_qualify_empty_inventory(self):
+        from aruba_central.nac_service_probe import capture_service_inventory
+        for bad in ({"next": ["unexpected"]}, {"count": False}, {"total": -1}):
+            class Client:
+                def get(self, path, **params):
+                    return {"items": [], "count": 0, "total": 0, **bad}
+            report = capture_service_inventory(Client())
+            for row in report["operations"][::2]:
+                self.assertEqual(row["status"], "pagination_unqualified")
+                self.assertFalse(row["count_confirmed"])
