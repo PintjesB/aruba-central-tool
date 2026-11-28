@@ -4,7 +4,7 @@ from .advanced_review import advanced_analysis
 from .assignment_review import assignment_review
 from .consolidation import profile_recommendations
 from .policy_variants import policy_variants
-from .policy_rule_review import policy_rule_groups, POLICY_SCHEMA_STATES
+from .policy_rule_review import policy_rule_groups, POLICY_SCHEMA_STATES, POLICY_BODY_SHAPES
 from .policy_sequence_review import policy_sequence_reviews
 
 SECURITY_REASONS = ("rule_not_object", "additional_rule_fields", "condition_not_object",
@@ -14,6 +14,7 @@ ACL_REASONS = ("rule_not_object", "additional_rule_fields", "source_role_unquali
     "action_unqualified", "literal_destination_unqualified", "family_unqualified", "order_unqualified")
 SEQUENCE_CONTEXTS = ("unfiltered_function", "function_not_collected", "scope_not_observed",
     "policy_view_not_collected", "policy_view_unqualified", "policy_view_parsed", "unknown")
+POLICY_LIBRARY_RELATIONS = ("exact_body_match","only_missing_policy_type","different_body","not_observed","individual_conflict")
 ALTERNATIVE_POLICY_CONTEXTS = ("other_function_same_scope", "unfiltered_same_scope", "library_definition")
 ASSIGNMENT_FUNCTION_CONTEXTS = ("function_collected", "function_adapter_unqualified", "hybrid_nac_not_network_scope",
     "function_outside_network_adapter", "function_in_inventory_not_collected", "function_inventory_unavailable",
@@ -38,6 +39,9 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
     schema_reasons = Counter(row.get("schema_state") if row.get("schema_state") in POLICY_SCHEMA_STATES else "unknown"
                              for row in rules if row["status"] == "rule_schema_unqualified")
     sequence_schema_reasons, alternative_targets = Counter(), Counter()
+    body_shapes=Counter(row.get("body_shape") if row.get("body_shape") in POLICY_BODY_SHAPES else "unknown" for row in rules if row["status"] == "rule_schema_unqualified")
+    library_relations=Counter(row.get("library_body_relation") for row in rules if row["status"] == "rule_schema_unqualified" and row.get("library_body_relation") in POLICY_LIBRARY_RELATIONS)
+    previews=[row["library_preview"] for row in sequences if "library_preview" in row]
     for row in rules:
         if row.get("module") == "policies":
             security_reasons.update(row.get("unsupported_reasons", {}))
@@ -126,6 +130,8 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "groups_with_unsupported_rules": sum(bool(row["unsupported_rules"]) or row["status"] == "rule_schema_unqualified" for row in rules),
                 "unsupported_schema_groups":sum(row["status"]=="rule_schema_unqualified" for row in rules),
                 **{"schema_" + key: schema_reasons[key] for key in POLICY_SCHEMA_STATES + ("unknown",)},
+                **{"body_shape_" + key: body_shapes[key] for key in POLICY_BODY_SHAPES + ("unknown",)},
+                **{"library_relation_" + key: library_relations[key] for key in POLICY_LIBRARY_RELATIONS},
                 "unsupported_rule_occurrences":sum(row["unsupported_rules"] for row in rules),
                 "unsupported_order_occurrences":sum(sum(count for reason,count in row.get("unsupported_reasons",{}).items() if reason in ("security_order_unqualified","acl_order_or_family_unqualified")) for row in rules),
                 "unsupported_condition_occurrences":sum(sum(count for reason,count in row.get("unsupported_reasons",{}).items() if reason.startswith("unsupported_") or reason=="condition_not_object") for row in rules),
@@ -142,6 +148,11 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "unqualified_order": sum(row["status"] != "order_observed" for row in sequences),
                 "unqualified_targets": sum(ref["status"] != "rules_observed" for row in sequences for ref in row["references"]),
                 "cross_policy_candidates": sum(len(row["findings"]) for row in sequences),
+                "library_preview_captures":len(previews),
+                "library_preview_candidates":sum(len(row["findings"]) for row in previews),
+                "library_preview_unqualified_targets":sum(ref["status"]!="rules_observed" for row in previews for ref in row["references"]),
+                "library_preview_qualified_targets":sum(ref["status"]=="rules_observed" for row in previews for ref in row["references"]),
+                "library_preview_truncated":sum(row["truncated"] for row in previews),
                 "qualified_rule_occurrences": sum(ref.get("qualified_rule_count", 0) for row in sequences for ref in row["references"]),
                 "unsupported_rule_occurrences": sum(ref.get("unsupported_rule_count", 0) for row in sequences for ref in row["references"]),
                 "targets_with_unsupported_rules": sum(ref.get("unsupported_rule_count", 0) > 0 for row in sequences for ref in row["references"]),
