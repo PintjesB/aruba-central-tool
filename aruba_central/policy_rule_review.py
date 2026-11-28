@@ -110,7 +110,17 @@ def rule_review(module, body, limit=2000):
 
 def policy_rule_groups(bundle):
     """Deduplicate identical captured policy bodies per function and identity."""
+    from .standard_evidence import conflicting_profiles
     groups = {}
+    def add_conflicts(persona,module,location,conflicts):
+        for identity,evidence in conflicts.items():
+            key=(persona,module,identity,"individual_evidence_conflict",canonical(evidence))
+            if key not in groups:
+                groups[key]={"persona":persona,"module":module,"identity":identity,"locations":[],
+                             "findings":[],"rules":0,"qualified_match_rules":0,"unsupported_rules":0,
+                             "order_verified":False,"truncated":False,"status":"individual_evidence_conflict",
+                             "individual_conflict":evidence,"safe_to_apply":False}
+            groups[key]["locations"].append(location)
     def add(persona, module, identity, raw, location):
         if not isinstance(raw, dict):
             return
@@ -129,12 +139,19 @@ def policy_rule_groups(bundle):
                 view = row.get("effective_view", {})
                 if scope.get("kind") != "device" or view.get("status") != "list_parsed":
                     continue
+                location={"scope":row["scope"],"name":scope.get("name") or row["scope"],"view":"effective"}
+                conflicts=conflicting_profiles(bundle,persona,module,row["scope"],view)
+                add_conflicts(persona,module,location,conflicts)
                 for identity, raw in view["profiles"].items():
-                    add(persona, module, identity, raw, {"scope": row["scope"], "name": scope.get("name") or row["scope"],
-                                                        "view": "effective"})
+                    if identity not in conflicts:
+                        add(persona,module,identity,raw,location)
     for module in modules:
         view = bundle.get("library", {}).get("modules", {}).get(module, {})
         if view.get("status") == "list_parsed":
-            for identity, raw in view["profiles"].items():
-                add("Library", module, identity, raw, {"scope": "", "name": "Library", "view": "library"})
+            location={"scope":"","name":"Library","view":"library"}
+            conflicts=conflicting_profiles(bundle,"Library",module,"",view,side="library")
+            add_conflicts("Library",module,location,conflicts)
+            for identity,raw in view["profiles"].items():
+                if identity not in conflicts:
+                    add("Library",module,identity,raw,location)
     return sorted(groups.values(), key=lambda r: (-len(r["findings"]), r["persona"], r["module"], r["identity"]))
