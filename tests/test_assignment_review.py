@@ -211,3 +211,17 @@ class AssignmentReviewTests(unittest.TestCase):
             filtered=w.assignments({"snapshot":name,"persona":"ACCESS_SWITCH","scope":"999"})
             self.assertIn("1 distinct function/scope pairs",filtered)
             self.assertNotIn("scope=998",filtered)
+
+    def test_uncollected_assignment_functions_distinguish_inventory_and_adapter_gaps(self):
+        row={"profile-type":"layer2-vlan","profile-instance":"20","scope-id":"999"}
+        functions=["HYBRID_NAC","MOBILITY_GW","BRANCH_GW","OTHER_FUNCTION","CORE_SWITCH"]
+        data={"results":{},"library":{"assignments":{"rows":[{**row,"device-function":p} for p in functions]}},
+              "inventory":[{"identity":{"persona":"MOBILITY_GW"}}],
+              "unqualified_personas":["CORE_SWITCH"]}
+        rows=assignment_review(data)["rows"]
+        self.assertEqual([r["function_context"] for r in rows],[
+            "hybrid_nac_not_network_scope","function_in_inventory_not_collected",
+            "function_not_observed_in_inventory","function_outside_network_adapter","function_adapter_unqualified"])
+        self.assertTrue(all(not r["scope_resolved"] and not r["recipients"] for r in rows))
+        del data["inventory"]
+        self.assertEqual(assignment_review(data)["rows"][2]["function_context"],"function_inventory_unavailable")

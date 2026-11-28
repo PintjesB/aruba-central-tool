@@ -1,6 +1,6 @@
 """Review captured Library assignment recipients and conflicting scope definitions."""
 from collections import defaultdict
-from .central_tool import canonical, profile_body, field_differences
+from .central_tool import canonical, profile_body, field_differences, NETWORK_PERSONAS
 from .consolidation import scope_memberships
 from .inheritance_review import ATOMIC
 from .scope_evidence import assignment_identity
@@ -12,6 +12,25 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
     assignment_view = library.get("assignments") or {}
     entries = bundle["results"]
     direct = (bundle.get("keyed_profile_details") or {}).get("profiles", {})
+    inventory = bundle.get("inventory")
+    inventory_functions = {record["identity"].get("persona") for record in inventory
+                           if isinstance(record, dict) and isinstance(record.get("identity"), dict)
+                           and isinstance(record["identity"].get("persona"), str)} if isinstance(inventory, list) else set()
+    unqualified = set(bundle.get("unqualified_personas") or [])
+    def function_context(persona):
+        if persona in entries:
+            return "function_collected"
+        if persona in unqualified:
+            return "function_adapter_unqualified"
+        if persona == "HYBRID_NAC":
+            return "hybrid_nac_not_network_scope"
+        if persona not in NETWORK_PERSONAS:
+            return "function_outside_network_adapter"
+        if persona in inventory_functions:
+            return "function_in_inventory_not_collected"
+        if not isinstance(inventory, list):
+            return "function_inventory_unavailable"
+        return "function_not_observed_in_inventory"
     keyed = defaultdict(list)
     for record in (bundle.get("keyed_assignment_details") or {}).get("records", []):
         if isinstance(record, dict):
@@ -140,6 +159,7 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
                      "scope_name": source.get("name") or sid if source else sid, "scope_kind": source["kind"] if source else "unknown",
                      "library_present": expected is not None, "scope_resolved": source is not None,
                      "scope_resolution":scope_state,"other_scope_contexts":other_contexts,
+                     "function_context": function_context(persona),
                      "assignment_evidence_state": assignment_state, "individual_assignment_observations": individual_records,
                      "recipients": recipients, "known_count": len(known), "unknown_count": len(unknown)}
         if library_conflict:
