@@ -348,6 +348,11 @@ def policy_rule_groups(bundle):
     """Deduplicate identical captured policy bodies per function and identity."""
     from .standard_evidence import conflicting_profiles
     groups = {}
+    from .policy_service_review import service_evidence
+    service_views={(persona,row["scope"]):row.get("effective_view",{})
+                   for persona,entry in bundle["results"].items()
+                   for row in entry["modules"].get("net-services",{}).get("scope_results",[])}
+    service_views["Library",""]=(bundle.get("library") or {}).get("modules",{}).get("net-services",{})
     library = (bundle.get("library") or {}).get("modules", {}).get("policies", {})
     library_conflicts = conflicting_profiles(bundle,"Library","policies","",library,side="library")
     def add_conflicts(persona,module,location,conflicts):
@@ -383,6 +388,10 @@ def policy_rule_groups(bundle):
                 else:
                     group["library_body_relation"] = "different_body"
         group["locations"].append(location)
+        if module == "policies":
+            evidence=service_evidence(bundle,persona,location["scope"],body,service_views.get((persona,location["scope"]),{}))
+            if evidence:
+                group.setdefault("service_definition_evidence",[]).append({"location":location,"references":evidence})
     modules = ("policies", "role-acls")
     for persona, entry in sorted(bundle["results"].items()):
         scopes = {s["id"]: s for s in entry["scopes"]}
