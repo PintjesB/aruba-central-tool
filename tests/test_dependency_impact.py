@@ -81,3 +81,31 @@ class ImpactTests(unittest.TestCase):
         self.assertEqual(len(report["paths"]),1)
         self.assertEqual(report["paths"][0]["persona"],"ACCESS_SWITCH")
         self.assertFalse(report["complete"])
+
+
+    def test_lazy_impact_evidence_preserves_exact_selection(self):
+        import tempfile,json
+        from pathlib import Path
+        from unittest.mock import patch
+        from aruba_central.config_app import Workspace
+        from aruba_central.review_dispositions import snapshot_binding,digest
+        from test_consolidation import fixture
+        with tempfile.TemporaryDirectory() as directory:
+            name="config-audit-test.json"
+            (Path(directory)/name).write_text(json.dumps(fixture()))
+            w=Workspace(directory)
+            root=("layer2-vlan","10")
+            refs=[edge(("roles","role-"+str(i)),root) for i in range(120)]
+            refs[-1]["private-evidence"]="last-private-marker"
+            query={"snapshot":name,"module":root[0],"identity":root[1]}
+            with patch.object(w,"advanced_snapshot",return_value={"references":refs}):
+                page=w.impact(query)
+                self.assertNotIn("last-private-marker",page)
+                self.assertIn("of 120 observations",page)
+                self.assertIn("data-inspect-url",page)
+                bundle=w.reviewed_snapshot(name)
+                key=digest([snapshot_binding(w,name,bundle),*root,"",""])
+                detail=w.impact({**query,"detail":"direct","index":"119","binding":key})
+                self.assertIn("last-private-marker",detail)
+                with self.assertRaises(ValueError):
+                    w.impact({**query,"identity":"20","detail":"direct","index":"119","binding":key})
