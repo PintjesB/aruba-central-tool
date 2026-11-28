@@ -99,9 +99,9 @@ def browser_benchmark(directory, snapshot, *, repeat=3, executable=None):
         server.server_close()
         thread.join()
     index = workspace.configuration_search_index(bundle)
-    index_summary = {"status": "streaming_fallback" if index is None else "indexed"}
+    index_summary = workspace.configuration_search_diagnostics(bundle)
     if index is not None:
-        index_summary.update(sources=len(index), leaves=sum(len(fields) for _, _, fields in index))
+        index_summary["leaves"] = index_summary["observed_leaves"]
     return {"schema": 1, "kind": "anonymous_browser_benchmark", "repeat": repeat,
             "search_index": index_summary,
             "viewport": {"width": 1440, "height": 900}, "warm_reviewed_snapshot": True,
