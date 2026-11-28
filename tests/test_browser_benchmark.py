@@ -25,8 +25,22 @@ class BrowserBenchmarkTests(unittest.TestCase):
                     scope["metadata"] = {"serial":scope["id"]}
             data["library"]["assignments"]["rows"] = [{"profile-type": "layer2-vlan", "profile-instance": "30",
                 "scope-id": "3", "device-function": "ACCESS_SWITCH"}]
-            (Path(directory) / name).write_text(json.dumps(data))
+            from test_policy_rule_review import policy,rule
             from copy import deepcopy
+            entry=data["results"]["ACCESS_SWITCH"]
+            def view(profiles):
+                return {"status":"list_parsed","count_confirmed":True,"profiles":profiles}
+            entry["modules"]["roles"]={"scope_results":[
+                {"scope":sid,"scope_kind":"device","local_view":view({}),
+                 "effective_view":view({"PrivateRole":{"name":"PrivateRole","enable":sid=="3"},
+                                        "privaterole":{"name":"privaterole"}})} for sid in ("3","4")]}
+            entry["modules"]["policies"]={"scope_results":[
+                {"scope":"3","scope_kind":"device","local_view":view({}),
+                 "effective_view":view({"test":policy([rule(1),rule(2)])})}]}
+            entry["modules"]["sw-port-profiles"]={"scope_results":[
+                {"scope":"3","scope_kind":"device","local_view":view({}),
+                 "effective_view":view({"Port":{"profile-name":"Port","switchport":{"access-vlan":20}}})}]}
+            (Path(directory) / name).write_text(json.dumps(data))
             previous = "config-audit-private-previous.json"
             prior = deepcopy(data)
             prior["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"][2]["effective_view"]["profiles"]["20"]["name"] = "Private prior value"
@@ -41,6 +55,9 @@ class BrowserBenchmarkTests(unittest.TestCase):
             self.assertIn("assignments_inspector", result["stages"])
             self.assertIn("history_drift",result["stages"])
             self.assertIn("history_drift_inspector",result["stages"])
+            for stage in ("identity_review","identity_review_inspector","policy_variants","policy_variants_inspector",
+                          "policy_rules","policy_rules_inspector","dependency_impact","dependency_impact_inspector","remediation"):
+                self.assertIn(stage,result["stages"])
             for stage in ("field_search", "field_search_alternate", "field_search_multi_term", "grouped_search"):
                 self.assertIn(stage, result["stages"])
                 self.assertGreater(result["stages"][stage]["first_navigation_seconds"], 0)
@@ -53,6 +70,7 @@ class BrowserBenchmarkTests(unittest.TestCase):
             self.assertNotIn(name, exported)
             self.assertNotIn(previous,exported)
             self.assertNotIn("Private prior value",exported)
+            self.assertNotIn("PrivateRole",exported)
             self.assertNotIn("Switch A", exported)
             self.assertNotIn("127.0.0.1", exported)
 
