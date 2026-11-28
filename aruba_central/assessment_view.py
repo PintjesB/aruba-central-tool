@@ -5,6 +5,9 @@ from .history_view import private_export
 
 
 def assessment_view(workspace, query):
+    if query.get("mode") == "identities":
+        from .identity_review_view import identity_view
+        return identity_view(workspace,query)
     if query.get("mode") == "keyed":
         from .keyed_evidence_view import keyed_view
         return keyed_view(workspace, query)
@@ -43,6 +46,7 @@ def assessment_view(workspace, query):
                   f'<a href="{url(root, route, snapshot=name, **params)}">Open worklist</a>')
     evidence = [
         linked("Individual profile discrepancies", "Review", "Inspect unresolved schemas and exact field differences", "assessment", mode="keyed"),
+        linked("Similar exact profile identities", report["identity_collisions"]["groups"], "Inspect case or whitespace collisions without merging names", "assessment", mode="identities"),
         linked("Unparsed scope views", expected-parsed, "Collect or interpret configuration evidence", "coverage"),
         linked("Parsed views without confirmed count", parsed-confirmed, "Verify missing collection counts", "coverage"),
         linked("Unresolved reference observations", engineering["unresolved_references"], "Establish target identity and visibility", "advanced", workflow="references"),

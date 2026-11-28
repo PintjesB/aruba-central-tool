@@ -15,6 +15,8 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None):
     engineering = advanced_analysis(bundle) if engineering is None else engineering
     assignments = assignment_review(bundle) if assignments is None else assignments
     variants = policy_variants(bundle)
+    from .identity_review import identity_collisions
+    collisions = identity_collisions(bundle)
     rules = policy_rule_groups(bundle)
     sequences = policy_sequence_reviews(bundle)
     coverage = Counter()
@@ -43,6 +45,7 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None):
                 "unknown_scopes": sum(not row["scope_resolved"] for row in assignments["rows"]),
                 "invalid": len(assignments["invalid_rows"]),
                 "individual_conflicts": sum(bool(r.get("library_individual_conflict") or any(d.get("individual_conflict") for d in r["recipients"])) for r in assignments["rows"])},
+            "identity_collisions": {"groups":len(collisions), "same_context_groups":sum(r["same_context_collisions"]>0 for r in collisions)},
             "variants": {"groups": len(variants), "explicit": sum(v["status"] == "explicit_differences" for v in variants)},
             "policy_rules": {"groups": len(rules), "groups_with_findings": sum(bool(row["findings"]) for row in rules),
                 "observations": sum(len(row["findings"]) for row in rules),
