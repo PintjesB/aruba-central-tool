@@ -78,12 +78,14 @@ def nac_bindings(bundle, registrations, authorization):
             for attr in attrs:
                 role_attributes.append({"policy_id":policy["id"],"policy":policy["name"],"rule":position,"rule_index":index,
                                         "policy_enabled":policy["enabled"],"rule_enabled":enabled if index is not None else None,
+                                        "captured_rule_index":policy["rules"][index].get("captured_index",index) if index is not None else None,
                                         "enforcement_qualified":qualified,**attr})
                 if attr["kind"] != "defined-attr" or attr["name"] != "ATTR_VLAN_ID":
                     continue
                 vid = vlan_identity(attr["value"])
                 vlan_targets.append({"policy_id": policy["id"], "policy": policy["name"], "rule": position, "rule_index": index,
                     "policy_enabled": policy["enabled"], "rule_enabled": enabled if index is not None else None,
+                    "captured_rule_index":policy["rules"][index].get("captured_index",index) if index is not None else None,
                     "value": attr["value"], "vlan_id": vid, "source": attr["source"],
                     "status": "conditional_vlan_candidate" if qualified and vid is not None else "unqualified_vlan_attribute"})
     identities = {v["vlan_id"] for v in vlan_targets if v["vlan_id"] is not None}
