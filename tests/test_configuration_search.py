@@ -254,3 +254,24 @@ class ConfigurationSearchTests(unittest.TestCase):
             replacement = workspace.configuration_search_index(second)
             self.assertIsNot(replacement, index)
             self.assertEqual(search_configuration(second, "new-value", index=replacement)["total"], 1)
+
+
+    def test_index_deduplicates_exact_ordered_bodies_without_losing_observations(self):
+        from aruba_central.configuration_search import build_search_index
+        bundle = {"results": {}, "nac_configuration": {"example": {"status": "list_parsed",
+            "profiles": {str(i): {"name": "needle", "flag": False} for i in range(100)}}}}
+        bundle["nac_configuration"]["example"]["profiles"]["reordered"] = {"flag": False, "name": "needle"}
+        bundle["nac_configuration"]["example"]["profiles"]["different"] = {"name": "needle", "flag": 0}
+        diagnostics = {}
+        index = build_search_index(bundle, max_leaves=6, diagnostics=diagnostics)
+        self.assertIsNotNone(index)
+        self.assertEqual(diagnostics["unique_bodies"], 3)
+        self.assertEqual(diagnostics["unique_leaves"], 6)
+        self.assertEqual(diagnostics["observed_leaves"], 204)
+        self.assertEqual(search_configuration(bundle, "NAC", index=index), search_configuration(bundle, "NAC"))
+        self.assertEqual(grouped_search(bundle, "NAC", index=index), grouped_search(bundle, "NAC"))
+        self.assertIs(index[0][2], index[1][2])
+        self.assertIsNot(index[0][2], index[-2][2])
+        rejected = {}
+        self.assertIsNone(build_search_index(bundle, max_leaves=5, diagnostics=rejected))
+        self.assertEqual(rejected["reason"], "leaf_limit")
