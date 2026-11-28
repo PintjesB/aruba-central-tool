@@ -177,3 +177,28 @@ class PolicyRuleTests(unittest.TestCase):
             self.assertNotIn("conditional_security_preview",rule_review("policies",other))
         body["security-policy"]["policy-rule"]=[rule(1),rule(1)]
         self.assertFalse(rule_review("policies",body)["conditional_security_preview"]["order_verified"])
+
+    def test_unsupported_condition_structure_is_separate_from_semantic_findings(self):
+        first=rule(1)
+        first["condition"]["rule-type"]="RULE_TCP"
+        first["condition"]["transport-fields"]={"destination-port":{"operator":"COMPARISON_EQ","min":443}}
+        second={**first,"position":2,"action":{"type":"ACTION_DENY"}}
+        third={**first,"position":3,"time-profile":"private-time"}
+        fourth={**first,"position":4,"condition":{**first["condition"],"private-condition":"private-value"}}
+        result=rule_review("policies",policy([fourth,second,third,first]))
+        self.assertEqual(result["qualified_match_rules"],0)
+        self.assertFalse(result["findings"])
+        self.assertEqual(len(result["structural_condition_pairs"]),1)
+        self.assertFalse(result["structural_condition_pairs"][0]["same_action_body"])
+        self.assertEqual(result["structural_condition_pairs"][0]["earlier_position"],1)
+        self.assertEqual(result["structural_condition_pairs"][0]["later_position"],2)
+        self.assertEqual(sum(r["rules"] for r in result["unsupported_predicate_shapes"]),4)
+        import json
+        self.assertNotIn("private",json.dumps(result["unsupported_predicate_shapes"]))
+        self.assertTrue(any(r["transport_fields"] and r["rule_kind"]=="RULE_TCP" for r in result["unsupported_predicate_shapes"]))
+        body=policy([first,second])
+        del body["type"]
+        conditional=rule_review("policies",body)
+        self.assertFalse(conditional["findings"])
+        self.assertEqual(len(conditional["conditional_security_preview"]["structural_condition_pairs"]),1)
+        self.assertFalse(conditional["safe_to_apply"])
