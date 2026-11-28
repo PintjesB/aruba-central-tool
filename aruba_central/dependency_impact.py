@@ -18,7 +18,13 @@ def dependency_impact(references, module, identity, *, persona="", scope="", lim
     root_contexts = set()
     direct = []
     unresolved = []
+    tenant_candidates = []
     for ref in references:
+        # Tenant policy applicability and device location are unknown.
+        # Preserve possible consumers even for a scope-filtered device
+        # selection, but do not attach them to that selected scope.
+        if ref.get("source_evidence")=="nac_enforcement" and ref["target_module"]==module and ref["target"] in (identity,None):
+            tenant_candidates.append(ref)
         if persona and ref["persona"] != persona or scope and str(ref["scope"]) != scope:
             continue
         source = (ref["source_module"], ref["source"])
@@ -93,4 +99,5 @@ def dependency_impact(references, module, identity, *, persona="", scope="", lim
     return {"module": module, "identity": identity, "direct": direct,
             "unresolved_target_observations": unresolved, "paths": paths,
             "unqualified_boundaries":boundaries,"boundary_truncated":boundary_truncated,
+            "conditional_tenant_observations":tenant_candidates,
             "truncated": truncated, "complete": False, "safe_to_apply": False}
