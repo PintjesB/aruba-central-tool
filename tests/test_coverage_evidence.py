@@ -49,8 +49,8 @@ class CoverageEvidenceTests(unittest.TestCase):
         records = [(i, f"row-{i}") for i in range(250)]
         args = ("/local/", "capture.json")
         batch, controls = coverage_batch(*args, {}, "hierarchy", records, lambda row: row[1])
-        self.assertEqual(batch, records[:100])
-        self.assertIn("Next batch", controls)
+        self.assertEqual(batch, records[:15])
+        self.assertIn("Open full table", controls)
         query = {"coverage_table": "hierarchy", "coverage_offset": "100", "gap_reason": "unverified"}
         batch, controls = coverage_batch(*args, query, "hierarchy", records, lambda row: row[1])
         self.assertEqual(batch, records[100:200])
@@ -59,7 +59,7 @@ class CoverageEvidenceTests(unittest.TestCase):
                                          "hierarchy", records, lambda row: row[1])
         self.assertEqual(batch, [(249, "row-249")])
         self.assertIn("1 matching rows", controls)
-        self.assertEqual(coverage_batch(*args, query, "operations", records, lambda row: row[1])[0], records[:100])
+        self.assertEqual(coverage_batch(*args, query, "operations", records, lambda row: row[1])[0], records[:15])
         with self.assertRaises(ValueError):
             coverage_batch(*args, {**query, "coverage_offset": "-1"}, "hierarchy", records, lambda row: row[1])
 
@@ -78,7 +78,7 @@ class CoverageEvidenceTests(unittest.TestCase):
             initial = workspace.coverage({"snapshot": name})
             for key in ("library", "supplemental"):
                 overview = section(initial, key)
-                self.assertIn("Next batch", overview)
+                self.assertIn("Open full table", overview)
                 self.assertNotIn("module=example-module-124", overview)
                 result = section(workspace.coverage({"snapshot": name, "coverage_table": key,
                     "coverage_q": "example-module-124"}), key)
