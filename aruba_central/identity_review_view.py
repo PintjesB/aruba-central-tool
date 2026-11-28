@@ -1,5 +1,4 @@
 """Private worklist for exact profile identity collisions."""
-from .identity_review import identity_collisions
 from .workspace_views import load,url,select
 from .workspace_ui import e,page,intro,metrics,table,tr,badge,raw,pretty,persona_label,module_label
 from .review_dispositions import snapshot_binding
@@ -11,7 +10,7 @@ def identity_view(workspace,query):
     if empty:
         return empty
     root,name,bundle,picker=loaded
-    rows=identity_collisions(bundle)
+    rows=workspace.identity_snapshot(bundle)
     binding=snapshot_binding(workspace,name,bundle)
     common={"snapshot":name,"mode":"identities"}
     if query.get("detail") or query.get("export"):
