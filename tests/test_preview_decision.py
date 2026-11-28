@@ -1,5 +1,23 @@
 import unittest
 from aruba_central.workspace_views import ADVISOR_JS
+from contextlib import contextmanager
+
+
+@contextmanager
+def served_advisor(workspace,name,finding):
+    from http.server import ThreadingHTTPServer
+    from threading import Thread
+    from urllib.parse import urlencode
+    from aruba_central.config_app import handler_for
+    server=ThreadingHTTPServer(("127.0.0.1",0),handler_for(workspace))
+    thread=Thread(target=server.serve_forever,daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/{workspace.token}/advisor?"+urlencode({"snapshot":name,"finding":finding})
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 class PreviewDecisionTests(unittest.TestCase):
@@ -29,14 +47,14 @@ class PreviewDecisionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             name = "config-audit-example.json"
             (Path(directory) / name).write_text(json.dumps(fixture()))
-            html = Workspace(directory).advisor({"snapshot": name, "finding": "promote_local"})
-            with sync_playwright() as playwright:
+            workspace=Workspace(directory)
+            with served_advisor(workspace,name,"promote_local") as address, sync_playwright() as playwright:
                 browser = playwright.chromium.launch(executable_path=shutil.which("google-chrome") or shutil.which("chromium"), args=["--no-sandbox"])
                 try:
                     tab = browser.new_page()
                     errors = []
                     tab.on("pageerror", lambda exc: errors.append(str(exc)))
-                    tab.set_content(html)
+                    tab.goto(address)
                     row = tab.locator('#advisor-table tr[data-action="promote_local"]:visible').first
                     row.locator(".choose").check()
                     tab.locator("#open-preview").click()
@@ -61,6 +79,11 @@ class PreviewDecisionTests(unittest.TestCase):
                     self.assertFalse(validated["safe_to_apply"])
                     self.assertEqual(validated["observed_recipient_pairs"], len(exported["bulk_review"]["known_recipients"]))
                     self.assertEqual(validated["uncertain_recipient_pairs"], len(exported["bulk_review"]["unknown_recipients"]))
+                    compact=json.loads(row.locator(".choose").get_attribute("data-plan"))
+                    self.assertNotIn("local",compact)
+                    self.assertNotIn("consumers",compact["dependency_review"])
+                    self.assertIn("local",exported["recommendations"][0])
+                    self.assertIn("consumers",exported["recommendations"][0]["dependency_review"])
                     self.assertEqual(errors, [])
                 finally:
                     browser.close()
@@ -133,12 +156,11 @@ class PreviewDecisionTests(unittest.TestCase):
             name = "config-audit-example.json"
             (Path(directory)/name).write_text(json.dumps(fixture()))
             workspace = Workspace(directory)
-            html = workspace.advisor({"snapshot":name,"finding":"reuse_library"})
-            with sync_playwright() as playwright:
+            with served_advisor(workspace,name,"reuse_library") as address, sync_playwright() as playwright:
                 browser=playwright.chromium.launch(executable_path=shutil.which("google-chrome") or shutil.which("chromium"),args=["--no-sandbox"])
                 try:
                     tab=browser.new_page()
-                    tab.set_content(html)
+                    tab.goto(address)
                     row=tab.locator('#advisor-table tr[data-action="reuse_library"]:visible').first
                     row.locator(".choose").check()
                     tab.locator("#open-preview").click()
@@ -153,3 +175,24 @@ class PreviewDecisionTests(unittest.TestCase):
                     self.assertTrue(plan["recommendations"][0]["selected_destination"]["reuse_existing"])
                 finally:
                     browser.close()
+
+
+    def test_export_evidence_rejects_stale_capture(self):
+        import tempfile,json
+        from pathlib import Path
+        from aruba_central.config_app import Workspace
+        from aruba_central.review_dispositions import snapshot_binding
+        from aruba_central.workspace_views import advisor_export_evidence
+        from test_consolidation import fixture
+        with tempfile.TemporaryDirectory() as directory:
+            name="config-audit-example.json"
+            path=Path(directory)/name
+            path.write_text(json.dumps(fixture()))
+            w=Workspace(directory)
+            bundle=w.reviewed_snapshot(name)
+            f=next(r for r in w.consolidation_snapshot(bundle) if r["preview_selectable"] and r["action"]=="promote_local")
+            query={"snapshot":name,"group":f["id"],"binding":snapshot_binding(w,name,bundle)}
+            self.assertEqual(advisor_export_evidence(w,query)["id"],f["id"])
+            path.write_text(path.read_text()+" ")
+            with self.assertRaises(ValueError):
+                advisor_export_evidence(w,query)
