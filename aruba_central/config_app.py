@@ -403,6 +403,7 @@ class Workspace:
         self._advanced_snapshot = None
         self._consolidation_snapshot = None
         self._assessment_snapshot = None
+        self._assignment_snapshot = None
         self._optimization_worklist = None
         self._vlan_summary = None
         self._configuration_search_index = None
@@ -591,6 +592,7 @@ class Workspace:
         self._advanced_snapshot = None
         self._consolidation_snapshot = None
         self._assessment_snapshot = None
+        self._assignment_snapshot = None
         self._optimization_worklist = None
         self._vlan_summary = None
         self._configuration_search_index = None
@@ -644,17 +646,28 @@ class Workspace:
                 return self._consolidation_snapshot
         return profile_recommendations(bundle)
 
+    def assignment_snapshot(self, bundle):
+        """Reuse the unfiltered assignment analysis for the exact active capture."""
+        from .assignment_review import assignment_review
+        with self.snapshot_lock:
+            if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle:
+                if self._assignment_snapshot is None:
+                    self._assignment_snapshot = assignment_review(bundle)
+                return self._assignment_snapshot
+        return assignment_review(bundle)
+
     def assessment_snapshot(self, bundle):
         """Reuse aggregate assessment only for the exact active capture."""
         from .assessment_review import assessment
         findings = self.consolidation_snapshot(bundle)
         engineering = self.advanced_snapshot(bundle)
+        assignments = self.assignment_snapshot(bundle)
         with self.snapshot_lock:
             if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle:
                 if self._assessment_snapshot is None:
-                    self._assessment_snapshot = assessment(bundle, findings=findings, engineering=engineering)
+                    self._assessment_snapshot = assessment(bundle, findings=findings, engineering=engineering, assignments=assignments)
                 return self._assessment_snapshot
-        return assessment(bundle, findings=findings, engineering=engineering)
+        return assessment(bundle, findings=findings, engineering=engineering, assignments=assignments)
 
     def optimization_worklist(self, bundle):
         """Reuse finding rows; local disposition records are always read separately."""
