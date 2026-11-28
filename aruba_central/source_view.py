@@ -51,13 +51,15 @@ def source_view(workspace, query):
                 details += '<h3>' + e(pretty(key)) + '</h3><p>' + e(pretty(obs.get("state", "unavailable"))) + '</p>'
                 if "body" in obs:
                     details += property_table(obs["body"]) + raw(obs.get("annotations"))
+                if obs.get("individual_conflict"):
+                    details += "<h4>Contradictory collection and individual evidence</h4>" + raw(obs["individual_conflict"])
             if row.get("differences"):
                 details += '<h3>Effective device versus scope</h3>' + diff_table(row["differences"], "Device", "Scope")
             rows.append(tr(e(pretty(row["kind"])), e(row["name"]), e(row.get("identity", "")),
                            badge(SOURCE_LABELS.get(row["status"], pretty(row["status"]))), inspect("Scope evidence", details, "Compare")))
         body += table(("Precedence", "Scope", "Identity", "Observed relationship", ""), rows)
         body += '<h3>Uncertainty and restrictions</h3>' + ("<ul>" + "".join("<li>" + e(b) + "</li>" for b in result["blockers"]) + "</ul>" if result["blockers"] else "<p>No contradiction in the captured qualified chain. Coverage is not exhaustive.</p>") + '</section>'
-        body += '<section><h2>Library evidence</h2><p>' + e(pretty(result["library"]["state"])) + '</p>' + property_table(result["library"].get("body")) + '<h3>Observed assignments on the chain</h3>' + raw(result["observed_assignments"]) + '</section>'
+        body += '<section><h2>Library evidence</h2><p>' + e(pretty(result["library"]["state"])) + '</p>' + property_table(result["library"].get("body")) + (raw(result["library"]["individual_conflict"]) if result["library"].get("individual_conflict") else "") + '<h3>Observed assignments on the chain</h3>' + raw(result["observed_assignments"]) + '</section>'
         body += f'<section><a href="{url(root, "impact", snapshot=name, persona=persona, scope=device, module=module, identity=identity)}">Trace references on this device</a></section>'
     return page("Configuration sources", body, workspace.nav(name), extra_css=SOURCE_CSS)
 
@@ -72,6 +74,7 @@ SOURCE_LABELS = {
     "unavailable": "Read unavailable",
     "absent": "Profile absent (count confirmed)",
     "absence_unverified": "Profile absence unverified",
+    "individual_evidence_conflict": "Contradictory individual evidence",
 }
 
 
@@ -82,7 +85,7 @@ def inheritance_path(result, root, snapshot, persona):
         scope = row["scope"]
         winner = scope is not None and scope == result["observed_source_scope"]
         status = row["status"]
-        tone = "source-winner" if winner else "source-gap" if status in ("membership_unknown", "source_unverified", "unavailable", "absence_unverified") else ""
+        tone = "source-winner" if winner else "source-gap" if status in ("membership_unknown", "source_unverified", "unavailable", "absence_unverified", "individual_evidence_conflict") else ""
         local = row.get("local", {}).get("state", "unavailable")
         effective = row.get("effective", {}).get("state", "unavailable")
         fields = row.get("differences", [])
