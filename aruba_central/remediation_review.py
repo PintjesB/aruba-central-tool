@@ -82,6 +82,11 @@ def verify_override(before, after, candidate_id, *, confirmed=False):
     candidate = next((f for f in override_candidates(before) if f["id"] == candidate_id), None)
     if candidate is None:
         raise ValueError("Unknown or unqualified prior override candidate")
+    return _verify_override_candidate(before, after, candidate, identity_checks)
+
+
+def _verify_override_candidate(before, after, candidate, identity_checks):
+    """Use a candidate already qualified against this exact prior capture."""
     persona, module, identity = (candidate[k] for k in ("persona", "module", "identity"))
     rows = []
     for source in candidate["sources"]:

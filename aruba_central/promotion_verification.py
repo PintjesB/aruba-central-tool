@@ -18,6 +18,11 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
     candidate = next((f for f in promotion_candidates(before) if f["id"] == candidate_id), None)
     if candidate is None:
         raise ValueError("Unknown or unqualified prior promotion")
+    return _verify_promotion_candidate(before, after, candidate, destination, identity_checks)
+
+
+def _verify_promotion_candidate(before, after, candidate, destination, identity_checks):
+    """Use a candidate already qualified against this exact prior capture."""
     persona, module, identity = (candidate[k] for k in ("persona", "module", "identity"))
     sources = candidate["sources"]
     reuse = candidate.get("action") == "reuse_library"

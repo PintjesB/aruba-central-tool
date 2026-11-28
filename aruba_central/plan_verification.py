@@ -11,8 +11,8 @@ from pathlib import Path
 from .config_app import Workspace
 from .review_dispositions import snapshot_binding
 from .review_manifest import reconstruct_selection
-from .remediation_review import comparable, verify_override
-from .promotion_verification import verify_promotion
+from .remediation_review import comparable, _verify_override_candidate
+from .promotion_verification import _verify_promotion_candidate
 from .central_tool import write_private
 
 
@@ -39,11 +39,21 @@ def verify_plan(workspace, manifest, after_name, *, confirmed=False):
     counts = Counter()
     for proposal in plan["recommendations"]:
         fid, action = proposal["id"], proposal["action"]
+        # Reconstruction already qualified the proposal against the exact
+        # unchanged prior capture. Do not repeat tenant-wide recommendation
+        # generation for every selected proposal. Strip reconstruction-only
+        # additions to preserve the standalone remediation report structure.
+        candidate = {k: value for k, value in proposal.items()
+                     if k not in ("selected_destination", "recipient_evidence", "dependency_review")}
         if action == "remove_override":
-            report = verify_override(before, after, fid, confirmed=True)
+            if not candidate["sources"] or not all(s["kind"] == "device" for s in candidate["sources"]):
+                raise ValueError("Unsupported override verification candidate")
+            report = _verify_override_candidate(before, after, candidate, identity_checks)
         elif action in ("reuse_library", "promote_local"):
+            if not candidate["sources"]:
+                raise ValueError("Unsupported promotion verification candidate")
             destination = "library" if action == "reuse_library" else destinations[fid]
-            report = verify_promotion(before, after, fid, destination, confirmed=True)
+            report = _verify_promotion_candidate(before, after, candidate, destination, identity_checks)
         else:
             raise ValueError("Unsupported review workflow")
         counts[action] += 1
