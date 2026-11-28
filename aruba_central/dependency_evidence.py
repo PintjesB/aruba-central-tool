@@ -12,14 +12,19 @@ def qualify_reference_edges(bundle, references, effective):
                        for module, data in entry["modules"].items()}
              for persona, entry in bundle["results"].items()}
     cache = {}
+    def individual(persona, sid, module, identity, side):
+        if identity is None:
+            return {}
+        return direct.get(persona, {}).get("" if persona == "Library" else str(sid), {}).get(
+            module, {}).get(identity, {}).get(side, {})
+
     def contradiction(persona, sid, module, identity, side):
         if identity is None:
             return False
         key = persona, sid, module, identity, side
         if key in cache:
             return cache[key]
-        read = direct.get(persona, {}).get("" if persona == "Library" else str(sid), {}).get(
-            module, {}).get(identity, {}).get(side, {})
+        read = individual(persona, sid, module, identity, side)
         if read.get("status") != "identity_observed" or not isinstance(read.get("profile"), dict):
             cache[key] = False
             return False
@@ -42,8 +47,17 @@ def qualify_reference_edges(bundle, references, effective):
         if side is None:
             continue
         source_conflict = contradiction(persona, sid, ref["source_module"], ref["source"], side)
-        target_conflict = contradiction(persona, sid, ref["target_module"], ref["target"],
-                                        "library" if persona == "Library" else "effective")
+        target_side = "library" if persona == "Library" else "effective"
+        target_read = individual(persona, sid, ref["target_module"], ref["target"], target_side)
+        if target_read:
+            # A positive individual response can add target evidence, but does
+            # not establish collection completeness or deployment. Preserve
+            # the original traversal state, including confirmed contradictions.
+            target_status = target_read.get("status")
+            if target_status == "identity_observed" and not isinstance(target_read.get("profile"), dict):
+                target_status = "schema_unresolved"
+            ref["target_individual_status"] = target_status or "unqualified"
+        target_conflict = contradiction(persona, sid, ref["target_module"], ref["target"], target_side)
         if source_conflict or target_conflict:
             ref["previous_status"] = ref["status"]
             ref["status"] = "conflicting_observation"
