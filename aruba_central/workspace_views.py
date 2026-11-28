@@ -1034,6 +1034,17 @@ def policy_rule_detail(finding):
     if finding.get("unsupported_reasons"):
         detail += '<h3>Unsupported rule observations</h3>'+table(("Reason","Rules"),[
             tr(e(pretty(reason)),str(count)) for reason,count in sorted(finding["unsupported_reasons"].items())])
+    if finding.get("unsupported_predicate_shapes"):
+        detail += '<h3>Unsupported predicate structure</h3><p>These fixed categories describe captured shapes, not matching semantics.</p>'+table(("Reason","Condition type","Rule type","Source","Destination","Additional sections","Rules"),[
+            tr(e(pretty(v["reason"])),e(pretty(v["condition_shape"])),e(v["rule_kind"]),e(v["source_kind"]),e(v["destination_kind"]),
+               e(", ".join(pretty(k) for k in ("service_fields","transport_fields","header_fields","additional_fields") if v[k]) or "None"),str(v["rules"]))
+            for v in finding["unsupported_predicate_shapes"]])
+    if finding.get("structural_condition_pairs"):
+        detail += '<h3>Identical unsupported condition records</h3><p>Exact captured condition bodies only. No packet overlap or shadowing claim.</p>'
+        for pair in finding["structural_condition_pairs"]:
+            detail += '<h4>'+e(str(pair["earlier_position"]))+' / '+e(str(pair["later_position"]))+' · '+e("Same action body" if pair["same_action_body"] else "Different action bodies")+'</h4>'+property_table(pair["earlier"])+property_table(pair["later"])
+    if finding.get("structural_condition_pairs_truncated"):
+        detail += '<p class="note">Structural comparison limit reached.</p>'
     if finding.get("acl_unsupported_reasons"):
         detail += '<h3>ACL predicate rejection details</h3>'+table(("Reason","Rules"),[
             tr(e(pretty(reason)),str(count)) for reason,count in sorted(finding["acl_unsupported_reasons"].items())])
@@ -1283,6 +1294,15 @@ def engineering_view(workspace, query):
         section = '<section><h2>Contradictory scope evidence</h2><p>' + str(len(conflicts)) + ' observations excluded from qualified precedence comparisons. Review the exact source chain before choosing a remediation.</p>' + table(("Device", "Profile", "Conflicting scope", "Evidence"), [
             tr(e(r["device"]), e(module_label(r["module"])+" / "+r["identity"]), e(r["conflicting_scope_name"]),
                f'<a href="{url(root,"sources",snapshot=name,persona=r["persona"],device=r["scope"],module=r["module"],identity=r["identity"])}">Trace source</a>') for r in conflicts], search=True) + "</section>"
+        from .policy_sequence_review import library_candidate_groups
+        candidate_groups=library_candidate_groups(sequence_reports)
+        if candidate_groups:
+            section += '<section><h2>Distinct Library-only policy candidates</h2><p>Identical candidate bodies grouped across captured sequences. Not effective findings. Largest 50 groups shown.</p>'+table(("Earlier policy","Later policy","Relationship","Action bodies","Occurrences","Captures",""),[
+                tr(e(g["finding"]["earlier_policy"]),e(g["finding"]["later_policy"]),
+                   e(pretty(g["finding"].get("condition_relationship","unverified"))),
+                   e("Same" if g["finding"]["same_action"] else "Different"),
+                   str(g["occurrences"]),str(g["captures"]),policy_control("sequences",g["representative_index"],"Inspect representative"))
+                for g in candidate_groups[:50]])+'</section>'
         key, label, count, content = panels[-1]
         panels[-1] = (key, label, count, content + section)
     rows = []
@@ -1305,7 +1325,8 @@ def engineering_view(workspace, query):
           ("Module", "Policy", "Function", "Locations", "Rules", "Unsupported", "Observations", "Evidence", ""), rows, counts["rules"])
     if selected == "rules":
         sequence_rows = []
-        for index, report in enumerate(workspace.policy_snapshot(bundle, "sequences")):
+        sequence_reports=workspace.policy_snapshot(bundle, "sequences")
+        for index, report in enumerate(sequence_reports):
             sequence_rows.append(tr(e(report["name"]), e(persona_label(report["persona"])), badge(pretty(report["status"])),
                                     e(pretty(report.get("target_context","unknown"))),
                                     str(len(report["entries"])), str(sum(v["status"] != "rules_observed" for v in report["references"])),
