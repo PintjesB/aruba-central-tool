@@ -1002,9 +1002,14 @@ def policy_sequence_detail(report):
     detail = '<p>Observed policy-group order. Cross-policy matches are candidates only; role applicability and resultant device policy remain unverified.</p>'
     detail += '<p>Target context: '+e(pretty(report.get("target_context","unknown")))+'</p>'
     detail += table(("Position", "Referenced policy", "Visibility", "Qualified rules", "Unsupported rules"), [
-        tr(str(ref["position"]), e(ref["name"]), badge(pretty(ref["status"])),
+        tr(str(ref["position"]), e(ref["name"]), badge(pretty(ref["status"]))
+           + ('<small>'+e(pretty(ref["schema_state"]))+'</small>' if ref.get("schema_state") else ""),
            str(ref.get("qualified_rule_count", "Unknown")), str(ref.get("unsupported_rule_count", "Unknown")))
         for ref in report["references"]])
+    alternatives = [(ref, obs) for ref in report["references"] for obs in ref.get("alternative_observations", [])]
+    if alternatives:
+        detail += '<h3>Other captured policy identities</h3><p>Exact names in these contexts are observations only. They do not establish applicability to this sequence.</p>' + table(("Policy","Context","Function","Evidence"), [
+            tr(e(ref["name"]),e(pretty(obs["context"])),e(persona_label(obs.get("persona",""))),e(pretty(obs["status"]))) for ref,obs in alternatives])
     for ref in report["references"]:
         if ref.get("individual_conflict"):
             detail += '<h3>Contradictory policy target: '+e(ref["name"])+'</h3>'+raw(ref["individual_conflict"])
