@@ -466,4 +466,14 @@ class AdvancedTests(unittest.TestCase):
         report=advanced_analysis(data)
         self.assertFalse(report["shadowed"])
         self.assertEqual(report["precedence_conflicts"][0]["conflicting_scope"],"1")
+        self.assertIn("effective",report["precedence_conflicts"][0]["individual_conflict"])
+        # A committed contradiction must also withhold the same source claim.
+        site=data["results"][p]["modules"]["layer2-vlan"]["scope_results"][1]
+        site["local_view"]=captured("Office")
+        data["keyed_profile_details"]["profiles"][p]={"2":{"layer2-vlan":{"10":{"local":{
+            "status":"identity_observed","profile":{"vlan":10,"name":"Other"}}}}}}
+        report=advanced_analysis(data)
+        self.assertFalse(report["shadowed"])
+        self.assertEqual(report["precedence_conflicts"][0]["conflicting_scope"],"2")
+        self.assertIn("local",report["precedence_conflicts"][0]["individual_conflict"])
         self.assertFalse(report["safe_to_apply"])
