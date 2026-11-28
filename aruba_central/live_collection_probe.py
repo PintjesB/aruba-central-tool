@@ -737,6 +737,7 @@ def main():
     modes.add_argument("--specialized", action="store_true", help="Bounded probe of management-server, custom-get-api, failed hierarchy scopes, assignment identities and portal assets")
     modes.add_argument("--nac-service", action="store_true", help="Bounded anonymous DPP and job list/detail qualification")
     modes.add_argument("--performance", action="store_true", help="Bounded selector and page-size qualification")
+    modes.add_argument("--pacing", action="store_true", help="Bounded A/B comparison of strict spacing and compensated pacing")
     modes.add_argument("--change-audit", action="store_true", help="Bounded tenant audit-log capability qualification")
     modes.add_argument("--change-windows", action="store_true", help="Reconcile audit logs across overlapping daily windows")
     modes.add_argument("--change-impact", action="store_true", help="Qualify configuration-specific event impact and inventory-ID hints")
@@ -767,6 +768,9 @@ def main():
             report = change_window_probe(client, previous)
         elif args.change_audit:
             report = change_audit_probe(client, previous)
+        elif args.pacing:
+            from .pacing_probe import pacing_probe
+            report = pacing_probe(client, previous, qualified_scopes(client, previous))
         elif args.performance:
             report = performance_probe(client, previous, args.sample)
         elif args.specialized:
