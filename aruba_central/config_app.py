@@ -404,6 +404,7 @@ class Workspace:
         self._assessment_snapshot = None
         self._optimization_worklist = None
         self._vlan_summary = None
+        self._configuration_search_index = None
         self.state = "idle"
         self.phase = ""
         self.detail = ""
@@ -578,6 +579,7 @@ class Workspace:
             self._assessment_snapshot = None
             self._optimization_worklist = None
             self._vlan_summary = None
+            self._configuration_search_index = None
             bundle = refresh_configuration_review(read_audit(self.directory, name))
             if before != fingerprint():
                 raise ValueError("Snapshot changed while loading; open it again")
@@ -636,6 +638,17 @@ class Workspace:
                     self._optimization_worklist = optimization_worklist(bundle, findings, engineering)
                 return self._optimization_worklist
         return optimization_worklist(bundle, findings, engineering)
+
+    def configuration_search_index(self, bundle):
+        """Cache bounded search preprocessing only for the active capture."""
+        from .configuration_search import build_search_index
+        with self.snapshot_lock:
+            if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle:
+                if self._configuration_search_index is None:
+                    # Tuple also remembers a rejected (oversized) index.
+                    self._configuration_search_index = (build_search_index(bundle),)
+                return self._configuration_search_index[0]
+        return None
 
     def vlan_summary(self, bundle):
         """Reuse snapshot-wide aggregate diagnostics for filtered override views."""
