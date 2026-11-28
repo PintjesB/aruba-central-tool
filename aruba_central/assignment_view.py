@@ -15,8 +15,35 @@ def assignments_view(workspace, query):
     modules = set(library.get("modules", {}))
     modules.update(str(a["profile-type"]) for a in (library.get("assignments") or {}).get("rows", []) if a.get("profile-type"))
     module, persona, identity = (query.get(k, "") for k in ("module", "persona", "identity"))
-    result = assignment_review(bundle, module, persona, identity)
+    result = (assignment_review(bundle, module, persona, identity) if any((module, persona, identity))
+              else workspace.assignment_snapshot(bundle))
     rows = result["rows"]
+    from .review_dispositions import snapshot_binding
+    binding = snapshot_binding(workspace, name, bundle)
+    if query.get("detail") or query.get("export"):
+        if query.get("binding") != binding:
+            raise ValueError("Assignment evidence or snapshot changed; reopen the worklist")
+        if query.get("export") == "1":
+            body = intro("Export private assignment review", "Full filtered captured assignment evidence. Keep this data private.", picker)
+            body += private_export("library-assignment-review", {"snapshot": name, "report": result})
+            return page("Library assignments", body, workspace.nav(name))
+        kind = query.get("detail")
+        if kind not in ("assignment", "overlap"):
+            raise ValueError("Unknown assignment evidence type")
+        try:
+            index = int(query.get("index", ""))
+        except (TypeError, ValueError):
+            raise ValueError("Invalid assignment evidence selector") from None
+        records = rows if kind == "assignment" else result["overlaps"]
+        if not 0 <= index < len(records):
+            raise ValueError("Unknown assignment evidence")
+        row = records[index]
+        content = assignment_detail(row) if kind == "assignment" else raw(row)
+        return '<template data-advisor-evidence><div class="inspector-title"><h2>' + e(row["identity"]) + '</h2></div>' + content + '</template>'
+    common = {"snapshot": name, "module": module, "persona": persona, "identity": identity, "binding": binding}
+    def control(kind, index):
+        endpoint = url(root, "assignments", **common, detail=kind, index=index)
+        return f'<button type="button" class="quiet inspect-trigger" data-inspect data-inspect-url="{endpoint}">Review</button>'
     body = intro("Library assignments", "Inspect observed assignment scopes, known recipients, retained profile visibility and overlapping assignments.", picker)
     body += (f'<section><form class="filter-bar" method="get" action="{e(root + "assignments")}"><input type="hidden" name="snapshot" value="{e(name)}">'
              + select("module", [("", "All modules")] + [(m, module_label(m)) for m in sorted(modules)], module, "Module")
@@ -28,22 +55,25 @@ def assignments_view(workspace, query):
                      ("Overlapping assignments", len(result["overlaps"]), "Known recipient/module combinations"),
                      ("Invalid assignment records", len(result["invalid_rows"]), "Identity incomplete")])
     listing = []
-    for row in rows:
+    for index, row in enumerate(rows):
         counts = Counter(d["status"] for d in row["recipients"])
-        detail = table(("Device", "Result", ""), [
-            tr(e(d["device"]), badge(pretty(d["status"])),
-               inspect(d["device"], diff_table(d["differences"], "Library", "Effective device") + raw(d), "Compare"))
-            for d in row["recipients"]], search=True)
-        detail += '<p>Library definition captured: ' + e(str(row["library_present"])) + '</p>' + raw(row)
         listing.append(tr(e(module_label(row["module"])), e(row["identity"]), e(persona_label(row["persona"])),
                           e(row["scope_name"]), e(pretty(row["scope_kind"])), str(row["known_count"]), str(row["unknown_count"]),
                           str(counts["matching_shared"]), str(counts["different_body"]), str(counts["not_visible"]),
-                          str(counts["unverified"] + counts["matching_source_unverified"]), inspect(row["identity"], detail, "Review")))
+                          str(counts["unverified"] + counts["matching_source_unverified"]), control("assignment", index)))
     body += '<section><h2>Assignment worklist</h2>' + table(("Module", "Profile", "Function", "Scope", "Type", "Known recipients", "Unknown membership", "Shared matches", "Different", "Not visible", "Unverified", ""), listing, search=True) + '</section>'
     body += '<section><h2>Overlapping assignment observations</h2><p>Assignments to overlapping scopes can be intentional. Atomic modules are grouped by module rather than name; overlap does not establish a conflict or prove precedence.</p>'
     body += table(("Function", "Device", "Module", "Identity", "Assignments", ""), [
         tr(e(persona_label(row["persona"])), e(row["device"]), e(module_label(row["module"])), e(row["identity"]),
-           str(len(row["assignments"])), inspect("Overlapping assignments", raw(row), "Review"))
-        for row in result["overlaps"]], search=True) + '</section>'
-    body += '<section><h2>Capture limitations</h2><p>Assignment capture: ' + e(pretty(result["capture_status"])) + '. Counts are observed lower bounds. Unknown membership is not non-membership.</p>' + raw(result["invalid_rows"]) + private_export("library-assignment-review", {"snapshot": name, "report": result}) + '</section>'
+           str(len(row["assignments"])), control("overlap", index))
+        for index, row in enumerate(result["overlaps"])], search=True) + '</section>'
+    body += '<section><h2>Capture limitations</h2><p>Assignment capture: ' + e(pretty(result["capture_status"])) + '. Counts are observed lower bounds. Unknown membership is not non-membership.</p>' + raw(result["invalid_rows"]) + f'<p><a class="button" href="{url(root, "assignments", **common, export="1")}">Export private report JSON</a></p></section>'
     return page("Library assignments", body, workspace.nav(name))
+
+
+def assignment_detail(row):
+    detail = table(("Device", "Result", ""), [
+        tr(e(d["device"]), badge(pretty(d["status"])),
+           inspect(d["device"], diff_table(d["differences"], "Library", "Effective device") + raw(d), "Compare"))
+        for d in row["recipients"]], search=True)
+    return detail + '<p>Library definition captured: ' + e(str(row["library_present"])) + '</p>' + raw(row)
