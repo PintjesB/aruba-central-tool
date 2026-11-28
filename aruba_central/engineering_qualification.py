@@ -6,6 +6,8 @@ from .assessment_review import assessment, SECURITY_REASONS, ACL_REASONS, SEQUEN
 # timestamps, names, identities, values or any raw report structures.
 FIELDS={
     "engineering":("duplicate_groups","repeated_port_groups","ports_in_groups","scope_observations",
+                   "precedence_conflicts","port_conversion_conflicts","port_library_conflicts","port_visibility_conflicts",
+                   "reference_target_collection_incomplete","reference_target_view_unqualified","reference_target_count_confirmed_absence",
                    "unresolved_references","conditional_nac_observations","conflicting_reference_observations",
                    "both_ends","source_only","target_only","other_conflict","unknown_identity","named_target_not_observed","named_target_unqualified"),
     "identity_collisions":("groups","same_context_groups","linked_individual_responses","linked_same_context_responses"),
