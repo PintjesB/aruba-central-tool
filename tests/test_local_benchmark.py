@@ -53,7 +53,7 @@ class LocalBenchmarkTests(unittest.TestCase):
                           "optimization_worklist_lookup", "optimization_worklist_cache_hit", "render_inventory",
                           "render_advisor", "render_advisor_repeat", "render_coverage", "render_entity_search",
                           "render_field_search", "render_library_collection", "render_library_profile", "render_overrides",
-                          "render_engineering_ports", "render_engineering_duplicates", "render_advisor_detail"):
+                          "render_engineering_ports", "render_engineering_duplicates", "render_advisor_detail", "render_override_detail"):
                 self.assertEqual(len(result["stages"][stage]["samples"]), 2)
             self.assertGreater(result["counts"]["render_assessment_bytes"], 0)
             self.assertGreater(result["counts"]["search_observations"], 0)
