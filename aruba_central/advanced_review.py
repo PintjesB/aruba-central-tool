@@ -370,9 +370,14 @@ def profile_reference_observations(module, identity, body, vlans):
         # https://developer.arubanetworks.com/new-central-config/reference/replaceapportprofilesprofilebyid
         # The explicit ranges selector is a mode, not a reference. Unknown
         # selectors and any contradictory named value remain unresolved.
-        if port.get("allowed-vlan-selector") == "VLAN_RANGES" and "allowed-vlan-name" not in port:
+        # A literal range field is positive evidence of configured members
+        # even when the collection omits the selector. Do not infer the
+        # omitted selector or override a conflicting named/all alternative.
+        explicit_ranges = "allowed-vlan-selector" not in port or port["allowed-vlan-selector"] == "VLAN_RANGES"
+        no_named_value = "allowed-vlan-name" not in port
+        if explicit_ranges and no_named_value:
             if any(k in port for k in ("trunk-vlan-ranges","trunk-vlans")) or port.get("trunk-vlan-all") is True:
-                port.pop("allowed-vlan-selector")
+                port.pop("allowed-vlan-selector", None)
                 for key in ("trunk-vlan-ranges","trunk-vlans"):
                     if key in port:
                         yield from numeric(port.pop(key),["switchport",key],True)
