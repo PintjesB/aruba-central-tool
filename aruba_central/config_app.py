@@ -1338,6 +1338,10 @@ def handler_for(workspace):
                     body = configuration_html(bundle).replace("<main>", f'<main><p><a href="{root}report?{e(urlencode({"snapshot": query["snapshot"]}))}">Back to workspace</a></p>', 1)
                 elif parsed.path == root + "overrides":
                     body = workspace.overrides(query)
+                elif parsed.path == root + "advisor-plan":
+                    from .workspace_views import advisor_export_evidence
+                    self.reply(json.dumps(advisor_export_evidence(workspace,query)),content_type="application/json; charset=utf-8")
+                    return
                 elif parsed.path == root + "advisor":
                     body = workspace.advisor(query)
                 elif parsed.path == root + "nac":
