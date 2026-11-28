@@ -11,7 +11,7 @@ from .central_tool import write_private
 from .config_app import Workspace, audit_files, handler_for
 
 
-def browser_benchmark(directory, snapshot, *, repeat=3, executable=None):
+def browser_benchmark(directory, snapshot, *, repeat=3, executable=None, previous=None):
     if type(repeat) is not int or not 1 <= repeat <= 5:
         raise ValueError("Repeat must be between 1 and 5")
     from playwright.sync_api import sync_playwright
@@ -34,6 +34,8 @@ def browser_benchmark(directory, snapshot, *, repeat=3, executable=None):
         ("port_mapping", "advanced", {"workflow": "ports"}),
         ("duplicates", "advanced", {"workflow": "duplicates"}),
     ]
+    if previous is not None:
+        routes.append(("history_drift", "drift", {"previous":previous,"confirmed":"yes"}))
     samples = {}
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(workspace))
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -67,6 +69,8 @@ def browser_benchmark(directory, snapshot, *, repeat=3, executable=None):
                         response = tab.goto(root + route + "?" + urlencode({"snapshot": snapshot, **params}), wait_until="load")
                         if response is None or response.status != 200:
                             raise ValueError("Local page unavailable: " + label)
+                        if label == "history_drift" and not tab.get_by_role("heading", name="Change worklist").is_visible():
+                            raise ValueError("Historical comparison unavailable")
                         # Two animation frames give synchronous grid initialization and
                         # the next render opportunity; not an actual paint measurement.
                         tab.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
