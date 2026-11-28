@@ -73,3 +73,14 @@ class PolicyRuleTests(unittest.TestCase):
         conflicts=[r for r in groups if r["status"]=="individual_evidence_conflict"]
         self.assertEqual(len(conflicts),2)
         self.assertTrue(all(not r["findings"] and not r["order_verified"] for r in conflicts))
+
+
+    def test_partial_and_reverse_containment_are_not_full_shadowing(self):
+        result=rule_review("policies",policy([rule(1,source="guest",destination=None),
+            rule(2,source=None,destination="staff",action="OTHER_ACTION"),
+            rule(3,source=None,destination=None)]))
+        pairs={(r["earlier_position"],r["later_position"]):r for r in result["findings"]}
+        self.assertEqual(pairs[1,2]["condition_relationship"],"partial_overlap")
+        self.assertEqual(pairs[1,2]["status"],"partial_overlap_different_action")
+        self.assertEqual(pairs[1,3]["condition_relationship"],"later_contains_earlier")
+        self.assertFalse(result["safe_to_apply"])
