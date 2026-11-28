@@ -56,6 +56,17 @@ def assessment_view(workspace, query):
         linked("Policy groups with unsupported rule evidence", rules["groups_with_unsupported_rules"], "Qualify rule schemas and predicates", "advanced", workflow="rules"),
         linked("Unqualified policy sequences", sequences["unqualified_order"], "Verify policy group structure and order", "advanced", workflow="rules"),
         linked("Unqualified sequence targets", sequences["unqualified_targets"], "Verify policy visibility in the captured scope", "advanced", workflow="rules")]
+    evidence_breakdown = [
+        linked("Incomplete target collection", engineering["reference_target_collection_incomplete"], "Verify the target collection count or retrieve complete evidence", "advanced", workflow="references", ref_evidence="target_collection_incomplete"),
+        linked("Unavailable or unqualified target view", engineering["reference_target_view_unqualified"], "Inspect missing or unsupported target collection views", "advanced", workflow="references", ref_evidence="target_view_unqualified"),
+        linked("Count-confirmed target absence", engineering["reference_target_count_confirmed_absence"], "Verify the exact named reference against the captured target scope", "advanced", workflow="references", ref_evidence="count_confirmed_absence"),
+        linked("Contradictory scope evidence", engineering["precedence_conflicts"], "Review the exact contradictory source chain", "advanced", workflow="shadow"),
+        linked("Contradictory saved/effective port evidence", engineering["port_conversion_conflicts"], "Resolve contradictions before preparing a conversion", "advanced", workflow="ports"),
+        linked("Contradictory Library candidate observations", engineering["port_library_conflicts"], "Reconcile Library definitions before selecting a target", "advanced", workflow="ports"),
+        linked("Contradictory port profile visibility observations", engineering["port_visibility_conflicts"], "Verify matching profile visibility on affected devices", "advanced", workflow="ports"),
+        linked("Assignment function not collected", assignments["function_not_collected"], "Check the assigned device function", "assignments", state="function_not_collected"),
+        linked("Assignment scope observed in another function", assignments["scope_observed_other_function"], "Inspect other-function scope evidence without inferring recipients", "assignments", state="scope_observed_other_function"),
+        linked("Assignment scope not observed", assignments["scope_not_observed"], "Establish the assigned scope identity", "assignments", state="scope_not_observed")]
     opportunities = [
         linked("Matching override candidates", report["actions"].get("remove_override", 0), "Verify nearest inherited definition", "advisor", finding="remove_override"),
         linked("Repeated local profile groups", report["actions"].get("promote_local", 0), "Review intended placement", "advisor", finding="promote_local"),
@@ -140,6 +151,7 @@ def assessment_view(workspace, query):
              '<p class="note">Maximum 200 findings per update. Selections persist across table pages and searches. Existing notes are preserved by default. Category and review-status filters remain active after saving; updated findings may leave the filtered list. No Central changes or approvals.</p>')
     body += '</section><script>' + BULK_REVIEW_JS + '</script>'
     body += '<section><h2>Evidence to resolve</h2>' + table(("Review queue", "Observed count", "Next step", ""), evidence) + '</section>'
+    body += '<section><h2>Evidence gap breakdown</h2><p>Independent observations; counts can overlap and are not unique defects. Target evidence filters apply to the complete captured reference worklist.</p>' + table(("Evidence gap", "Observed count", "Next step", ""), evidence_breakdown) + "</section>"
     body += '<section><h2>Optimization opportunities</h2>' + table(("Review queue", "Observed count", "Next step", ""), opportunities) + '</section>'
     body += '<section><h2>Assessment scope</h2><p>Counts describe independent worklists and may overlap. They must not be summed as unique defects, affected devices or safe removals. No health score is inferred from missing or partial evidence.</p>'
     body += '<p>' + e(str(consolidation["reviewable"])) + ' consolidation groups are selectable for preview; ' + e(str(engineering["ports_in_groups"])) + ' ports occur in repeated-setting groups.</p>'

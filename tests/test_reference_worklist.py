@@ -40,6 +40,10 @@ class ReferenceWorklistTests(unittest.TestCase):
                 self.assertNotIn("last-private-marker", last)
                 filtered = w.advanced({**query,"ref_q":"role-119","ref_module":"policies"})
                 self.assertIn("of 1 matching observations", filtered)
+                self.assertIn("of 120 matching observations", w.advanced({**query,"ref_evidence":"target_collection_incomplete"}))
+                self.assertIn("of 0 matching observations", w.advanced({**query,"ref_evidence":"count_confirmed_absence"}))
+                with self.assertRaises(ValueError):
+                    w.advanced({**query,"ref_evidence":"invalid"})
                 detail = w.advanced({**query,"reference_detail":"119","binding":binding})
                 self.assertIn("last-private-marker", detail)
                 with self.assertRaises(ValueError):

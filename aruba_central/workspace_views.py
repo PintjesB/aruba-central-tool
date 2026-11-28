@@ -890,8 +890,10 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     states = sorted({r["status"] for r in records})
     personas = sorted({r["persona"] for r in records})
     modules = sorted({r["target_module"] for r in records})
+    evidence_reasons = ("identity_unqualified", "target_view_unqualified", "identity_observed", "count_confirmed_absence", "target_collection_incomplete")
+    reason = query.get("ref_evidence", "")
     state, persona, module, keyword = (query.get(k, "") for k in ("ref_state", "ref_persona", "ref_module", "ref_q"))
-    if state not in ("", *states) or persona not in ("", *personas) or module not in ("", *modules) or len(keyword) > 200:
+    if state not in ("", *states) or persona not in ("", *personas) or module not in ("", *modules) or reason not in ("", *evidence_reasons) or len(keyword) > 200:
         raise ValueError("Invalid reference filter")
     terms = keyword.casefold().split()
     fields = ("device", "persona", "scope", "source_view", "source_module", "source",
@@ -899,8 +901,9 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     selected = [(i, r) for i, r in enumerate(records)
                 if (not state or r["status"] == state) and (not persona or r["persona"] == persona)
                 and (not module or r["target_module"] == module)
+                and (not reason or r.get("target_evidence") == reason)
                 and all(term in " ".join(str(r.get(k, "")) for k in fields).casefold() for term in terms)]
-    filters = {**params, "ref_state": state, "ref_persona": persona, "ref_module": module, "ref_q": keyword}
+    filters = {**params, "ref_state": state, "ref_persona": persona, "ref_module": module, "ref_evidence": reason, "ref_q": keyword}
     if query.get("reference_export") == "1":
         if query.get("binding") != binding:
             raise ValueError("Reference evidence changed; reopen the worklist")
@@ -918,6 +921,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                 + select("ref_state", [("", "All states")] + [(v, pretty(v)) for v in states], state, "State")
                 + select("ref_persona", [("", "All functions")] + [(v, persona_label(v)) for v in personas], persona, "Function")
                 + select("ref_module", [("", "All target modules")] + [(v, module_label(v)) for v in modules], module, "Target module")
+                + select("ref_evidence", [("", "All target evidence")] + [(v, pretty(v)) for v in evidence_reasons], reason, "Target evidence")
                 + f'<label>Search all observations<input name="ref_q" maxlength="200" value="{e(keyword)}"></label>'
                 + '<button type="submit">Filter</button></form>')
     controls += f'<p>Showing {offset+1 if selected else 0}–{min(len(selected),offset+50)} of {len(selected)} matching observations ({len(records)} in this workflow). '
