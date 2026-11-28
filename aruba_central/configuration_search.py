@@ -102,10 +102,74 @@ def evidence_id(record):
     return hashlib.sha256(canonical([selector, record["body"]]).encode()).hexdigest()
 
 
-def matching_fields(bundle, query, *, module="", persona="", scope=None):
+def search_context(record):
+    return " ".join(str(record[k]) for k in ("persona", "module", "name", "scope", "identity", "view")).casefold()
+
+
+def build_search_index(bundle, *, max_leaves=500_000, max_chars=32_000_000, max_sources=50_000):
+    """Bound private in-memory preprocessing; return None for streaming fallback.
+
+    Preserve source and leaf order, exact values and typed paths. Do not
+    serialize an index to disk or use it for a different capture.
+    """
+    records = []
+    count = chars = 0
+
+    @lru_cache(maxsize=8192)
+    def path_text(path):
+        return ".".join(map(str, path)).casefold()
+
+    @lru_cache(maxsize=8192, typed=True)
+    def scalar_text(value):
+        return canonical(value).casefold()
+
+    for record in configuration_sources(bundle):
+        if len(records) >= max_sources:
+            return None
+        context = search_context(record)
+        chars += len(context)
+        fields = []
+        for path, value in leaves(record["body"]):
+            ptext = path_text(path)
+            vtext = scalar_text(value) if type(value) in (str, int, bool, type(None)) else canonical(value).casefold()
+            count += 1
+            chars += len(ptext) + len(vtext)
+            if count > max_leaves or chars > max_chars:
+                return None
+            fields.append((path, value, ptext, vtext))
+        records.append((record, context, fields))
+    return records
+
+
+def indexed_fields(index, terms, module, persona, scope):
+    for record, context, fields in index:
+        if (module and record["module"] != module or persona and record["persona"] != persona
+                or scope is not None and record["scope"] != scope):
+            continue
+        missing = tuple(term for term in terms if term not in context)
+        def matches(fields, missing):
+            if not missing:
+                for path, value, _, _ in fields:
+                    yield path, value
+            elif len(missing) == 1:
+                term = missing[0]
+                for path, value, ptext, vtext in fields:
+                    if term in ptext or term in vtext:
+                        yield path, value
+            else:
+                for path, value, ptext, vtext in fields:
+                    if all(term in ptext or term in vtext for term in missing):
+                        yield path, value
+        yield record, matches(fields, missing)
+
+
+def matching_fields(bundle, query, *, module="", persona="", scope=None, index=None):
     terms = query.casefold().split()
     if not terms or len(query) > 200:
         raise ValueError("Invalid search")
+    if index is not None:
+        yield from indexed_fields(index, terms, module, persona, scope)
+        return
     # Repeated inherited settings often have the same paths and scalar values.
     # Bound caches to this search, never persist tenant values across captures.
     @lru_cache(maxsize=4096)
@@ -118,7 +182,7 @@ def matching_fields(bundle, query, *, module="", persona="", scope=None):
         return canonical(value).casefold()
 
     for record in configuration_sources(bundle, module=module, persona=persona, scope=scope):
-        context = " ".join(str(record[k]) for k in ("persona", "module", "name", "scope", "identity", "view")).casefold()
+        context = search_context(record)
         def matches(body, missing):
             # Terms are whitespace-delimited; the original separators were
             # spaces, so a term cannot straddle context/path/value boundaries.
@@ -164,7 +228,7 @@ def group_id(group):
     return hashlib.sha256(canonical(group).encode()).hexdigest()
 
 
-def grouped_search(bundle, query, *, module="", persona="", scope=None, offset=0, limit=300):
+def grouped_search(bundle, query, *, module="", persona="", scope=None, offset=0, limit=300, index=None):
     if type(offset) is not int or offset < 0 or not 1 <= limit <= 1000:
         raise ValueError("Invalid search bounds")
     device_scopes = {(p, str(s["id"])) for p, entry in bundle["results"].items() for s in entry["scopes"] if s["kind"] == "device"}
@@ -173,7 +237,7 @@ def grouped_search(bundle, query, *, module="", persona="", scope=None, offset=0
     def scalar_group_key(persona, module, view, source, path, value_type, value):
         return canonical([persona, module, view, source, list(path), value])
     total = 0
-    for record, matches in matching_fields(bundle, query, module=module, persona=persona, scope=scope):
+    for record, matches in matching_fields(bundle, query, module=module, persona=persona, scope=scope, index=index):
         for path, value in matches:
             total += 1
             if type(value) in (str, int, bool, type(None)):
@@ -197,13 +261,13 @@ def grouped_search(bundle, query, *, module="", persona="", scope=None, offset=0
     return {"groups": rows, "total_groups": len(groups), "total": total, "truncated": len(groups) > offset + len(rows)}
 
 
-def search_configuration(bundle, query, *, module="", persona="", scope=None, limit=300, offset=0, group=""):
+def search_configuration(bundle, query, *, module="", persona="", scope=None, limit=300, offset=0, group="", index=None):
     if not 1 <= limit <= 1000 or type(offset) is not int or offset < 0:
         raise ValueError("Invalid search")
     if group and (len(group) != 64 or any(c not in "0123456789abcdef" for c in group)):
         raise ValueError("Invalid group identity")
     rows, total, scanned = [], 0, 0
-    for record, matches in matching_fields(bundle, query, module=module, persona=persona, scope=scope):
+    for record, matches in matching_fields(bundle, query, module=module, persona=persona, scope=scope, index=index):
         scanned += 1
         source_id = None
         for path, value in matches:
@@ -262,8 +326,11 @@ def search_view(workspace, query):
             offset = int(query.get("offset", "0"))
         except (TypeError, ValueError) as exc:
             raise ValueError("Invalid search offset") from exc
+        if not 0 < len(text) <= 200 or offset < 0:
+            raise ValueError("Invalid search")
+        index = workspace.configuration_search_index(bundle)
         if presentation == "grouped":
-            result = grouped_search(bundle, text, module=module, persona=persona, scope=scope, offset=offset)
+            result = grouped_search(bundle, text, module=module, persona=persona, scope=scope, offset=offset, index=index)
             rows = []
             for row in result["groups"]:
                 function, mod, view, source, path, value = row["selector"]
@@ -278,7 +345,7 @@ def search_view(workspace, query):
                 body += f'<a class="button" href="{url(root, "report", **common, presentation="grouped", offset=offset + 300)}">Next group batch</a>'
             body += table(("Function", "Module", "View", "Source", "Field path", "Value", "Observed devices", "Observed scopes", "Observations", ""), rows, search=True) + '</section>'
             return page("Configuration explorer", body, workspace.nav(name))
-        result = search_configuration(bundle, text, module=module, persona=persona, scope=scope, offset=offset, group=group)
+        result = search_configuration(bundle, text, module=module, persona=persona, scope=scope, offset=offset, group=group, index=index)
         if group:
             body += '<p class="note">Showing only the selected exact field/value group.</p>'
         rows = []
