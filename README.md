@@ -234,11 +234,13 @@ The reviewed snapshot is warm; the first visit may still populate other caches.
 
 ### Combined offline qualification
 
-When sharing the local performance, keyed qualification and browser benchmarks together, run one command against a saved capture. The suite chooses the snapshot once, verifies that the file has not changed between stages, and writes one aggregate JSON file only after the reports succeed. It also independently validates advertised individual consolidation review choices (up to 200, with explicit coverage and rejection counts) and summarizes observed destination impact. This is not deployment or write qualification. It makes no Central API requests. The individual report commands remain available. Playwright and an available Chromium-based browser are required.
+When sharing the local performance, keyed qualification and browser benchmarks together, run one command against a saved capture. The suite chooses the snapshot once, verifies that the file has not changed between stages, and writes one aggregate JSON file only after the reports succeed. It also independently validates advertised individual consolidation review choices (up to 200, with explicit coverage and rejection counts) and summarizes observed destination impact. This is not deployment or write qualification. It makes no Central API requests. The individual report commands remain available. The standard suite does not require Playwright or a browser. Browser measurements are explicitly marked `not_requested` unless enabled with `--include-browser` or `--browser <executable>`.
 
 ```powershell
-python -m aruba_central.qualification_suite --directory "$env:USERPROFILE\.aruba-central-tool" --repeat 3 --browser "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe" --output "$env:USERPROFILE\Downloads\aruba-qualification-suite-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
+python -m aruba_central.qualification_suite --directory "$env:USERPROFILE\.aruba-central-tool" --repeat 3 --output "$env:USERPROFILE\Downloads\aruba-qualification-suite-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
 ```
+
+For optional real browser measurements, append `--include-browser` to use Playwright Chromium, or `--browser <existing browser executable>` to use an installed Chrome or Edge browser. CI retains automated browser tests.
 
 
 ### Verify an exported review plan against a newer saved capture
