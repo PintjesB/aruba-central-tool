@@ -52,3 +52,23 @@ class RoleACLTests(unittest.TestCase):
         self.assertIn(("roles", "Guest", ("rules", 0, "src-role")), refs)
         self.assertEqual(list(explicit_references({"source": {"type": "ADDRESS_ROLE", "role": "Guest"}}, module="policies")),
                          [("roles", "Guest", ("source", "role"))])
+
+    def test_literal_values_require_unscoped_address_strings(self):
+        for value in (1, True, None, ["10.0.0.1"]):
+            self.assertIsNone(literal_destination({"address-type":"ADDRESS_HOST","ipv4-address":value},4))
+        self.assertIsNone(literal_destination({"address-type":"ADDRESS_HOST","ipv6-address":"fe80::1%eth0"},6))
+        self.assertIsNone(literal_destination({"address-type":"ADDRESS_NETWORK","ipv4-subnet-address":1,"ipv4-prefix":32},4))
+
+    def test_acl_rejection_reasons_reconcile_without_promoting_unsupported_rules(self):
+        host={"address-type":"ADDRESS_HOST","ipv4-address":"10.0.0.1"}
+        result=rule_review("role-acls",{"acl-type":"ACL_IPV4","rules":[rule(1,host),
+            rule(2,host,vrf=""),rule(3,host,role=""),rule(4,host,action="OTHER"),
+            rule(5,host,service="tcp"),rule(6,{"address-type":"ADDRESS_HOST","ipv4-address":1})]})
+        self.assertEqual(result["qualified_match_rules"],1)
+        self.assertEqual(result["unsupported_rules"],5)
+        self.assertEqual(result["acl_unsupported_reasons"],{"vrf_unqualified":1,"source_role_unqualified":1,
+            "action_unqualified":1,"additional_rule_fields":1,"literal_destination_unqualified":1})
+        self.assertFalse(result["findings"])
+        self.assertEqual(result["unsupported_reasons"],{"acl_predicate_unqualified":5})
+        invalid=acl_prefix_review({"acl-type":"OTHER","rules":[rule(1,host)]})
+        self.assertEqual(invalid["acl_unsupported_reasons"],{"family_unqualified":1})
