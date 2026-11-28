@@ -107,3 +107,35 @@ class RemediationTests(unittest.TestCase):
                              "source_removal_unverified")
             with self.assertRaises(ValueError):
                 verify_promotion(before, after, "promote", "unknown", confirmed=True)
+
+
+    def test_real_library_reuse_candidate_is_verified_without_mocking_recommendations(self):
+        from aruba_central.promotion_verification import promotion_candidates, verify_promotion
+        from aruba_central.central_tool import refresh_configuration_review
+        before, after = self.captures()
+        persona, module, identity = "ACCESS_SWITCH", "layer2-vlan", "20"
+        for bundle in (before, after):
+            data = bundle["results"][persona]["modules"][module]["scope_results"]
+            # Different global definition prevents the Global-match removal path.
+            data[0]["local_view"]["profiles"][identity]["name"] = "Global different"
+            data[0]["effective_view"]["profiles"][identity]["name"] = "Global different"
+            refresh_configuration_review(bundle)
+        prior = next(f for f in promotion_candidates(before)
+                     if f["action"] == "reuse_library" and f["identity"] == identity)
+        for row in after["results"][persona]["modules"][module]["scope_results"]:
+            if row["scope"] in {source["scope"] for source in prior["sources"]}:
+                row["local_view"] = {"status": "list_parsed", "count_confirmed": True, "profiles": {}}
+                row["effective_view"]["profiles"][identity]["@"] = {"aruba-annotation:object_type": "SHARED"}
+        after["library"]["assignments"] = {"status": "response_received", "rows": [
+            {"profile-type": module, "profile-instance": identity, "device-function": persona, "scope-id": r["scope"]}
+            for r in prior["sources"]]}
+        report = verify_promotion(before, after, prior["id"], "library", confirmed=True)
+        self.assertEqual(report["workflow"], "library_reuse")
+        self.assertTrue(report["destination_and_assignments_observed"])
+        self.assertTrue(all(r["status"] == "observed_local_removal" for r in report["source_rows"]))
+        self.assertFalse(report["safe_to_apply"])
+        self.assertFalse(report["complete"])
+        with self.assertRaises(ValueError):
+            verify_promotion(before, after, prior["id"], "1", confirmed=True)
+        after["library"]["modules"][module]["profiles"][identity]["name"] = "Changed"
+        self.assertFalse(verify_promotion(before, after, prior["id"], "library", confirmed=True)["destination_and_assignments_observed"])
