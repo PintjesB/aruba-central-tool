@@ -275,3 +275,40 @@ class ConfigurationSearchTests(unittest.TestCase):
         rejected = {}
         self.assertIsNone(build_search_index(bundle, max_leaves=5, diagnostics=rejected))
         self.assertEqual(rejected["reason"], "leaf_limit")
+
+
+    def test_workspace_search_page_cache_fallback_filter_eviction_and_replacement(self):
+        from unittest.mock import patch
+        bundle = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            path = Path(directory) / name
+            path.write_text(json.dumps(bundle))
+            workspace = Workspace(directory)
+            first = workspace.reviewed_snapshot(name)
+            with patch("aruba_central.configuration_search.build_search_index", return_value=None):
+                with patch("aruba_central.configuration_search.search_configuration",
+                           wraps=search_configuration) as search:
+                    original = workspace.configuration_search_page(first, "vlan")
+                    self.assertEqual(original, search_configuration(first, "vlan"))
+                    self.assertIs(workspace.configuration_search_page(first, "vlan"), original)
+                    self.assertEqual(search.call_count, 1)
+                    workspace.configuration_search_page(first, "vlan", offset=1)
+                    workspace.configuration_search_page(first, "vlan", persona="NAC")
+                    self.assertEqual(search.call_count, 3)
+                    for i in range(8):
+                        workspace.configuration_search_page(first, "unique-query-" + str(i))
+                    self.assertEqual(len(workspace._configuration_search_pages), 8)
+                    workspace.configuration_search_page(first, "vlan")
+                    self.assertEqual(search.call_count, 12)
+            grouped = workspace.configuration_search_page(first, "vlan", grouped=True)
+            self.assertEqual(grouped, grouped_search(first, "vlan"))
+            self.assertIs(workspace.configuration_search_page(first, "vlan", grouped=True), grouped)
+            bundle["nac_configuration"] = {"example": {"status": "list_parsed",
+                "profiles": {"new": {"name": "new-value"}}}}
+            path.write_text(json.dumps(bundle))
+            second = workspace.reviewed_snapshot(name)
+            self.assertEqual(workspace._configuration_search_pages, {})
+            workspace.configuration_search_page(first, "vlan")
+            self.assertEqual(workspace._configuration_search_pages, {})
+            self.assertEqual(workspace.configuration_search_page(second, "new-value")["total"], 1)
