@@ -871,6 +871,73 @@ def port_dependency_rows(record):
     return list(unique.values())
 
 
+def reference_worklist(workspace, root, name, bundle, query, records, workflow):
+    """Bound the rendered worklist and load exact snapshot-bound evidence on demand."""
+    from .review_dispositions import snapshot_binding, digest
+    from .history_view import private_export
+    binding = digest([snapshot_binding(workspace, name, bundle), workflow])
+    params = {"snapshot": name, "workflow": workflow}
+    if query.get("reference_detail") is not None:
+        if query.get("binding") != binding:
+            raise ValueError("Reference evidence changed; reopen the worklist")
+        try:
+            index = int(query["reference_detail"])
+        except (ValueError, TypeError):
+            raise ValueError("Invalid reference evidence selector") from None
+        if not 0 <= index < len(records):
+            raise ValueError("Unknown reference evidence")
+        return '<template data-advisor-evidence><div class="inspector-title"><h2>Reference evidence</h2></div>' + property_table(records[index]) + '</template>'
+    states = sorted({r["status"] for r in records})
+    personas = sorted({r["persona"] for r in records})
+    modules = sorted({r["target_module"] for r in records})
+    state, persona, module, keyword = (query.get(k, "") for k in ("ref_state", "ref_persona", "ref_module", "ref_q"))
+    if state not in ("", *states) or persona not in ("", *personas) or module not in ("", *modules) or len(keyword) > 200:
+        raise ValueError("Invalid reference filter")
+    terms = keyword.casefold().split()
+    fields = ("device", "persona", "scope", "source_view", "source_module", "source",
+              "target_module", "target", "status", "target_evidence", "path")
+    selected = [(i, r) for i, r in enumerate(records)
+                if (not state or r["status"] == state) and (not persona or r["persona"] == persona)
+                and (not module or r["target_module"] == module)
+                and all(term in " ".join(str(r.get(k, "")) for k in fields).casefold() for term in terms)]
+    filters = {**params, "ref_state": state, "ref_persona": persona, "ref_module": module, "ref_q": keyword}
+    if query.get("reference_export") == "1":
+        if query.get("binding") != binding:
+            raise ValueError("Reference evidence changed; reopen the worklist")
+        return page("Private reference report", intro("Private reference report", "All observations matching the current filters, not a complete dependency graph.")
+                    + private_export("reference-review", {"selection": filters, "references": [r for _, r in selected],
+                                     "complete": False, "safe_to_apply": False}), workspace.nav(name))
+    try:
+        offset = int(query.get("ref_offset", "0"))
+    except (ValueError, TypeError):
+        raise ValueError("Invalid reference page") from None
+    if offset < 0 or offset % 50 or (offset and offset >= len(selected)):
+        raise ValueError("Invalid reference page")
+    controls = (f'<form method="get" class="filter-bar" action="{e(root+"advanced")}">'
+                + "".join(f'<input type="hidden" name="{e(k)}" value="{e(v)}">' for k,v in params.items())
+                + select("ref_state", [("", "All states")] + [(v, pretty(v)) for v in states], state, "State")
+                + select("ref_persona", [("", "All functions")] + [(v, persona_label(v)) for v in personas], persona, "Function")
+                + select("ref_module", [("", "All target modules")] + [(v, module_label(v)) for v in modules], module, "Target module")
+                + f'<label>Search all observations<input name="ref_q" maxlength="200" value="{e(keyword)}"></label>'
+                + '<button type="submit">Filter</button></form>')
+    controls += f'<p>Showing {offset+1 if selected else 0}–{min(len(selected),offset+50)} of {len(selected)} matching observations ({len(records)} in this workflow). '
+    for label, position in (("Previous", offset-50), ("Next", offset+50)):
+        if 0 <= position < len(selected):
+            controls += f'<a class="button" href="{url(root,"advanced",**filters,ref_offset=position)}">{label}</a> '
+    controls += f'<a class="button" href="{url(root,"advanced",**filters,reference_export="1",binding=binding)}">Export all matching private JSON</a></p>'
+    rows = []
+    for index, r in selected[offset:offset+50]:
+        detail_url = url(root, "advanced", **params, reference_detail=index, binding=binding)
+        control = f'<button class="quiet inspect-trigger" type="button" data-inspect data-inspect-url="{detail_url}">Inspect</button>'
+        rows.append(tr(e(r["device"]), e(persona_label(r["persona"])),
+                       f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
+                       f'{e(module_label(r["target_module"]))}<small>{e(r["target"] if r["target"] is not None else "Unknown")}</small>',
+                       status(r["status"]) + (f'<small>{e(pretty(r["target_evidence"]))}</small>' if r.get("target_evidence") else ""),
+                       e("Keep reference; verify before profile removal" if r["status"] in ("observed","definition_observed") else
+                         "Verify target profile and scope" if r["status"] == "not_observed" else "Collect or interpret missing reference evidence"), control))
+    return controls + table(("Source scope", "Function", "Source", "Target", "State", "Suggested next step", ""), rows)
+
+
 def engineering_view(workspace, query):
     from .advanced_review import library_usage, preferred_duplicate
     from .central_tool import field_differences
@@ -879,6 +946,15 @@ def engineering_view(workspace, query):
         return empty
     root, name, bundle, picker = loaded
     data = workspace.advanced_snapshot(bundle)
+    reference_rows = {"references": [], "resolved": []}
+    for ref in data["references"]:
+        key = "resolved" if ref["status"] in ("observed", "definition_observed") else "references"
+        reference_rows[key].append(ref)
+    if "reference_detail" in query or "reference_export" in query:
+        workflow = query.get("workflow")
+        if workflow not in reference_rows:
+            raise ValueError("Unknown reference workflow")
+        return reference_worklist(workspace, root, name, bundle, query, reference_rows[workflow], workflow)
     # Group the same winning/higher scope and bodies across devices instead of repeating rows.
     grouped = {}
     from .central_tool import canonical
@@ -888,10 +964,6 @@ def engineering_view(workspace, query):
         grouped.setdefault(key, []).append(rec)
     variants = workspace.policy_snapshot(bundle, 'variants')
     rules = workspace.policy_snapshot(bundle, 'rules')
-    reference_rows = {"references": [], "resolved": []}
-    for ref in data["references"]:
-        key = "resolved" if ref["status"] in ("observed", "definition_observed") else "references"
-        reference_rows[key].append(ref)
     counts = {"ports": len(data["port_groups"]), "shadow": len(grouped), "variants": len(variants),
               "rules": len(rules), "duplicates": len(data["library_duplicates"]),
               **{key: len(rows) for key, rows in reference_rows.items()}}
@@ -1147,12 +1219,9 @@ def engineering_view(workspace, query):
     panel("duplicates", "Duplicate Library profiles", "Compare observed usage for each name before choosing which profile to retain. Suggested names are based on observed migration effort, not safe deletion.",
           ("Module", "Profiles and observed usage", "Retention candidate", "Action"), rows, counts["duplicates"])
     for key, label in (("references", "Reference review"), ("resolved", "Observed references")):
-        records = reference_rows[key]
-        rows = [tr(e(r["device"]), f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
-                   f'{e(module_label(r["target_module"]))}<small>{e(r["target"] if r["target"] is not None else "Unknown")}</small>',
-                   status(r["status"]), e("Keep reference; verify before profile removal" if r["status"] in ("observed", "definition_observed") else "Verify target profile and scope" if r["status"] == "not_observed" else "Collect or interpret missing reference evidence"), inspect("Reference evidence", property_table(r))) for r in records] if selected == key else []
-        panel(key, label, "Observed references are not a complete dependency graph. Not observed does not prove a broken dependency.",
-              ("Source scope", "Source", "Target", "State", "Suggested next step", ""), rows, counts[key])
+        content = ('<section><p class="filter-hint">Observed references are not a complete dependency graph. Not observed does not prove a broken dependency.</p>'
+                   + reference_worklist(workspace, root, name, bundle, query, reference_rows[key], key) + '</section>') if selected == key else ""
+        panels.append((key, label, counts[key], content))
     tabs = '<nav class="workflow-tabs" aria-label="Engineering workflows">' + "".join(
         f'<a href="{url(root, "advanced", snapshot=name, workflow=k)}"{" aria-current=true" if k == selected else ""}>{e(label)} <span>{n}</span></a>'
         for k, label, n, _ in panels) + '</nav>'
