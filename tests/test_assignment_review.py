@@ -163,3 +163,24 @@ class AssignmentReviewTests(unittest.TestCase):
         report=assignment_review(data)
         self.assertIn("library_individual_conflict",report["rows"][0])
         self.assertEqual(report["rows"][0]["recipients"][0]["status"],"individual_evidence_conflict")
+
+    def test_keyed_assignment_identity_evidence_never_resolves_scope_or_membership(self):
+        from aruba_central.assignment_review import filter_assignment_review
+        assignment={"profile-type":"layer2-vlan","profile-instance":"20","device-function":"ACCESS_SWITCH","scope-id":"999"}
+        rows=[assignment,{**assignment,"scope-id":"998"},{**assignment,"scope-id":"997"},{**assignment,"scope-id":"996"},{**assignment,"scope-id":"995"}]
+        records=[{"selector":rows[0],"status":"identity_observed","identity_format":"scope_map_resource"},
+                 {"selector":rows[1],"status":"identity_observed","body_matches_inventory":False},
+                 {"selector":rows[2],"status":"scope_only_observed"},
+                 {"selector":rows[3],"status":"identity_unresolved"},
+                 {"selector":rows[3],"status":"identity_observed"}]
+        data={"results":{"ACCESS_SWITCH":fixture()},"library":{"assignments":{"rows":rows}},
+              "keyed_assignment_details":{"records":records}}
+        report=assignment_review(data)
+        self.assertEqual([r["assignment_evidence_state"] for r in report["rows"]],
+                         ["identity_observed","body_difference_observed","scope_only_observed","multiple_observations","not_collected"])
+        self.assertTrue(all(not r["scope_resolved"] and not r["recipients"] for r in report["rows"]))
+        self.assertEqual(len(filter_assignment_review(report,state="assignment_identity_observed")["rows"]),1)
+        self.assertEqual(len(filter_assignment_review(report,state="assignment_body_difference")["rows"]),1)
+        self.assertEqual(len(filter_assignment_review(report,state="assignment_identity_unverified")["rows"]),3)
+        self.assertEqual(report["rows"][0]["individual_assignment_observations"],records[:1])
+        self.assertFalse(report["safe_to_apply"])
