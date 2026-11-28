@@ -1056,6 +1056,8 @@ def engineering_view(workspace, query):
                 earlier = item.get("earlier_position", item.get("earlier_index"))
                 later = item.get("later_position", item.get("later_index"))
                 detail += '<h4>' + e(pretty(item["status"])) + ' · ' + e(str(earlier)) + ' / ' + e(str(later)) + '</h4>'
+                if item["status"] == "identical_unsupported_security_rule_body":
+                    detail += '<p>Identical captured rule fields except position. Predicate semantics are unsupported; this is not a shadowing or removal recommendation.</p>'
                 if "condition_relationship" in item:
                     detail += '<p>Match relationship: '+e(pretty(item["condition_relationship"]))+'. Partial overlaps are not full shadowing.</p>'
                 if "coverage" in item:

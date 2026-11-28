@@ -12,7 +12,7 @@ FIELDS={
     "variants":("groups","explicit","groups_with_conflicts","mixed_site_groups"),
     "policy_rules":("groups","groups_with_findings","observations","groups_with_unsupported_rules","unsupported_schema_groups","unsupported_rule_occurrences","unsupported_order_occurrences",
                     "unsupported_condition_occurrences","unsupported_acl_predicate_occurrences","unqualified_order",
-                    "individual_conflict_groups","partial_overlap_candidates","reverse_containment_candidates","truncated"),
+                    "individual_conflict_groups","structural_security_repetitions","partial_overlap_candidates","reverse_containment_candidates","truncated"),
     "policy_sequences":("captures","unqualified_order","unqualified_targets","cross_policy_candidates",
                         "partial_overlap_candidates","conflicting_targets","truncated"),
     "assignments":("observed","overlaps","unknown_scopes","invalid","individual_conflicts",

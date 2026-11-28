@@ -123,6 +123,24 @@ def rule_review(module, body, limit=2000):
     matches = [simple_match(r) if reason is None else None for r,reason in zip(ordered,reasons)]
     result["qualified_match_rules"] = sum(m is not None for m in matches)
     result["unsupported_rules"] = len(rules) - result["qualified_match_rules"]
+    # Exact repeated unsupported records are structural evidence only. Keep
+    # all fields except the position; do not infer match or action semantics.
+    seen = {}
+    for rule, match in zip(ordered, matches):
+        if match is not None:
+            continue
+        signature = canonical({k: v for k, v in rule.items() if k != "position"})
+        if signature not in seen:
+            seen[signature] = rule
+            continue
+        if len(result["findings"]) >= limit:
+            result["truncated"] = True
+            result["status"] = "comparison_limit_reached"
+            return result
+        previous = seen[signature]
+        result["findings"].append({"status": "identical_unsupported_security_rule_body",
+            "earlier_position": previous["position"], "later_position": rule["position"],
+            "earlier": previous, "later": rule})
     # Bound comparisons for unusually large customer policy lists. Never hide truncation.
     comparisons = 0
     for i, later in enumerate(ordered):
