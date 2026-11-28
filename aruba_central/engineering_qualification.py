@@ -14,7 +14,8 @@ FIELDS={
                    "reference_alternative_library_definition","reference_alternative_other_function_same_scope",
                    "reference_alternative_same_site_observation","reference_alternative_any","reference_alternative_none",
                    "both_ends","source_only","target_only","other_conflict","unknown_identity","named_target_not_observed","named_target_unqualified",
-                   "reference_absent_set_source_fields") + tuple("reference_absence_"+key for key in REFERENCE_SEMANTICS),
+                   "reference_absent_set_source_fields","compact_membership","compact_membership_fields","compact_membership_members",
+                   "compact_membership_unresolved_fields","compact_membership_absent_fields") + tuple("reference_absence_"+key for key in REFERENCE_SEMANTICS),
     "identity_collisions":("groups","same_context_groups","linked_individual_responses","linked_same_context_responses"),
     "variants":("groups","explicit","groups_with_conflicts","mixed_site_groups"),
     "policy_rules":("groups","groups_with_findings","observations","groups_with_unsupported_rules","unsupported_schema_groups","unsupported_rule_occurrences","unsupported_order_occurrences",
@@ -96,7 +97,7 @@ def reference_identity_patterns(references):
     known_views = {"effective", "saved", "library"}
     counts = Counter()
     for row in references:
-        if row.get("status") != "unresolved" or row.get("target") is not None or row.get("source_evidence") == "nac_enforcement":
+        if row.get("status") != "unresolved" or row.get("target") is not None or row.get("target_member_ranges") or row.get("source_evidence") == "nac_enforcement":
             continue
         source, target = (row.get(key) if row.get(key) in modules else "other"
                           for key in ("source_module", "target_module"))
