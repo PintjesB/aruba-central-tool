@@ -477,3 +477,20 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(report["precedence_conflicts"][0]["conflicting_scope"],"2")
         self.assertIn("local",report["precedence_conflicts"][0]["individual_conflict"])
         self.assertFalse(report["safe_to_apply"])
+
+    def test_documented_wlan_vlan_selector_and_gvrp_mode_are_context_specific(self):
+        from aruba_central.advanced_review import profile_reference_observations
+        def refs(module, body):
+            return list(profile_reference_observations(module,"test",body,{}))
+        self.assertEqual(refs("wlan-ssids",{"vlan-selector":"NAMED_VLAN","vlan-name":"guest"}),
+                         [("named-vlan","guest",["vlan-name"])])
+        self.assertEqual(refs("wlan-ssids",{"vlan-selector":"VLAN_RANGES","vlan-id-range":["10-11","20"]}),
+                         [("layer2-vlan","10",["vlan-id-range"]),("layer2-vlan","11",["vlan-id-range"]),("layer2-vlan","20",["vlan-id-range"])])
+        self.assertEqual(refs("wlan-ssids",{"vlan-selector":"VLAN_RANGES","vlan-id-range":["invalid"]}),
+                         [("layer2-vlan",None,["vlan-id-range"])])
+        conflict=refs("wlan-ssids",{"vlan-selector":"NAMED_VLAN","vlan-name":"guest","vlan-id-range":["10"]})
+        self.assertTrue(all(target is None for _,target,_ in conflict))
+        self.assertTrue(refs("other",{"vlan-selector":"NAMED_VLAN","vlan-name":"guest"}))
+        self.assertEqual(refs("ethernet-interfaces",{"unknown-vlans":"LEARN"}),[])
+        self.assertEqual(refs("ethernet-interfaces",{"unknown-vlans":"unsupported"}),[("layer2-vlan",None,["unknown-vlans"])])
+        self.assertEqual(refs("other",{"unknown-vlans":"LEARN"}),[("layer2-vlan",None,["unknown-vlans"])])
