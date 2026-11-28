@@ -70,6 +70,7 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
             continue
         reference_reasons[reason]+=1
     scope_reasons=Counter(row.get("scope_resolution","unknown") for row in assignments["rows"] if not row["scope_resolved"])
+    unresolved_assignment_reads=Counter(row.get("assignment_evidence_state","not_collected") for row in assignments["rows"] if not row["scope_resolved"])
     actions = Counter(f["action"] for f in findings)
     review = [f for f in findings if f["action"] in ("remove_override", "promote_local", "reuse_library")]
     return {"device_function_pairs": len(devices), "coverage": dict(coverage),
@@ -87,12 +88,14 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "reference_target_collection_incomplete": sum(r.get("target_evidence") == "target_collection_incomplete" for r in engineering["references"]),
                 "reference_target_view_unqualified": sum(r.get("target_evidence") == "target_view_unqualified" for r in engineering["references"]),
                 "reference_target_count_confirmed_absence": sum(r.get("target_evidence") == "count_confirmed_absence" for r in engineering["references"]),
+                "unresolved_reference_target_individual_identity": sum(r.get("status") == "unresolved" and r.get("target_individual_status") == "identity_observed" for r in engineering["references"]),
                 "unresolved_references": sum(ref["status"] not in ("observed", "definition_observed") and ref.get("source_evidence")!="nac_enforcement" for ref in engineering["references"]),
                 "conditional_nac_observations":sum(ref.get("source_evidence")=="nac_enforcement" for ref in engineering["references"]),
                 "conflicting_reference_observations":sum(ref.get("status")=="conflicting_observation" for ref in engineering["references"]),
                 **{key:reference_reasons[key] for key in ("both_ends","source_only","target_only","other_conflict","unknown_identity","named_target_not_observed","named_target_unqualified")}},
             "assignments": {"observed": len(assignments["rows"]), "overlaps": len(assignments["overlaps"]),
                 "unknown_scopes": sum(not row["scope_resolved"] for row in assignments["rows"]),
+                **{"unresolved_scope_keyed_"+key:unresolved_assignment_reads[key] for key in ("identity_observed","body_difference_observed","scope_only_observed","multiple_observations","not_collected","individual_read_unqualified")},
                 **{key:scope_reasons[key] for key in ("function_not_collected","scope_observed_other_function","scope_not_observed","unknown")},
                 "invalid": len(assignments["invalid_rows"]),
                 "individual_conflicts": sum(bool(r.get("library_individual_conflict") or any(d.get("individual_conflict") for d in r["recipients"])) for r in assignments["rows"])},

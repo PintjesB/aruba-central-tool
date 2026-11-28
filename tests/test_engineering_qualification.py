@@ -80,3 +80,20 @@ class EngineeringQualificationTests(unittest.TestCase):
         for key in ("precedence_conflicts","port_conversion_conflicts","port_library_conflicts","port_visibility_conflicts","reference_target_collection_incomplete"):
             self.assertEqual(counts[key],1)
         self.assertNotIn("private-",json.dumps(counts))
+
+    def test_unresolved_scope_keyed_evidence_is_counted_without_claiming_recipients(self):
+        from aruba_central.assessment_review import assessment
+        from test_consolidation import fixture
+        data=fixture()
+        row={"profile-type":"layer2-vlan","profile-instance":"30","device-function":"ACCESS_SWITCH","scope-id":"private-scope"}
+        data["library"]["assignments"]["rows"]=[row]
+        data["keyed_assignment_details"]={"records":[{"selector":row,"status":"identity_observed"}]}
+        engineering={"library_duplicates":[],"port_groups":[],"shadowed":[],"references":[
+            {"status":"unresolved","target":"private-target","target_individual_status":"identity_observed"}]}
+        report=assessment(data,engineering=engineering)
+        with patch("aruba_central.engineering_qualification.refresh_configuration_review",return_value=data),patch("aruba_central.engineering_qualification.assessment",return_value=report):
+            counts=engineering_qualification(data)["counts"]
+        self.assertEqual(counts["assignments"]["unresolved_scope_keyed_identity_observed"],1)
+        self.assertEqual(counts["assignments"]["unknown_scopes"],1)
+        self.assertEqual(counts["engineering"]["unresolved_reference_target_individual_identity"],1)
+        self.assertNotIn("private-",json.dumps(counts))
