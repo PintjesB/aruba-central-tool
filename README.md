@@ -227,3 +227,11 @@ page requests, does not contact Central and reports aggregate measurements only.
 Navigation timings include server work, HTTP, DOM initialization and two
 animation frames, not measured visual paint or production deployment behavior.
 The reviewed snapshot is warm; the first visit may still populate other caches.
+
+### Combined offline qualification
+
+When sharing the local performance, keyed qualification and browser benchmarks together, run one command against a saved capture. The suite chooses the snapshot once, verifies that the file has not changed between stages, and writes one aggregate JSON file only after all three reports succeed. It makes no Central API requests. The individual report commands remain available. Playwright and an available Chromium-based browser are required.
+
+```powershell
+python -m aruba_central.qualification_suite --directory "$env:USERPROFILE\.aruba-central-tool" --repeat 3 --browser "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe" --output "$env:USERPROFILE\Downloads\aruba-qualification-suite-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
+```
