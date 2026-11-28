@@ -48,6 +48,29 @@ def observation(view, identity):
     return {"state": "present", "body": profile_body(raw), "annotations": raw.get("@")}
 
 
+def captured_observation(bundle, persona, module, sid, kind, identity):
+    """Retain collection evidence but never qualify a contradictory observation."""
+    view = ((bundle.get("library") or {}).get("modules", {}).get(module, {})
+            if persona == "Library" and kind == "library"
+            else scoped_view(bundle, persona, module, sid, kind))
+    observed = observation(view, identity)
+    individual = (bundle.get("keyed_profile_details") or {}).get("profiles", {}).get(
+        persona, {}).get(str(sid), {}).get(module, {}).get(identity, {}).get(kind, {})
+    body = individual.get("profile")
+    if individual.get("status") != "identity_observed" or not isinstance(body, dict):
+        return observed
+    body = profile_body(body)
+    if (observed["state"] == "absent" or
+            (observed["state"] == "present" and canonical(observed["body"]) != canonical(body))):
+        return {**observed, "collection_state": observed["state"],
+                "state": "individual_evidence_conflict", "individual_body": body}
+    return observed
+
+
+def contradictory(*observations):
+    return any(o["state"] == "individual_evidence_conflict" for o in observations)
+
+
 def override_candidates(bundle):
     return [f for f in profile_recommendations(bundle)
             if f["action"] == "remove_override" and f["preview_selectable"]
@@ -63,12 +86,14 @@ def verify_override(before, after, candidate_id, *, confirmed=False):
     rows = []
     for source in candidate["sources"]:
         sid = source["scope"]
-        old_local = observation(scoped_view(before, persona, module, sid, "local"), identity)
-        old_effective = observation(scoped_view(before, persona, module, sid, "effective"), identity)
-        new_local = observation(scoped_view(after, persona, module, sid, "local"), identity)
-        new_effective = observation(scoped_view(after, persona, module, sid, "effective"), identity)
+        old_local = captured_observation(before, persona, module, sid, "local", identity)
+        old_effective = captured_observation(before, persona, module, sid, "effective", identity)
+        new_local = captured_observation(after, persona, module, sid, "local", identity)
+        new_effective = captured_observation(after, persona, module, sid, "effective", identity)
         if not same_device(before, after, persona, sid):
             status = "device_identity_unverified"
+        elif contradictory(old_local, old_effective, new_local, new_effective):
+            status = "individual_evidence_conflict"
         elif new_local["state"] == "present":
             status = "local_override_still_present"
         elif new_local["state"] != "absent" or new_effective["state"] != "present":
@@ -103,21 +128,19 @@ def verify_library_migration(before, after, module, keep, *, confirmed=False):
     group = matches[0]
     old_names = set(group["identities"]) - {keep}
     plan = duplicate_migration_preview(module, group["usage"], keep, bundle=before)
-    old_library = before.get("library", {}).get("modules", {}).get(module, {})
-    new_library = after.get("library", {}).get("modules", {}).get(module, {})
-    expected = observation(old_library, keep)
-    retained = observation(new_library, keep)
-    library_matches = retained["state"] == "present" and canonical(retained["body"]) == canonical(expected.get("body"))
+    expected = captured_observation(before, "Library", module, "", "library", keep)
+    retained = captured_observation(after, "Library", module, "", "library", keep)
+    library_matches = expected["state"] == retained["state"] == "present" and canonical(retained["body"]) == canonical(expected["body"])
     rows = []
     for recipient in plan["recipient_review"]:
         persona, sid = recipient["persona"], recipient["scope"]
-        old_view = scoped_view(before, persona, module, sid, "effective")
-        new_view = scoped_view(after, persona, module, sid, "effective")
-        new_keep = observation(new_view, keep)
-        previous = {identity: observation(old_view, identity) for identity in sorted(old_names | {keep})}
-        current = {identity: observation(new_view, identity) for identity in sorted(old_names | {keep})}
+        previous = {identity: captured_observation(before, persona, module, sid, "effective", identity) for identity in sorted(old_names | {keep})}
+        current = {identity: captured_observation(after, persona, module, sid, "effective", identity) for identity in sorted(old_names | {keep})}
+        new_keep = current[keep]
         if not same_device(before, after, persona, sid):
             status = "device_identity_unverified"
+        elif contradictory(expected, retained, *previous.values(), *current.values()):
+            status = "individual_evidence_conflict"
         elif recipient["uncertain_membership"] or not library_matches or new_keep["state"] != "present":
             status = "verification_required"
         elif canonical(new_keep["body"]) != canonical(expected.get("body")):
@@ -135,8 +158,10 @@ def verify_library_migration(before, after, module, keep, *, confirmed=False):
     assignment_view = (after.get("library") or {}).get("assignments") or {}
     cleanup = []
     for identity in sorted(old_names):
-        prior, current = observation(old_library, identity), observation(new_library, identity)
-        status = ("prior_definition_unverified" if prior["state"] != "present" else
+        prior = captured_observation(before, "Library", module, "", "library", identity)
+        current = captured_observation(after, "Library", module, "", "library", identity)
+        status = ("individual_evidence_conflict" if contradictory(prior, current) else
+                  "prior_definition_unverified" if prior["state"] != "present" else
                   "observed_library_removal" if current["state"] == "absent" else
                   "old_definition_still_present" if current["state"] == "present" else
                   "library_removal_unverified")
@@ -153,7 +178,7 @@ def verify_library_migration(before, after, module, keep, *, confirmed=False):
             "library_cleanup": cleanup,
             "assignment_capture_status": assignment_view.get("status", "not_collected"),
             "unresolved_recipients": plan["unresolved_recipient_observations"],
-            "rollback_review": {"prior_library": {n: observation(old_library, n) for n in sorted(old_names | {keep})},
-                                "current_library": {n: observation(new_library, n) for n in sorted(old_names | {keep})},
+            "rollback_review": {"prior_library": {n: captured_observation(before, "Library", module, "", "library", n) for n in sorted(old_names | {keep})},
+                                "current_library": {n: captured_observation(after, "Library", module, "", "library", n) for n in sorted(old_names | {keep})},
                                 "prior_assignments": plan["assignments"], "prior_saved_references": plan["saved_references"]},
             "complete": False, "safe_to_apply": False}
