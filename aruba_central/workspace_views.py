@@ -304,8 +304,8 @@ def advisor_view(workspace, query):
         if len(sources) > 2:
             names += f" +{len(sources)-2}"
         summary = f'<strong>{e(profile)}</strong><small>{e(module_label(f["module"]))} · {e(persona_label(f["persona"]))}</small>'
-        placement = e(f["target"] if action == "remove_override" else ACTION_GUIDE[action][2])
-        if action == "promote_local":
+        placement = e(f["target"] if action == "remove_override" or f.get("individual_conflicts") else ACTION_GUIDE[action][2])
+        if action == "promote_local" and f["preview_selectable"]:
             choices = [("", "Choose destination for review"), ("library", "Library / exact source scopes")]
             choices += [(p["scope"], f'{pretty(p["kind"])} / {p["name"]} · {len(p["additional_devices"])} extra ({len(p["additional_not_confirmed_matching"])} not confirmed matching), {len(p["unknown_membership"])} unknown')
                         for p in f["placement_options"]]
@@ -343,6 +343,10 @@ def advisor_view(workspace, query):
                         fallback_html += '<h4>Conflicting individual evidence</h4><p>' + e(
                             str(conflict["scope"]) + " / " + str(conflict["identity"]) + " / " + conflict["view"]) + '</p>'
                         fallback_html += diff_table(conflict["differences"], "Collection", "Individual read")
+            for conflict in f.get("individual_conflicts", []):
+                fallback_html += '<h4>Conflicting individual evidence</h4><p>' + e(
+                    str(conflict["persona"]) + " / " + str(conflict["scope"]) + " / " + conflict["view"]) + '</p>'
+                fallback_html += diff_table(conflict["differences"], "Collection", "Individual read")
             dep = f["dependency_review"]
             dependency_rows = []
             for key, label in (("consumers", "Consumer"), ("dependencies", "Prerequisite"), ("unresolved_target_observations", "Unresolved target")):
