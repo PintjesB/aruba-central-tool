@@ -3,6 +3,7 @@ from .workspace_ui import e, page, intro, table, tr, setting_value, badge, prope
 from .workspace_views import load, select, url
 from .central_tool import canonical
 import hashlib
+from functools import lru_cache
 
 
 def leaves(value, path=()):
@@ -105,6 +106,17 @@ def matching_fields(bundle, query, *, module="", persona="", scope=None):
     terms = query.casefold().split()
     if not terms or len(query) > 200:
         raise ValueError("Invalid search")
+    # Repeated inherited settings often have the same paths and scalar values.
+    # Bound caches to this search, never persist tenant values across captures.
+    @lru_cache(maxsize=4096)
+    def missing_at_path(path, missing):
+        path_text = ".".join(path).casefold()
+        return tuple(term for term in missing if term not in path_text)
+
+    @lru_cache(maxsize=4096, typed=True)
+    def scalar_text(value):
+        return canonical(value).casefold()
+
     for record in configuration_sources(bundle, module=module, persona=persona, scope=scope):
         context = " ".join(str(record[k]) for k in ("persona", "module", "name", "scope", "identity", "view")).casefold()
         def matches(body, missing):
@@ -115,15 +127,16 @@ def matching_fields(bundle, query, *, module="", persona="", scope=None):
                 if not missing:
                     yield path, value
                     continue
-                path_text = ".".join(path).casefold()
-                remaining = [term for term in missing if term not in path_text]
+                remaining = missing_at_path(path, missing)
                 if not remaining:
                     yield path, value
                     continue
-                value_text = canonical(value).casefold()
+                # Float equality conflates signed zeros; leave floats and
+                # containers on the exact serialization path.
+                value_text = scalar_text(value) if type(value) in (str, int, bool, type(None)) else canonical(value).casefold()
                 if all(term in value_text for term in remaining):
                     yield path, value
-        yield record, matches(record["body"], [term for term in terms if term not in context])
+        yield record, matches(record["body"], tuple(term for term in terms if term not in context))
 
 
 def field_group(record, path, value):
@@ -141,14 +154,19 @@ def grouped_search(bundle, query, *, module="", persona="", scope=None, offset=0
         raise ValueError("Invalid search bounds")
     device_scopes = {(p, str(s["id"])) for p, entry in bundle["results"].items() for s in entry["scopes"] if s["kind"] == "device"}
     groups = {}
+    @lru_cache(maxsize=8192, typed=True)
+    def scalar_group_key(persona, module, view, source, path, value_type, value):
+        return canonical([persona, module, view, source, list(path), value])
     total = 0
     for record, matches in matching_fields(bundle, query, module=module, persona=persona, scope=scope):
         for path, value in matches:
             total += 1
-            selector = field_group(record, path, value)
-            key = canonical(selector)
+            if type(value) in (str, int, bool, type(None)):
+                key = scalar_group_key(record["persona"], record["module"], record["view"], record["source"], path, type(value).__name__, value)
+            else:
+                key = canonical(field_group(record, path, value))
             if key not in groups:
-                groups[key] = {"selector": selector, "observations": 0, "scopes": set(), "devices": set()}
+                groups[key] = {"selector": field_group(record, path, value), "observations": 0, "scopes": set(), "devices": set()}
             group = groups[key]
             group["observations"] += 1
             scope = (record["persona"], record["scope"])
