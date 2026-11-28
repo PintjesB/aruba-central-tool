@@ -29,8 +29,13 @@ FIELDS={
 }
 
 
-def engineering_qualification(bundle):
-    report=assessment(refresh_configuration_review(bundle))
+def engineering_qualification(bundle, *, include_reference_patterns=False):
+    reviewed = refresh_configuration_review(bundle)
+    engineering = None
+    if include_reference_patterns:
+        from .advanced_review import advanced_analysis
+        engineering = advanced_analysis(reviewed)
+    report = assessment(reviewed) if engineering is None else assessment(reviewed, engineering=engineering)
     counts={}
     for category,fields in FIELDS.items():
         counts[category]={}
@@ -39,5 +44,81 @@ def engineering_qualification(bundle):
             if type(value) is not int or value<0:
                 raise ValueError("Invalid aggregate engineering count")
             counts[category][field]=value
-    return {"schema":1,"kind":"anonymous_engineering_qualification","counts":counts,
-            "central_api_requests":0,"complete":False,"safe_to_apply":False}
+    result = {"schema":1,"kind":"anonymous_engineering_qualification","counts":counts,
+              "central_api_requests":0,"complete":False,"safe_to_apply":False}
+    if engineering is not None:
+        result["reference_identity_patterns"] = reference_identity_patterns(engineering["references"])
+    return result
+
+
+# Static vendor schema keys only. Do not serialize arbitrary JSON keys, path
+# components, values, configuration identities, scope IDs or device names.
+def reference_identity_patterns(references):
+    from collections import Counter
+    from .central_tool import CONFIG_MODULES, VLAN_REFERENCE_FIELDS
+    fields = VLAN_REFERENCE_FIELDS | {
+        "access-vlan-name", "vlan-parameters", "vlan-type", "vlan-selector",
+        "vlan-id-range", "vlan-name", "unknown-vlans", "vlan-range",
+        "vlan-mode", "vlan-list", "vlan-pool", "vlan-map", "vlan-assignment",
+        "forbid-vlans", "vlan-tagging", "vlan-tag", "vlan-membership",
+        "sw-profile-alias", "sw-profile", "ap-profile", "gw-profile",
+        "rfc3576-server-list", "server-name", "net-service", "net-group",
+        "exclude", "role", "policy", "name", "identity", "src-role",
+        "default-role", "auth-server-group", "acct-server-group",
+        "object-group-ipv4", "object-group-ipv6"}
+    modules = set(CONFIG_MODULES)
+    known_views = {"effective", "saved", "library"}
+    counts = Counter()
+    for row in references:
+        if row.get("status") != "unresolved" or row.get("target") is not None or row.get("source_evidence") == "nac_enforcement":
+            continue
+        source, target = (row.get(key) if row.get(key) in modules else "other"
+                          for key in ("source_module", "target_module"))
+        path = row.get("path")
+        path = path if isinstance(path, list) else []
+        leaf = next((value for value in reversed(path) if isinstance(value, str)), "")
+        field = leaf if leaf in fields else "other"
+        shape = ("list_member" if any(type(v) is int for v in path) else
+                 "root_field" if len(path) == 1 else "nested_field" if path else "unknown")
+        view = row.get("source_view") if row.get("source_view") in known_views else "other"
+        counts[source, target, field, shape, view] += 1
+    return [{"source_module":s, "target_module":t, "field":f, "path_shape":p,
+             "source_view":v, "observations":count}
+            for (s,t,f,p,v),count in sorted(counts.items(), key=lambda item:(-item[1],item[0]))]
+
+
+def main():
+    import argparse
+    from pathlib import Path
+    from .config_app import audit_files, read_audit
+    from .central_tool import write_private
+    parser = argparse.ArgumentParser(description="Anonymous focused engineering qualification; no browser or Central requests.")
+    parser.add_argument("--directory", required=True, type=Path)
+    parser.add_argument("--snapshot", help="Exact saved snapshot filename; defaults to latest")
+    parser.add_argument("--output", required=True, type=Path)
+    args = parser.parse_args()
+    if args.output.exists() or args.output.is_symlink():
+        parser.error("Output already exists; choose a new filename")
+    try:
+        paths = audit_files(args.directory)
+        path = next((p for p in paths if args.snapshot is None or p.name == args.snapshot), None)
+        if path is None:
+            raise ValueError("No matching capture")
+        def fingerprint():
+            if path.is_symlink():
+                raise ValueError("Snapshot changed")
+            s = path.stat()
+            return (s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+        initial = fingerprint()
+        report = engineering_qualification(read_audit(args.directory,path.name),include_reference_patterns=True)
+        if fingerprint() != initial:
+            raise ValueError("Snapshot changed")
+        report["same_capture_verified"] = True
+    except Exception:
+        parser.error("Engineering qualification failed; verify the unchanged saved capture")
+    write_private(args.output, report)
+    print("Anonymous engineering qualification saved.")
+
+
+if __name__ == "__main__":
+    main()
