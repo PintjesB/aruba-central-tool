@@ -3,6 +3,7 @@ from collections import defaultdict
 from .central_tool import canonical, profile_body, field_differences
 from .consolidation import scope_memberships
 from .inheritance_review import ATOMIC
+from .scope_evidence import assignment_identity
 
 
 def assignment_review(bundle, module_filter="", persona_filter="", identity_filter=""):
@@ -11,6 +12,12 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
     assignment_view = library.get("assignments") or {}
     entries = bundle["results"]
     direct = (bundle.get("keyed_profile_details") or {}).get("profiles", {})
+    keyed = defaultdict(list)
+    for record in (bundle.get("keyed_assignment_details") or {}).get("records", []):
+        if isinstance(record, dict):
+            selector = assignment_identity(record.get("selector"))
+            if selector is not None:
+                keyed[selector].append(record)
     def contradiction(view, body, persona, sid, module, identity, kind):
         if view.get("status") != "list_parsed":
             return None
@@ -50,7 +57,7 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
     overlaps = {}
     for a in assignment_view.get("rows", []):
         keys = ("profile-type", "profile-instance", "device-function", "scope-id")
-        if not isinstance(a, dict) or not all(type(a.get(k)) in (str, int) and str(a[k]) for k in keys):
+        if assignment_identity(a) is None:
             invalid.append(a)
             continue
         module, identity, persona, sid = (str(a[k]) for k in keys)
@@ -60,6 +67,17 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
         if key in seen:
             continue
         seen.add(key)
+        individual_records = keyed[(sid, persona, module, identity)]
+        if len(individual_records) > 1:
+            assignment_state = "multiple_observations"
+        elif not individual_records:
+            assignment_state = "not_collected"
+        else:
+            observation = individual_records[0]
+            state = observation.get("status")
+            assignment_state = ("body_difference_observed" if state == "identity_observed" and observation.get("body_matches_inventory") is False else
+                                "identity_observed" if state == "identity_observed" else
+                                "scope_only_observed" if state == "scope_only_observed" else "individual_read_unqualified")
         index_persona(persona)
         source = scopes.get(persona, {}).get(sid)
         # Other-function scope evidence is diagnostic only. Do not convert
@@ -122,6 +140,7 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
                      "scope_name": source.get("name") or sid if source else sid, "scope_kind": source["kind"] if source else "unknown",
                      "library_present": expected is not None, "scope_resolved": source is not None,
                      "scope_resolution":scope_state,"other_scope_contexts":other_contexts,
+                     "assignment_evidence_state": assignment_state, "individual_assignment_observations": individual_records,
                      "recipients": recipients, "known_count": len(known), "unknown_count": len(unknown)}
         if library_conflict:
             row["library_individual_conflict"] = library_conflict
@@ -139,6 +158,9 @@ ASSIGNMENT_FILTERS = {
     "scope_observed_other_function": "Scope observed in another function",
     "scope_not_observed": "Scope not observed",
     "overlap": "Overlapping assignments",
+    "assignment_identity_observed": "Individual assignment identity observed",
+    "assignment_body_difference": "Individual assignment body differs",
+    "assignment_identity_unverified": "Individual assignment identity unverified",
     "library_unobserved": "Library definition not observed",
     "different_body": "Different effective settings",
     "individual_evidence_conflict": "Contradictory individual evidence",
@@ -176,9 +198,17 @@ def filter_assignment_review(report, module="", persona="", identity="", state="
         if state == "all":
             return True
         conflict = bool(row.get("library_individual_conflict") or any(r.get("individual_conflict") for r in row["recipients"]))
+        assignment_state = row.get("assignment_evidence_state", "not_collected")
         if state == "attention":
             return (unresolved or overlap or not row["library_present"] or no_recipients
+                    or assignment_state in ("body_difference_observed", "multiple_observations")
                     or conflict or bool(states - {"matching_shared"}))
+        if state == "assignment_identity_observed":
+            return assignment_state == "identity_observed"
+        if state == "assignment_body_difference":
+            return assignment_state == "body_difference_observed"
+        if state == "assignment_identity_unverified":
+            return assignment_state not in ("identity_observed", "body_difference_observed")
         if state == "individual_evidence_conflict":
             return conflict
         if state == "scope_unresolved":
