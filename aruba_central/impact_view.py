@@ -1,6 +1,7 @@
 """Read-only worklist for investigating a profile before changing it."""
 from collections import Counter
 from .dependency_impact import dependency_impact
+from .vlan_membership import target_label
 from .workspace_ui import e, page, intro, metrics, badge, table, tr, inspect, raw, module_label, persona_label, pretty
 from .workspace_views import load, select, url
 
@@ -94,7 +95,7 @@ def impact_view(workspace, query):
             selected,controls=batch(kind,("device","persona","scope","source_view","source_module","source","target_module","target","status"))
             return controls+table(headers,[tr(e(r["device"]), e(persona_label(r["persona"])), e(pretty(r.get("source_view", "effective"))),
                        e(module_label(r["source_module"]) + " / " + r["source"]),
-                       e(module_label(r["target_module"]) + " / " + (str(r["target"]) if r["target"] is not None else "Unknown")),
+                       e(module_label(r["target_module"]) + " / " + target_label(r)),
                        badge(pretty(r["status"])), control(kind,index)) for index,r in selected],search=True)
         headers = ("Scope", "Function", "View", "Source", "Target", "Result", "")
         boundaries,controls=batch("boundary",("persona","scope","view","direction","module","identity","unqualified_edge"),
@@ -104,13 +105,13 @@ def impact_view(workspace, query):
             ref=item["unqualified_edge"]
             boundary_rows.append(tr(e(pretty(item["direction"])),e(ref["device"]),e(persona_label(item["persona"])),
                 e(item["module"]+" / "+item["identity"]),str(item["depth"]),
-                e(ref["source_module"]+" / "+str(ref["source"])),e(ref["target_module"]+" / "+str(ref["target"] or "Unknown")),
+                e(ref["source_module"]+" / "+str(ref["source"])),e(ref["target_module"]+" / "+target_label(ref)),
                 badge(pretty(ref["status"])),control("boundary",index)))
         body += '<section><h2>Unqualified dependency boundaries</h2><p>These observations stop traversal at the selected profile or along a resolved chain. They may affect direct or indirect impact, but do not establish a further reachable profile.</p>'+controls+table(("Direction","Scope","Function","Last resolved profile","Resolved hops","Source","Target","Evidence",""),boundary_rows,search=True)
         if result["boundary_truncated"] or result["truncated"]:
             body += '<p class="note">Traversal or boundary limit reached; additional unresolved observations may exist.</p>'
         body += '</section>'
-        body += '<section><h2>Direct references</h2>' + reference_rows("direct") + '</section>'
+        body += '<section><h2>Direct references</h2><p>Compact VLAN sets are exact configured membership evidence, not unknown identities or proof of deployment.</p>' + reference_rows("direct") + '</section>'
         body += '<section><h2>Conditional tenant enforcement observations</h2><p>These NAC policy observations are independent of the selected device function or scope. They may refer to this profile or an unresolved identity in its module. No device recipient or client authorization is inferred.</p>'
         tenant,controls=batch("tenant",("device","target_module","target","attribute_status","status"))
         body += controls+table(("Policy","Module","Target","Attribute evidence","Policy state","Rule state",""),[
