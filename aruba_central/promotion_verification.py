@@ -5,7 +5,7 @@ Review captured evidence only. Never infer deployment or authorize a change.
 from .central_tool import canonical
 from .consolidation import profile_recommendations
 from .bulk_review import source_recipient_evidence
-from .remediation_review import comparable, observation, scoped_view, scope_meta, same_device
+from .remediation_review import comparable, captured_observation, contradictory, scope_meta, same_device
 
 
 def promotion_candidates(bundle):
@@ -31,7 +31,7 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
         return obs["state"] == "present" and canonical(obs["body"]) == expected
 
     def source_observation(bundle, sid, kind):
-        return observation(scoped_view(bundle, persona, module, sid, kind), identity)
+        return captured_observation(bundle, persona, module, sid, kind, identity)
 
     def members(bundle, selected):
         entry = bundle["results"].get(persona, {"scopes": []})
@@ -43,8 +43,8 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
     intended, uncertain = members(before, sources)
     new_intended, new_uncertain = members(after, sources)
     if destination == "library":
-        old_dest = observation((before.get("library") or {}).get("modules", {}).get(module, {}), identity)
-        new_dest = observation((after.get("library") or {}).get("modules", {}).get(module, {}), identity)
+        old_dest = captured_observation(before, "Library", module, "", "library", identity)
+        new_dest = captured_observation(after, "Library", module, "", "library", identity)
         old_recipients, old_unknown = intended, uncertain
         new_recipients, dest_unknown = new_intended, new_uncertain
         def assigned(bundle):
@@ -92,6 +92,9 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
         target_matches = (scope_meta(after, persona, destination).get("kind") == option["kind"] and matches(new_dest))
         assignment_rows = []
 
+    if contradictory(old_dest, new_dest):
+        target_matches = False
+
     source_rows = []
     for source in sources:
         sid = source["scope"]
@@ -101,7 +104,9 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
                         == scope_meta(after, persona, sid).get("kind"))
         if source["kind"] == "device":
             scope_stable = scope_stable and same_device(before, after, persona, sid)
-        if not scope_stable or not matches(old):
+        if contradictory(old, new):
+            status = "individual_evidence_conflict"
+        elif not scope_stable or not matches(old):
             status = "source_identity_or_baseline_unverified"
         elif destination != "library" and sid == destination:
             status = "destination_retained" if matches(new) else "source_removal_unverified"
@@ -128,6 +133,8 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
                               or (sid in old_recipients) != (sid in new_recipients))
         if not same_device(before, after, persona, sid):
             status = "device_identity_unverified"
+        elif contradictory(old, new):
+            status = "individual_evidence_conflict"
         elif membership_unknown or membership_changed:
             status = "recipient_membership_unverified"
         elif intended_recipient:

@@ -42,8 +42,22 @@ def collateral_review(before, after, module, covered):
                 return {**view, "profiles": {k: body for k, body in view["profiles"].items() if k not in excluded}}
             if not all(z.get("status") == "list_parsed" and z.get("count_confirmed") is True for z in (x, y)):
                 counts["unverified_view_pairs"] += 1
+            # Inspect direct positive observations even when collections
+            # match exactly or claim count-confirmed absence. Exclude only
+            # identities already checked by the primary remediation.
+            from .remediation_review import captured_observation
+            conflicts = set()
+            for label, bundle in (("before", before), ("after", after)):
+                profiles = (bundle.get("keyed_profile_details") or {}).get("profiles", {}).get(
+                    persona, {}).get(str(sid), {}).get(module, {})
+                for identity in sorted(set(profiles) - excluded):
+                    observed = captured_observation(bundle, persona, module, sid, "effective", identity)
+                    if observed["state"] == "individual_evidence_conflict":
+                        conflicts.add(identity)
+                        records.append({**common, "identity": identity, "status": "individual_evidence_conflict",
+                                        "capture": label, "observation": observed})
             changes = view_changes(filtered(x), filtered(y))
-            if not changes:
+            if not changes and not conflicts:
                 counts["unchanged_count_confirmed_pairs"] += 1
             for change in changes:
                 records.append({**common, **change})
