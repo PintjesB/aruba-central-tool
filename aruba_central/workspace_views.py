@@ -982,11 +982,15 @@ def engineering_view(workspace, query):
             observations = finding["findings"]
             detail = '<p>Captured rule comparisons only. Actual resultant policy order, service and address expansion, device applicability and traffic behavior remain unverified.</p>'
             detail += '<h3>Captured locations</h3>' + list_items([v["name"] for v in finding["locations"]])
+            if finding.get("individual_conflict"):
+                detail += '<h3>Contradictory individual policy evidence</h3>' + raw(finding["individual_conflict"])
             detail += '<h3>Rule comparisons</h3>'
             for item in observations:
                 earlier = item.get("earlier_position", item.get("earlier_index"))
                 later = item.get("later_position", item.get("later_index"))
                 detail += '<h4>' + e(pretty(item["status"])) + ' · ' + e(str(earlier)) + ' / ' + e(str(later)) + '</h4>'
+                if "condition_relationship" in item:
+                    detail += '<p>Match relationship: '+e(pretty(item["condition_relationship"]))+'. Partial overlaps are not full shadowing.</p>'
                 if "coverage" in item:
                     detail += '<p>' + e(pretty(item["coverage"])) + ' · ' + e(item["earlier_network"]) + ' / ' + e(item["later_network"]) + ' · counter setting: ' + e(pretty(item["counter_setting"])) + '</p>'
                 detail += '<p>Earlier rule</p>' + property_table(item["earlier"]) + '<p>Later rule</p>' + property_table(item["later"])
@@ -996,7 +1000,7 @@ def engineering_view(workspace, query):
                            str(len(finding["locations"])), str(finding["rules"]), str(finding["unsupported_rules"]),
                            str(len(observations)), badge(pretty(finding["status"])),
                            inspect(finding["identity"], detail, "Review rules")))
-    panel("rules", "Policy rule review", "Inspect duplicate conditions, differing actions and broader earlier matches within captured ordered policies. Role ACLs also compare literal IPv4 and IPv6 destinations within the same explicit source role and VRF. Unsupported matches and missing order remain unqualified; do not treat these as proven unreachable rules.",
+    panel("rules", "Policy rule review", "Inspect duplicate conditions, differing actions, partial intersections and broader matches within captured ordered policies. Role ACLs also compare literal IPv4 and IPv6 destinations within the same explicit source role and VRF. Unsupported matches and missing order remain unqualified; do not treat these as proven unreachable rules.",
           ("Module", "Policy", "Function", "Locations", "Rules", "Unsupported", "Observations", "Evidence", ""), rows, counts["rules"])
     if selected == "rules":
         from .policy_sequence_review import policy_sequence_reviews
@@ -1005,7 +1009,11 @@ def engineering_view(workspace, query):
             detail = '<p>Observed policy-group order. Cross-policy matches are candidates only; role applicability and resultant device policy remain unverified.</p>'
             detail += table(("Position", "Referenced policy", "Visibility"), [
                 tr(str(ref["position"]), e(ref["name"]), badge(pretty(ref["status"]))) for ref in report["references"]])
+            for ref in report["references"]:
+                if ref.get("individual_conflict"):
+                    detail += '<h3>Contradictory policy target: '+e(ref["name"])+'</h3>'+raw(ref["individual_conflict"])
             for finding in report["findings"]:
+                detail += '<p>Match relationship: '+e(pretty(finding.get("condition_relationship","unverified")))+'</p>'
                 detail += '<h4>' + e(finding["earlier_policy"]) + ' → ' + e(finding["later_policy"]) + '</h4><p>' + e("Same action body" if finding["same_action"] else "Different action bodies") + '</p>'
                 detail += '<p>Earlier rule</p>' + property_table(finding["earlier_rule"]) + '<p>Later rule</p>' + property_table(finding["later_rule"])
             if report["truncated"]:
