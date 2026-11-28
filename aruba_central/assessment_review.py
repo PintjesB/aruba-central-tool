@@ -6,6 +6,7 @@ from .consolidation import profile_recommendations
 from .policy_variants import policy_variants
 from .policy_rule_review import policy_rule_groups, POLICY_SCHEMA_STATES, POLICY_BODY_SHAPES
 from .policy_sequence_review import policy_sequence_reviews
+from .dependency_evidence import reference_semantics, REFERENCE_SEMANTICS
 
 SECURITY_REASONS = ("rule_not_object", "additional_rule_fields", "condition_not_object",
     "unsupported_condition_fields", "unsupported_condition_type", "unsupported_rule_type",
@@ -75,9 +76,16 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                         if view.get("count_confirmed") is True:
                             coverage["count_confirmed"] += 1
     reference_reasons=Counter()
+    absent_semantics = Counter()
+    absent_fields = set()
     for ref in engineering["references"]:
         if ref.get("source_evidence")=="nac_enforcement":
             continue
+        if ref["status"] == "not_observed" and ref.get("target_evidence") == "count_confirmed_absence":
+            semantics = reference_semantics(ref)
+            absent_semantics[semantics] += 1
+            if semantics != "direct_or_unclassified":
+                absent_fields.add((ref.get("persona"),ref.get("scope"),ref.get("source_view"),ref.get("source_module"),ref.get("source"),tuple(ref.get("path",[]))))
         if ref["status"]=="conflicting_observation":
             source,target=bool(ref.get("source_body_conflict")),bool(ref.get("target_body_conflict"))
             reason="both_ends" if source and target else "source_only" if source else "target_only" if target else "other_conflict"
@@ -115,6 +123,8 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "port_visibility_conflicts": sum(v["status"] == "individual_evidence_conflict" for g in engineering["port_groups"] for m in g.get("matching_library_profiles", []) for v in m["visibility"]),
                 "reference_target_collection_incomplete": sum(r.get("target_evidence") == "target_collection_incomplete" for r in engineering["references"]),
                 "reference_target_view_unqualified": sum(r.get("target_evidence") == "target_view_unqualified" for r in engineering["references"]),
+                **{"reference_absence_"+key:absent_semantics[key] for key in REFERENCE_SEMANTICS},
+                "reference_absent_set_source_fields":len(absent_fields),
                 "reference_target_count_confirmed_absence": sum(r.get("target_evidence") == "count_confirmed_absence" for r in engineering["references"]),
                 "unresolved_reference_target_individual_identity": sum(r.get("status") == "unresolved" and r.get("target_individual_status") == "identity_observed" for r in engineering["references"]),
                 **{"reference_alternative_"+key:reference_alternatives[key] for key in reference_contexts+("any","none")},
