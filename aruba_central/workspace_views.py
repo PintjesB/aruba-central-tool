@@ -899,6 +899,8 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
         path = r.get("path", [])
         return canonical([{"index":"*"} if type(p) is int else p for p in path]) if isinstance(path, list) else "[]"
     source, field_filter = query.get("ref_source", ""), query.get("ref_field", "")
+    exact_target=query.get("ref_target","")
+    target_kind=query.get("ref_target_kind","")
     evidence_reasons = ("identity_unqualified", "target_view_unqualified", "identity_observed", "count_confirmed_absence", "target_collection_incomplete", "set_target_view_unqualified", "set_target_collection_incomplete", "set_count_confirmed_absence")
     reason = query.get("ref_evidence", "")
     contexts = ("library_definition","other_function_same_scope","same_site_observation")
@@ -919,7 +921,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
         return {obs.get("context") for obs in row.get("target_alternative_observations",[])
                 if obs.get("status") == "identity_observed" and obs.get("context") in contexts}
     state, persona, module, keyword = (query.get(k, "") for k in ("ref_state", "ref_persona", "ref_module", "ref_q"))
-    if state not in ("", *states) or persona not in ("", *personas) or module not in ("", *modules) or reason not in ("", *evidence_reasons) or source not in ("", *sources) or context not in ("","no_positive_context",*contexts) or semantics not in ("",*REFERENCE_SEMANTICS) or role_state not in ("",*role_states) or conflict_kind not in ("",*CONFLICT_KINDS) or len(set_group)>128 or len(keyword) > 200 or len(field_filter) > 4096:
+    if state not in ("", *states) or persona not in ("", *personas) or module not in ("", *modules) or reason not in ("", *evidence_reasons) or source not in ("", *sources) or context not in ("","no_positive_context",*contexts) or semantics not in ("",*REFERENCE_SEMANTICS) or role_state not in ("",*role_states) or conflict_kind not in ("",*CONFLICT_KINDS) or len(set_group)>128 or len(keyword) > 200 or len(field_filter) > 4096 or len(exact_target)>512 or target_kind not in ("","scalar","set","unknown"):
         raise ValueError("Invalid reference filter")
     terms = keyword.casefold().split()
     fields = ("device", "persona", "scope", "source_view", "source_module", "source",
@@ -927,6 +929,8 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     selected = [(i, r) for i, r in enumerate(records)
                 if (not state or r["status"] == state) and (not persona or r["persona"] == persona)
                 and (not module or r["target_module"] == module)
+                and (not exact_target or target_matches(r,r["target_module"],exact_target))
+                and (not target_kind or target_kind==("set" if r.get("target_member_ranges") else "unknown" if r["target"] is None else "scalar"))
                 and (not reason or r.get("target_evidence") == reason or (reason=="count_confirmed_absence" and r.get("target_evidence")=="set_count_confirmed_absence"))
                 and (not source or r["source_module"] == source)
                 and (not field_filter or field(r) == field_filter)
@@ -937,7 +941,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                 and (not context or (context == "no_positive_context" and r["status"] == "unresolved" and r.get("target") is not None and not positive_contexts(r)) or context in positive_contexts(r))
                 and all(term in " ".join(str(r.get(k, "")) for k in (*fields,"role_vlan_name_review")).casefold() or (r.get("target_member_ranges") and target_matches(r,"layer2-vlan",term)) for term in terms)]
     filters = {**params, "ref_state": state, "ref_persona": persona, "ref_module": module, "ref_evidence": reason, "ref_q": keyword,
-               "ref_source": source, "ref_field": field_filter, "ref_context": context, "ref_semantics":semantics,"ref_role_name":role_state,"ref_set_group":set_group,"ref_conflict_kind":conflict_kind}
+               "ref_source": source, "ref_field": field_filter, "ref_context": context, "ref_semantics":semantics,"ref_role_name":role_state,"ref_set_group":set_group,"ref_conflict_kind":conflict_kind,"ref_target":exact_target,"ref_target_kind":target_kind}
     if query.get("reference_export") == "1":
         if query.get("binding") != binding:
             raise ValueError("Reference evidence changed; reopen the worklist")
@@ -961,6 +965,8 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                 + (f'<input type="hidden" name="ref_set_group" value="{e(set_group)}">' if set_group else "")
                 + select("ref_conflict_kind",[("","All conflict types")]+[(v,pretty(v)) for v in CONFLICT_KINDS],conflict_kind,"Conflict type")
                 + select("ref_role_name",[("","All role VLAN name states")]+[(v,pretty(v)) for v in role_states],role_state,"Role VLAN name evidence")
+                + select("ref_target_kind",[("","All target representations"),("scalar","Individual identity"),("set","Compact VLAN membership"),("unknown","Unknown identity")],target_kind,"Target representation")
+                + f'<label>Exact target name or VLAN ID<input name="ref_target" maxlength="512" value="{e(exact_target)}"></label>'
                 + select("ref_semantics",[("", "All reference kinds")]+[(v,pretty(v)) for v in REFERENCE_SEMANTICS],semantics,"Reference kind")
                 + select("ref_context", [("", "All alternative contexts"),("no_positive_context","Named unresolved without positive context")] + [(v, pretty(v)) for v in contexts], context, "Alternative evidence")
                 + f'<label>Search all observations<input name="ref_q" maxlength="200" value="{e(keyword)}"></label>'
@@ -996,7 +1002,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                f'<a href="{url(root,"advanced",**{**filters,"ref_set_group":set_id(g["sample"])})}">Inspect members</a>') for g in groups_by_size])+'</details>'
     compact=[r for _,r in selected if r.get("target_member_ranges")]
     if compact:
-        controls += '<p><strong>'+str(len(compact))+' compact VLAN membership observations</strong> representing '+str(sum(r["target_member_count"] for r in compact))+' exact members. Search an individual VLAN ID to locate membership; these are not required definitions.</p>'
+        controls += '<p><strong>'+str(len(compact))+' compact VLAN membership observations</strong> representing '+str(sum(r["target_member_count"] for r in compact))+' exact members. Use the exact target field to match an individual VLAN ID without substring matches; these are not required definitions.</p>'
     groups = Counter((r["source_module"], r["target_module"], field(r)) for _, r in selected
                      if r["status"] == "unresolved" and r.get("target") is None and not r.get("target_member_ranges"))
     if field_filter:
@@ -1011,6 +1017,13 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
         controls += ('<details open><summary>Unknown reference identity patterns ('+str(len(groups))+')</summary>'
                      '<p>Exact field paths, with list positions grouped. Showing the 50 largest patterns; use source and target filters to narrow the remainder. These are observations, not confirmed dependencies.</p>'
                      + table(("Source module","Target module","Field pattern","Observations",""),group_rows)+'</details>')
+    named_gaps=Counter((r["source_module"],r["target_module"],field(r)) for _,r in selected
+                       if r["status"]=="unresolved" and r.get("target") is not None and not positive_contexts(r))
+    if named_gaps and workflow=="references" and not field_filter:
+        controls += '<details open><summary>Named targets without positive alternative evidence ('+str(len(named_gaps))+')</summary><p>Grouped by exact source field. These require targeted evidence review; no identity or applicability is inferred.</p>'+table(("Source module","Target module","Field pattern","Observations",""),[
+            tr(e(module_label(source_module)),e(module_label(target_module)),e(pattern),str(count),
+               f'<a href="{url(root,"advanced",**{**filters,"ref_source":source_module,"ref_module":target_module,"ref_field":pattern,"ref_state":"unresolved","ref_context":"no_positive_context","ref_target_kind":"scalar"})}">Inspect field</a>')
+            for (source_module,target_module,pattern),count in sorted(named_gaps.items(),key=lambda item:(-item[1],item[0]))[:50]])+'</details>'
     rows = []
     for index, r in selected[offset:offset+50]:
         detail_url = url(root, "advanced", **params, reference_detail=index, binding=binding)

@@ -170,3 +170,22 @@ class ReferenceWorklistTests(unittest.TestCase):
                 self.assertIn("of 1 matching observations",html)
                 self.assertIn("private-vlan",html)
                 self.assertIn("single candidate id",html.lower())
+
+    def test_exact_target_filter_distinguishes_scalar_membership_and_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            name="config-audit-test.json"
+            (Path(directory)/name).write_text(json.dumps(fixture()))
+            w=Workspace(directory)
+            base={"persona":"ACCESS_SWITCH","scope":"1","device":"Switch","source_view":"effective",
+                  "source_module":"ap-port-profiles","source":"port","path":["switchport","trunk-vlan-ranges"],
+                  "target_module":"layer2-vlan","status":"unresolved","target_evidence":"target_view_unqualified"}
+            refs=[{**base,"target":"10"},{**base,"target":"110"},
+                  {**base,"target":None,"target_member_ranges":[[1,9],[11,99]],"target_member_count":98},
+                  {**base,"target":None}]
+            with patch.object(w,"advanced_snapshot",return_value={"references":refs,"shadowed":[],"port_groups":[],"library_duplicates":[]}):
+                query={"snapshot":name,"workflow":"references"}
+                self.assertIn("Named targets without positive alternative evidence",w.advanced(query))
+                self.assertIn("of 1 matching observations",w.advanced({**query,"ref_target":"10"}))
+                self.assertIn("of 1 matching observations",w.advanced({**query,"ref_target":"11","ref_target_kind":"set"}))
+                self.assertIn("of 0 matching observations",w.advanced({**query,"ref_target":"10","ref_target_kind":"set"}))
+                self.assertIn("of 1 matching observations",w.advanced({**query,"ref_target_kind":"unknown"}))

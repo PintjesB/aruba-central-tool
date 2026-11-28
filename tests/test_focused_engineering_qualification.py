@@ -42,3 +42,18 @@ class FocusedEngineeringTests(unittest.TestCase):
         self.assertEqual(result,[{"field_context":"gateway_access_vlan_name","status":"single_candidate_id",
                                   "positive_contexts":["library_vlan_name"],"observations":2}])
         self.assertNotIn("private",json.dumps(result))
+
+    def test_named_gap_field_patterns_count_distinct_targets_without_leaking_values(self):
+        from aruba_central.engineering_qualification import named_reference_field_gaps
+        base={"status":"unresolved","target":"private-id","persona":"CAMPUS_AP","scope":"private-scope",
+              "source":"private-source","source_view":"effective","source_module":"ap-port-profiles",
+              "target_module":"layer2-vlan","path":["switchport","trunk-vlan-ranges"],
+              "target_evidence":"target_view_unqualified"}
+        result=named_reference_field_gaps([base,{**base,"scope":"private-other"},
+                 {**base,"target_alternative_observations":[{"status":"identity_observed","context":"library_definition"}]}])
+        self.assertEqual(len(result),1)
+        self.assertEqual(result[0]["observations"],2)
+        self.assertEqual(result[0]["distinct_source_fields"],2)
+        self.assertEqual(result[0]["distinct_target_identities"],1)
+        self.assertEqual(result[0]["field"],"trunk-vlan-ranges")
+        self.assertNotIn("private",json.dumps(result))

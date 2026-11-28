@@ -70,6 +70,7 @@ def engineering_qualification(bundle, *, include_reference_patterns=False):
         result["policy_predicate_patterns"] = report["policy_predicate_patterns"]
         result["reference_identity_patterns"] = reference_identity_patterns(engineering["references"])
         result["named_reference_gaps"] = named_reference_gaps(engineering["references"])
+        result["named_reference_field_gaps"] = named_reference_field_gaps(engineering["references"])
         result["reference_absence_patterns"] = reference_absence_patterns(engineering["references"])
         result["role_vlan_name_evidence"] = role_vlan_name_evidence(engineering["references"])
         result["reference_conflict_patterns"] = reference_conflict_patterns(engineering["references"])
@@ -136,6 +137,39 @@ def named_reference_gaps(references):
         counts[source,target,reason,positive] += 1
     return [{"source_module":s,"target_module":t,"reason":r,"positive_contexts":list(p),"observations":n}
             for (s,t,r,p),n in sorted(counts.items(),key=lambda item:(-item[1],item[0]))]
+
+
+def named_reference_field_gaps(references):
+    """Anonymous source fields behind named gaps without positive alternatives."""
+    from collections import Counter,defaultdict
+    from .central_tool import CONFIG_MODULES,VLAN_REFERENCE_FIELDS
+    from .dependency_evidence import REFERENCE_SEMANTICS
+    fields=VLAN_REFERENCE_FIELDS | {"access-vlan-name","trunk-vlan-ranges","trunk-vlans","trunk-native-vlan",
+        "wired-access-vlan-id","vlan-id-ranges","vlan-id-range","mstp-vlans","vlans",
+        "default-role","role","src-role","net-service","net-group","identity","name","server-name"}
+    contexts={"library_definition","other_function_same_scope","same_site_observation"}
+    counts=Counter()
+    sources=defaultdict(set)
+    targets=defaultdict(set)
+    for row in references:
+        if row.get("status")!="unresolved" or row.get("target") is None or row.get("source_evidence")=="nac_enforcement":
+            continue
+        if any(obs.get("status")=="identity_observed" and obs.get("context") in contexts for obs in row.get("target_alternative_observations",[])):
+            continue
+        source,target=(row.get(k) if row.get(k) in CONFIG_MODULES else "other" for k in ("source_module","target_module"))
+        path=row.get("path",[])
+        leaf=next((part for part in reversed(path) if isinstance(part,str)),"")
+        reason=row.get("target_evidence")
+        key=(source,target,leaf if leaf in fields else "other",
+             reason if reason in ("target_view_unqualified","target_collection_incomplete") else "other",
+             reference_semantics(row))
+        counts[key]+=1
+        sources[key].add((row.get("persona"),row.get("scope"),row.get("source_view"),row.get("source"),tuple(path)))
+        targets[key].add(row["target"])
+    return [{"source_module":s,"target_module":t,"field":f,"reason":r,"semantics":kind,
+             "observations":n,"distinct_source_fields":len(sources[s,t,f,r,kind]),
+             "distinct_target_identities":len(targets[s,t,f,r,kind])}
+            for (s,t,f,r,kind),n in sorted(counts.items(),key=lambda item:(-item[1],item[0]))]
 
 
 def reference_absence_patterns(references):
