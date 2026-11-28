@@ -150,7 +150,9 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
                      "intended": intended_recipient, "destination_recipient": sid in new_recipients,
                      "status": status, "before_effective": old, "after_effective": new})
 
-    return {"workflow": "library_reuse" if reuse else "local_promotion", "candidate": candidate, "destination": destination,
+    from .remediation_collateral import collateral_review
+    collateral = collateral_review(before, after, module, {(persona, r["scope"]): {identity} for r in rows})
+    return {"collateral": collateral, "workflow": "library_reuse" if reuse else "local_promotion", "candidate": candidate, "destination": destination,
             "identity_checks": identity_checks, "destination_definition_matches": matches(new_dest),
             "destination_and_assignments_observed": target_matches,
             "before_destination": old_dest, "after_destination": new_dest,

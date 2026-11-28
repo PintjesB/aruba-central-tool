@@ -84,7 +84,10 @@ def verify_override(before, after, candidate_id, *, confirmed=False):
                      "after_local": new_local, "after_effective": new_effective,
                      "rollback_review": {"saved_body": old_local.get("body"), "prior_effective": old_effective.get("body"),
                                          "instruction": "Review prior saved definition and assignments; do not restore blindly."}})
+    from .remediation_collateral import collateral_review
+    collateral = collateral_review(before, after, module, {(persona, r["scope"]): {identity} for r in rows})
     return {"workflow": "override_removal", "candidate": candidate, "rows": rows, "identity_checks": identity_checks,
+            "collateral": collateral,
             "complete": False, "safe_to_apply": False}
 
 
@@ -140,7 +143,11 @@ def verify_library_migration(before, after, module, keep, *, confirmed=False):
         cleanup.append({"identity": identity, "status": status, "before": prior, "after": current})
     remaining_assignments = [a for a in assignment_view.get("rows", []) if a.get("profile-type") == module
                              and str(a.get("profile-instance")) in old_names]
+    from .remediation_collateral import collateral_review
+    collateral = collateral_review(before, after, module,
+                                   {(r["persona"], r["scope"]): old_names | {keep} for r in rows})
     return {"workflow": "library_migration", "module": module, "retain": keep, "old_names": sorted(old_names),
+            "collateral": collateral,
             "identity_checks": identity_checks, "rows": rows, "retained_library_matches": library_matches,
             "remaining_references": remaining_references, "remaining_assignments": remaining_assignments,
             "library_cleanup": cleanup,

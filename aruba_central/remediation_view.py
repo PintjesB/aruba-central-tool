@@ -58,6 +58,7 @@ def remediation_view(workspace, query):
             result = verify_promotion(before, current, args[1], args[2], confirmed=True)
             from .promotion_verification_view import promotion_outcome
             body += promotion_outcome(result)
+            body += collateral_panel(result["collateral"], root, name, previous, chosen, query.get("collateral_offset", "0"))
             body += private_export("remediation-verification", {"previous_snapshot": previous, "current_snapshot": name, "report": result})
             return page("Remediation verification", body, workspace.nav(name))
         result = (verify_override(before, current, args[1], confirmed=True) if args[0] == "override"
@@ -82,6 +83,40 @@ def remediation_view(workspace, query):
                 tr(e(label), str(len(result[key])), inspect(label, raw(result[key]), "Review"))
                 for key, label in (("remaining_references", "Old-name references"), ("remaining_assignments", "Old-name assignments"), ("unresolved_recipients", "Unresolved prior recipients"))])
             body += '<p class="note">Zero observed references or assignments does not establish removal or completeness.</p></section>'
+        body += collateral_panel(result["collateral"], root, name, previous, chosen, query.get("collateral_offset", "0"))
         body += '<section><h2>Rollback preparation</h2><p>Retain the previous bodies, reference locations and assignments as review evidence. No rollback commands are generated; restoration must be qualified against fresh state.</p>'
         body += private_export("remediation-verification", {"previous_snapshot": previous, "current_snapshot": name, "report": result}) + '</section>'
     return page("Remediation verification", body, workspace.nav(name))
+
+def collateral_panel(report, root, name, previous, candidate, offset):
+    """Bound rendered detail; the complete private report retains every record."""
+    from .workspace_ui import diff_table
+    records = report["records"]
+    try:
+        offset = int(offset)
+    except (TypeError, ValueError):
+        raise ValueError("Invalid collateral page") from None
+    if offset < 0 or offset % 50 or (offset and offset >= len(records)):
+        raise ValueError("Invalid collateral page")
+    counts = report["counts"]
+    body = '<section id="collateral"><h2>Additional effective-module comparison</h2>'
+    body += '<p>Checks other profile identities and devices beyond those already reviewed for the selected remediation, across functions where this module was collected. Observed changes may be unrelated; no causal or complete-configuration claim is made.</p>'
+    body += metrics([("Device/function pairs", counts.get("device_function_pairs", 0), "Module scope"),
+                     ("Unchanged, count-confirmed pairs", counts.get("unchanged_count_confirmed_pairs", 0), "Compared remaining profiles"),
+                     ("Unverified view pairs", counts.get("unverified_view_pairs", 0), "Missing read or count"),
+                     ("Unverified device identities", counts.get("unverified_device_pairs", 0), "Not compared")])
+    body += table(("Observation", "Count"), [tr(e(pretty(k)), str(n)) for k,n in sorted(report["outcomes"].items())])
+    listing = []
+    for row in records[offset:offset+50]:
+        details = diff_table(row.get("fields", []), "Before", "After") if row.get("fields") else ""
+        if row.get("source_fields"):
+            details += '<h4>Source annotation differences</h4>' + diff_table(row["source_fields"], "Before", "After")
+        listing.append(tr(e(row["device"]), e(row["persona"]), e(row["identity"] or "View / scope"),
+                          badge(pretty(row["status"]), "warn"), inspect("Captured comparison", details + raw(row))))
+    body += table(("Device", "Function", "Profile", "Evidence", ""), listing)
+    if records:
+        body += '<p>Showing ' + str(offset+1) + '–' + str(min(offset+50,len(records))) + ' of ' + str(len(records)) + ' observations. Full evidence is available in the private export.</p>'
+    for label, next_offset in (("Previous", offset-50), ("Next", offset+50)):
+        if 0 <= next_offset < len(records):
+            body += f'<a class="button" href="{url(root, "remediation", snapshot=name, previous=previous, confirmed="yes", candidate=candidate, collateral_offset=next_offset)}#collateral">{label}</a> '
+    return body + '</section>'
