@@ -1,5 +1,6 @@
 """Measure local browser navigation and inspector latency without exporting tenant data."""
 import argparse
+from collections import Counter
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from statistics import median
@@ -36,6 +37,9 @@ def browser_benchmark(directory, snapshot, *, repeat=3, executable=None, previou
         ("identity_review","assessment",{"mode":"identities"}),
         ("policy_variants","advanced",{"workflow":"variants"}),
         ("policy_rules","advanced",{"workflow":"rules"}),
+        ("reference_review","advanced",{"workflow":"references"}),
+        ("observed_references","advanced",{"workflow":"resolved"}),
+        ("scope_precedence","advanced",{"workflow":"shadow"}),
         ("remediation","remediation",{}),
     ]
     target=next((r for r in engineering["references"] if isinstance(r.get("target"),str) and r["target"]
@@ -44,6 +48,11 @@ def browser_benchmark(directory, snapshot, *, repeat=3, executable=None, previou
         routes.append(("dependency_impact","impact",{"module":target["target_module"],"identity":target["target"]}))
     else:
         routes.append(("dependency_impact","impact",{}))
+    fanout=Counter((r["target_module"],r["target"]) for r in engineering["references"]
+                   if isinstance(r.get("target"),str) and r["target"] and r["status"] in ("observed","definition_observed"))
+    if fanout:
+        module, identity = min(fanout, key=lambda key:(-fanout[key],key))
+        routes.append(("dependency_high_fanout","impact",{"module":module,"identity":identity}))
     if previous is not None:
         routes.append(("history_drift", "drift", {"previous":previous,"confirmed":"yes"}))
     samples = {}
@@ -91,7 +100,7 @@ def browser_benchmark(directory, snapshot, *, repeat=3, executable=None, previou
                         samples.setdefault(label, []).append({"navigation_seconds": elapsed, **nav,
                                                               "html_bytes": len(response.body())})
                         button = tab.locator("[data-inspect-url]:visible").first
-                        if not button.count() and label in ("policy_variants","policy_rules","dependency_impact","nac"):
+                        if not button.count() and label in ("policy_variants","policy_rules","dependency_impact","dependency_high_fanout","scope_precedence","nac"):
                             button=tab.locator("[data-inspect]:visible").first
                         if button.count():
                             start = perf_counter()
