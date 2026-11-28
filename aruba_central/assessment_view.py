@@ -46,7 +46,7 @@ def assessment_view(workspace, query):
         linked("Unparsed scope views", expected-parsed, "Collect or interpret configuration evidence", "coverage"),
         linked("Parsed views without confirmed count", parsed-confirmed, "Verify missing collection counts", "coverage"),
         linked("Unresolved reference observations", engineering["unresolved_references"], "Establish target identity and visibility", "advanced", workflow="references"),
-        linked("Assignments with unresolved scope", assignments["unknown_scopes"], "Verify membership and scope identity", "assignments"),
+        linked("Assignments with unresolved scope", assignments["unknown_scopes"], "Verify membership and scope identity", "assignments", state="scope_unresolved"),
         linked("Policy groups with unsupported rule evidence", rules["groups_with_unsupported_rules"], "Qualify rule schemas and predicates", "advanced", workflow="rules"),
         linked("Unqualified policy sequences", sequences["unqualified_order"], "Verify policy group structure and order", "advanced", workflow="rules"),
         linked("Unqualified sequence targets", sequences["unqualified_targets"], "Verify policy visibility in the captured scope", "advanced", workflow="rules")]
@@ -57,7 +57,7 @@ def assessment_view(workspace, query):
         linked("Duplicate Library groups", engineering["duplicate_groups"], "Choose retained profile by observed usage", "advanced", workflow="duplicates"),
         linked("Repeated port groups", engineering["repeated_port_groups"], "Compare saved and effective port settings", "advanced", workflow="ports"),
         linked("Divergent policy variants", variants["groups"], "Compare settings and intentional exceptions", "advanced", workflow="variants"),
-        linked("Overlapping assignment observations", assignments["overlaps"], "Review effective source and overlap", "assignments"),
+        linked("Overlapping assignment observations", assignments["overlaps"], "Review effective source and overlap", "assignments", state="overlap"),
         linked("Policy bodies with rule observations", rules["groups_with_findings"], "Review duplicate and broader earlier matches", "advanced", workflow="rules"),
         linked("Cross-policy match candidates", sequences["cross_policy_candidates"], "Review ordered policy groups and role applicability", "advanced", workflow="rules")]
     categories = {"remove_override": "Redundant override review", "promote_local": "Repeated local profiles",
