@@ -29,6 +29,7 @@ def browser_benchmark(directory, snapshot, *, repeat=3, executable=None):
         ("field_search_multi_term", "report", {"mode": "search", "q": "vlan name"}),
         ("grouped_search", "report", {"mode": "search", "q": "vlan", "presentation": "grouped"}),
         ("object_search", "report", {"mode": "entities", "q": "vlan"}),
+        ("configuration_explorer", "report", {"view": "all"}),
         ("port_mapping", "advanced", {"workflow": "ports"}),
         ("duplicates", "advanced", {"workflow": "duplicates"}),
     ]
