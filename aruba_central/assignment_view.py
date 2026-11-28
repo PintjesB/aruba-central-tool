@@ -13,7 +13,7 @@ def assignments_view(workspace, query):
     root, name, bundle, picker = loaded
     library = bundle.get("library") or {}
     modules = set(library.get("modules", {}))
-    modules.update(str(a["profile-type"]) for a in (library.get("assignments") or {}).get("rows", []) if a.get("profile-type"))
+    modules.update(str(a["profile-type"]) for a in (library.get("assignments") or {}).get("rows", []) if isinstance(a, dict) and a.get("profile-type"))
     module, persona, identity = (query.get(k, "") for k in ("module", "persona", "identity"))
     state = query.get("state", "all")
     result = filter_assignment_review(workspace.assignment_snapshot(bundle), module, persona, identity, state)
@@ -55,21 +55,25 @@ def assignments_view(workspace, query):
              + f'<label>Exact profile name<input name="identity" value="{e(identity)}" maxlength="512"></label>'
              + select("state", list(ASSIGNMENT_FILTERS.items()), state, "Evidence")
              + '<button type="submit">Review assignments</button></form></section>')
+    conflict_count = sum(bool(r.get("library_individual_conflict") or any(d.get("individual_conflict") for d in r["recipients"])) for r in rows)
     body += metrics([("Observed assignments", len(rows), "Distinct profile/scope/function tuples"),
                      ("Unresolved assignment scopes", sum(not row["scope_resolved"] for row in rows), "Review scope identity"),
                      ("Overlapping assignments", len(result["overlaps"]), "Known recipient/module combinations"),
-                     ("Invalid assignment records", len(result["invalid_rows"]), "Whole capture; identity incomplete")])
+                     ("Invalid assignment records", len(result["invalid_rows"]), "Whole capture; identity incomplete"),
+                     ("Individual evidence conflicts", conflict_count, "Assignments requiring review")])
     listing = []
     for index, row in enumerate(rows):
         counts = Counter(d["status"] for d in row["recipients"])
         profile = e(row["identity"]) + '<small>' + badge("Library observed" if row["library_present"] else "Library unverified",
                     "neutral" if row["library_present"] else "warn") + '</small>'
+        if row.get("library_individual_conflict") or any(d.get("individual_conflict") for d in row["recipients"]):
+            profile += '<small>' + badge("Individual evidence conflict", "warn") + '</small>'
         scope_label = e(row["scope_name"]) + '<small>' + badge("Scope resolved" if row["scope_resolved"] else "Scope unresolved",
                     "neutral" if row["scope_resolved"] else "warn") + '</small>'
         listing.append(tr(e(module_label(row["module"])), profile, e(persona_label(row["persona"])),
                           scope_label, e(pretty(row["scope_kind"])), str(row["known_count"]), str(row["unknown_count"]),
                           str(counts["matching_shared"]), str(counts["different_body"]), str(counts["not_visible"]),
-                          str(counts["unverified"] + counts["matching_source_unverified"]), control("assignment", index)))
+                          str(counts["unverified"] + counts["matching_source_unverified"] + counts["individual_evidence_conflict"]), control("assignment", index)))
     body += '<section><h2>Assignment worklist</h2>' + table(("Module", "Profile", "Function", "Scope", "Type", "Known recipients", "Unknown membership", "Shared matches", "Different", "Not visible", "Unverified", ""), listing, search=True) + '</section>'
     body += '<section><h2>Overlapping assignment observations</h2><p>Complete overlap groups involving the selected assignments are shown, including other profile names outside the current filter. Assignments to overlapping scopes can be intentional. Atomic modules are grouped by module rather than name; overlap does not establish a conflict or prove precedence.</p>'
     body += table(("Function", "Device", "Module", "Identity", "Assignments", ""), [
@@ -81,8 +85,11 @@ def assignments_view(workspace, query):
 
 
 def assignment_detail(row):
-    detail = table(("Device", "Result", ""), [
-        tr(e(d["device"]), badge(pretty(d["status"])),
+    detail = ""
+    if row.get("library_individual_conflict"):
+        detail += '<h3>Conflicting Library evidence</h3>' + raw(row["library_individual_conflict"])
+    detail += table(("Device", "Result", ""), [
+        tr(e(d["device"]), badge(pretty(d["status"])) + (('<small>' + badge("Individual evidence conflict", "warn") + '</small>') if d.get("individual_conflict") else ""),
            inspect(d["device"], diff_table(d["differences"], "Library", "Effective device") + raw(d), "Compare"))
         for d in row["recipients"]], search=True)
     return detail + '<p>Library definition captured: ' + e(str(row["library_present"])) + '</p>' + raw(row)
