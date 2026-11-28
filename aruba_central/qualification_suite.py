@@ -36,7 +36,7 @@ def qualification_stage(stage):
         raise QualificationStageError(f"Qualification failed during {stage}. {hint}") from exc
 
 
-def qualification_suite(directory, snapshot=None, *, repeat=3, executable=None, previous=None, confirm_history_same_tenant=False):
+def qualification_suite(directory, snapshot=None, *, repeat=3, executable=None, previous=None, confirm_history_same_tenant=False, include_browser=False):
     files = audit_files(Path(directory))
     if not files:
         raise ValueError("No configuration audit snapshots found")
@@ -91,9 +91,12 @@ def qualification_suite(directory, snapshot=None, *, repeat=3, executable=None, 
             history = history_qualification(directory, selected, historical.name, repeat=repeat)
         with qualification_stage("capture verification"):
             unchanged()
-    with qualification_stage("browser benchmark"):
-        browser = browser_benchmark(directory, selected, repeat=repeat, executable=executable,
-                                    **({"previous": historical.name} if historical is not None else {}))
+    browser = None
+    browser_requested = include_browser or executable is not None
+    if browser_requested:
+        with qualification_stage("browser benchmark"):
+            browser = browser_benchmark(directory, selected, repeat=repeat, executable=executable,
+                                        **({"previous": historical.name} if historical is not None else {}))
     with qualification_stage("capture verification"):
         unchanged()
     # Export fixed report names, not the selected filename, filesystem identity
@@ -101,6 +104,7 @@ def qualification_suite(directory, snapshot=None, *, repeat=3, executable=None, 
     return {"schema": 1, "kind": "anonymous_offline_qualification_suite",
             "central_api_requests": 0, "same_capture_verified": True,
             "performance": performance, "qualification": qualification, "planner": planner, "browser": browser,
+            "browser_qualification": "completed" if browser_requested else "not_requested",
             "engineering":engineering,
             **({"history": history, "same_capture_pair_verified": True} if history is not None else {})}
 
@@ -110,7 +114,8 @@ def main():
     parser.add_argument("--directory", required=True, type=Path)
     parser.add_argument("--snapshot", help="Saved snapshot filename; default is latest at start")
     parser.add_argument("--repeat", type=int, choices=range(1, 6), default=3)
-    parser.add_argument("--browser", type=Path, help="Existing Chromium/Chrome/Edge executable")
+    parser.add_argument("--include-browser", action="store_true", help="Opt in to Playwright browser benchmarks (not required for normal qualification)")
+    parser.add_argument("--browser", type=Path, help="Existing Chromium/Chrome/Edge executable; implies --include-browser")
     parser.add_argument("--previous", help="Exact prior saved snapshot filename for optional history qualification")
     parser.add_argument("--confirm-history-same-tenant", action="store_true",
                         help="Include historical comparison; confirm both saved captures belong to the same tenant")
@@ -120,7 +125,8 @@ def main():
         parser.error("Output already exists; choose a new filename")
     try:
         report = qualification_suite(args.directory, args.snapshot, repeat=args.repeat, executable=args.browser,
-                                     previous=args.previous, confirm_history_same_tenant=args.confirm_history_same_tenant)
+                                     previous=args.previous, confirm_history_same_tenant=args.confirm_history_same_tenant,
+                                     include_browser=args.include_browser)
     except QualificationStageError as exc:
         parser.error(str(exc))
     except Exception:
