@@ -131,6 +131,9 @@ class SelectionManifestTests(unittest.TestCase):
             self.assertEqual(reconstructed["local"], promote["local"])
             self.assertEqual(reconstructed["selected_destination"]["kind"], "library")
             self.assertEqual(reconstructed["selected_destination"]["assignment_scopes"], [r["scope"] for r in promote["sources"]])
+            reused = next(f for f in plan["recommendations"] if f["id"] == reuse["id"])
+            self.assertEqual(reused["selected_destination"], {"kind": "library",
+                "assignment_scopes": [r["scope"] for r in reuse["sources"]], "reuse_existing": True})
             manifest["selections"].reverse()
             self.assertEqual(reconstruct_selection(workspace, manifest), plan)
             manifest["selections"][1]["destination"] = None
