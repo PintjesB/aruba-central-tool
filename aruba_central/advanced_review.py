@@ -319,6 +319,7 @@ def reference_value_shape(body,path):
 
 def profile_reference_observations(module, identity, body, vlans, *, known_ids=None):
     """Use identical reference extraction for all qualified source reads."""
+    from .vlan_membership import member_targets
     handled = set()
     # Named VLAN is a mapping container, not itself an unresolved scalar.
     # https://developer.arubanetworks.com/new-central-config/reference/createnamedvlanprofilebyid
@@ -330,7 +331,7 @@ def profile_reference_observations(module, identity, body, vlans, *, known_ids=N
             handled.add("vlan")
             ids = parse_reference_ids(mapping["vlan-id-ranges"], allow_list=True)
             if ids:
-                for vid in sorted(ids, key=int):
+                for vid in member_targets(ids,module,["vlan","vlan-id-ranges"],known_ids):
                     yield "layer2-vlan", vid, ["vlan", "vlan-id-ranges"]
             else:
                 yield "layer2-vlan", None, ["vlan", "vlan-id-ranges"]
@@ -352,7 +353,7 @@ def profile_reference_observations(module, identity, body, vlans, *, known_ids=N
             handled.update(("vlan-selector", "vlan-id-range"))
             ids = parse_reference_ids(body.get("vlan-id-range"), allow_list=True)
             if ids:
-                for vid in sorted(ids, key=int):
+                for vid in member_targets(ids,module,["vlan-id-range"],known_ids):
                     yield "layer2-vlan", vid, ["vlan-id-range"]
             else:
                 yield "layer2-vlan", None, ["vlan-id-range"]
@@ -367,13 +368,7 @@ def profile_reference_observations(module, identity, body, vlans, *, known_ids=N
     def numeric(value, path, allow_list=False):
         ids = parse_reference_ids(value, allow_list=allow_list)
         if ids:
-            if known_ids is not None and module == "ap-port-profiles" and tuple(path) in (("switchport","trunk-vlan-ranges"),("switchport","trunk-vlans")) and len(ids)>64:
-                from .vlan_membership import intervals
-                remaining=ids-known_ids
-                ids=ids & known_ids
-                if remaining:
-                    yield "layer2-vlan",intervals(remaining),path
-            for vid in sorted(ids,key=int):
+            for vid in member_targets(ids,module,path,known_ids):
                 yield "layer2-vlan",vid,path
         else:
             yield "layer2-vlan",None,path
@@ -435,7 +430,7 @@ def profile_reference_observations(module, identity, body, vlans, *, known_ids=N
     if module != "layer2-vlan":
         vlan_refs = reference_candidates(filtered, vlans)
         for ref in vlan_refs["references"]:
-            for vid in ref["vlan_ids"]:
+            for vid in member_targets(ref["vlan_ids"],module,ref["path"],known_ids):
                 yield "layer2-vlan", vid, ref["path"]
         for path in vlan_refs["unresolved_paths"]:
             yield "layer2-vlan", None, path
