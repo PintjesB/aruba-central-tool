@@ -15,7 +15,7 @@ FIELDS={
                    "reference_alternative_same_site_observation","reference_alternative_any","reference_alternative_none",
                    "both_ends","source_only","target_only","other_conflict","unknown_identity","named_target_not_observed","named_target_unqualified",
                    "reference_absent_set_source_fields","compact_membership","compact_membership_fields","compact_membership_members",
-                   "compact_membership_unresolved_fields","compact_membership_absent_fields") + tuple("reference_absence_"+key for key in REFERENCE_SEMANTICS),
+                   "compact_membership_unresolved_fields","compact_membership_absent_fields","compact_membership_conflicting_fields","unresolved_member_equivalents") + tuple("reference_absence_"+key for key in REFERENCE_SEMANTICS),
     "identity_collisions":("groups","same_context_groups","linked_individual_responses","linked_same_context_responses"),
     "variants":("groups","explicit","groups_with_conflicts","mixed_site_groups"),
     "policy_rules":("groups","groups_with_findings","observations","groups_with_unsupported_rules","unsupported_schema_groups","unsupported_rule_occurrences","unsupported_order_occurrences",
@@ -141,10 +141,11 @@ def reference_absence_patterns(references):
     from .central_tool import CONFIG_MODULES
     counts = Counter()
     for row in references:
-        if row.get("status") != "not_observed" or row.get("target_evidence") != "count_confirmed_absence":
+        if row.get("status") != "not_observed" or row.get("target_evidence") not in ("count_confirmed_absence","set_count_confirmed_absence"):
             continue
         source,target = (row.get(k) if row.get(k) in CONFIG_MODULES else "other" for k in ("source_module","target_module"))
-        counts[source,target,reference_semantics(row)] += 1
+        from .vlan_membership import member_count
+        counts[source,target,reference_semantics(row)] += member_count(row)
     return [{"source_module":s,"target_module":t,"semantics":kind,"observations":n}
             for (s,t,kind),n in sorted(counts.items(),key=lambda item:(-item[1],item[0]))]
 
