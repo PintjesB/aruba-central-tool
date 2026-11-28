@@ -143,7 +143,20 @@ def configuration_drift(before, after, *, confirmed=False):
                         "before": (sid, persona, module, profile) in aa,
                         "after": (sid, persona, module, profile) in bb})
     from .additional_drift import additional_evidence_drift
+    unavailable = Counter()
+    for row in records:
+        if row["status"] != "unavailable":
+            continue
+        old, new = row["before_status"], row["after_status"]
+        if old == new:
+            reason = "same_unavailable_status"
+        elif old == "list_parsed" or new == "list_parsed":
+            reason = "parsed_view_availability_changed"
+        else:
+            reason = "different_unavailable_status"
+        unavailable[reason] += 1
     return {"identity_checks": identity_checks, "records": records,
+            "unavailable_reasons": dict(unavailable),
             "counts": dict(Counter(r["status"] for r in records)),
             "additional_evidence": additional_evidence_drift(before, after),
             "complete": False, "safe_to_apply": False}
