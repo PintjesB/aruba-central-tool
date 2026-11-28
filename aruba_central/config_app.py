@@ -1396,12 +1396,19 @@ def handler_for(workspace):
                     return
                 if self.path == root + "verify-plan":
                     form = {key: value[0] for key, value in values.items()}
-                    if set(form) != {"snapshot", "manifest", "confirmed"} or form["confirmed"] != "yes":
+                    operation = form.pop("operation", "verify")
+                    if set(form) != {"snapshot", "manifest", "confirmed"} or form["confirmed"] != "yes" or operation not in ("verify", "revalidate"):
                         raise ValueError("Invalid plan verification form")
-                    from .plan_verification import verify_plan
-                    from .plan_verification_view import plan_result
-                    report = verify_plan(workspace, json.loads(form["manifest"]), form["snapshot"], confirmed=True)
-                    self.reply(plan_result(workspace, report))
+                    if operation == "revalidate":
+                        from .plan_preflight import revalidate_plan
+                        from .plan_verification_view import preflight_result
+                        report = revalidate_plan(workspace, json.loads(form["manifest"]), form["snapshot"], confirmed=True)
+                        self.reply(preflight_result(workspace, report))
+                    else:
+                        from .plan_verification import verify_plan
+                        from .plan_verification_view import plan_result
+                        report = verify_plan(workspace, json.loads(form["manifest"]), form["snapshot"], confirmed=True)
+                        self.reply(plan_result(workspace, report))
                     return
                 if self.path in (root + "save-filter", root + "delete-filter"):
                     from .filter_presets import save_preset, delete_preset
