@@ -105,6 +105,8 @@ def _selection_review(workspace, manifest, *, reconstruct):
             raise ValueError("Unexpected destination on non-promotion proposal")
         elif f["action"] == "reuse_library":
             reuses.append(((module, identity), fid))
+            selected_destination = {"kind": "library", "assignment_scopes": [r["scope"] for r in f["sources"]],
+                                    "reuse_existing": True}
         if reconstruct:
             reconstructed[fid] = {**f, "selected_destination": selected_destination,
                                   "recipient_evidence": recipients, "safe_to_apply": False}
