@@ -34,7 +34,7 @@ def dependency_impact(references, module, identity, *, persona="", scope="", lim
         context = (ref["persona"], str(ref["scope"]), view)
         if source == root or target == root:
             direct.append(ref)
-        if ref["target_module"] == module and ref["target"] is None and (not ref.get("target_member_ranges") or target == root):
+        if ref["target_module"] == module and ref["target"] is None and not ref.get("target_member_ranges"):
             unresolved.append(ref)
         if view in ("effective","library") and (ref["status"] not in RESOLVED or ref["target"] is None):
             unqualified[context].append((source,target,ref))
