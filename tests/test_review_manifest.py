@@ -105,3 +105,65 @@ class SelectionManifestTests(unittest.TestCase):
                 self.assertEqual(validate_selection(workspace, manifest), report)
                 second["identity"] = "different-profile"
                 self.assertTrue(validate_selection(workspace, manifest)["review_export_gates_passed"])
+
+
+    def test_reconstructed_plan_uses_only_original_selection_and_exact_snapshot(self):
+        from aruba_central.review_manifest import reconstruct_selection
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            path = Path(directory) / name
+            path.write_text(json.dumps(fixture()))
+            workspace = Workspace(directory)
+            bundle = workspace.reviewed_snapshot(name)
+            findings = workspace.consolidation_snapshot(bundle)
+            promote = next(f for f in findings if f["action"] == "promote_local")
+            reuse = next(f for f in findings if f["action"] == "reuse_library")
+            manifest = {"schema": 1, "kind": "consolidation_selection", "snapshot": name,
+                        "snapshot_binding": snapshot_binding(workspace, name, bundle),
+                        "selections": [{"id": promote["id"], "destination": "library"},
+                                       {"id": reuse["id"], "destination": None}]}
+            plan = reconstruct_selection(workspace, manifest)
+            self.assertEqual(plan["kind"], "reconstructed_consolidation_review")
+            self.assertFalse(plan["safe_to_apply"])
+            self.assertEqual(plan["validation"], validate_selection(workspace, manifest))
+            self.assertEqual(plan["cleanup_review_order"], list(reversed(plan["review_order"])))
+            reconstructed = next(f for f in plan["recommendations"] if f["id"] == promote["id"])
+            self.assertEqual(reconstructed["local"], promote["local"])
+            self.assertEqual(reconstructed["selected_destination"]["kind"], "library")
+            self.assertEqual(reconstructed["selected_destination"]["assignment_scopes"], [r["scope"] for r in promote["sources"]])
+            manifest["selections"].reverse()
+            self.assertEqual(reconstruct_selection(workspace, manifest), plan)
+            manifest["selections"][1]["destination"] = None
+            with self.assertRaises(ValueError):
+                reconstruct_selection(workspace, manifest)
+            path.write_text(path.read_text() + " ")
+            with self.assertRaises(ValueError):
+                reconstruct_selection(workspace, manifest)
+
+    def test_cli_reconstruction_ignores_untrusted_preview_bodies(self):
+        from unittest.mock import patch
+        from contextlib import redirect_stdout, redirect_stderr
+        from io import StringIO
+        from aruba_central.review_manifest import main
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(fixture()))
+            workspace = Workspace(directory)
+            bundle = workspace.reviewed_snapshot(name)
+            promote = next(f for f in workspace.consolidation_snapshot(bundle) if f["action"] == "promote_local")
+            manifest = {"schema": 1, "kind": "consolidation_selection", "snapshot": name,
+                        "snapshot_binding": snapshot_binding(workspace, name, bundle),
+                        "selections": [{"id": promote["id"], "destination": "library"}]}
+            preview = Path(directory) / "preview.json"
+            preview.write_text(json.dumps({"selection_manifest": manifest,
+                "recommendations": [{"local": "untrusted-marker", "safe_to_apply": True}],
+                "bulk_review": {"known_recipients": "untrusted-marker"}}))
+            output = Path(directory) / "rebuilt.json"
+            args = ["review_manifest", "--directory", directory, "--preview", str(preview),
+                    "--reconstruct-output", str(output)]
+            with patch("sys.argv", args), redirect_stdout(StringIO()):
+                self.assertEqual(main(), 0)
+            self.assertNotIn("untrusted-marker", output.read_text())
+            self.assertFalse(json.loads(output.read_text())["safe_to_apply"])
+            with patch("sys.argv", args), redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+                main()

@@ -16,6 +16,19 @@ ACTIONS = {"remove_override", "promote_local", "reuse_library"}
 
 
 def validate_selection(workspace, manifest):
+    """Return anonymous aggregate review-gate results only."""
+    return _selection_review(workspace, manifest, reconstruct=False)[0]
+
+
+def reconstruct_selection(workspace, manifest):
+    """Rebuild a private, non-executable review artifact from validated evidence."""
+    report, plan = _selection_review(workspace, manifest, reconstruct=True)
+    if not report["review_export_gates_passed"]:
+        raise ValueError("Review export gates not passed; resolve selection blockers")
+    return plan
+
+
+def _selection_review(workspace, manifest, *, reconstruct):
     if (not isinstance(manifest, dict)
             or set(manifest) != {"schema", "kind", "snapshot", "snapshot_binding", "selections"}
             or type(manifest["schema"]) is not int or manifest["schema"] != 1
@@ -45,6 +58,7 @@ def validate_selection(workspace, manifest):
     known, unknown = set(), set()
     touched, promotions, recipient_touches = defaultdict(set), defaultdict(set), defaultdict(set)
     reuses, fallbacks = [], []
+    reconstructed = {}
     missing = 0
     for f, selection in zip(chosen, selections):
         fid, persona, module, identity = (f[k] for k in ("id", "persona", "module", "identity"))
@@ -64,16 +78,19 @@ def validate_selection(workspace, manifest):
         for source in f["sources"]:
             touched[key(source["scope"])].add(fid)
         destination = selection["destination"]
+        selected_destination = None
         if f["action"] == "promote_local":
             if destination is None:
                 missing += 1
             elif destination == "library":
                 promotions[module, identity].add(fid)
+                selected_destination = {"kind": "library", "assignment_scopes": [r["scope"] for r in f["sources"]]}
             else:
                 options = [p for p in f["placement_options"] if p["scope"] == destination]
                 if len(options) != 1:
                     raise ValueError("Destination not observed in this proposal")
                 p = options[0]
+                selected_destination = p
                 touched[key(destination)].add(fid)
                 add_recipient(known, p["intended_devices"])
                 add_recipient(known, p["additional_devices"])
@@ -82,6 +99,9 @@ def validate_selection(workspace, manifest):
             raise ValueError("Unexpected destination on non-promotion proposal")
         elif f["action"] == "reuse_library":
             reuses.append(((module, identity), fid))
+        if reconstruct:
+            reconstructed[fid] = {**f, "selected_destination": selected_destination,
+                                  "recipient_evidence": recipients, "safe_to_apply": False}
         for fallback in f.get("fallbacks", []):
             if fallback.get("source"):
                 fallbacks.append((key(fallback["source"]["scope"]), fid))
@@ -120,7 +140,7 @@ def validate_selection(workspace, manifest):
                         and b not in outgoing[a]):
                     outgoing[a].add(b)
                     incoming[b] += 1
-    ready = [i for i in ids if incoming[i] == 0]
+    ready = sorted(i for i in ids if incoming[i] == 0)
     ordered = []
     while ready:
         fid = ready.pop(0)
@@ -132,7 +152,7 @@ def validate_selection(workspace, manifest):
     if snapshot_binding(workspace, name, bundle) != binding:
         raise ValueError("Snapshot changed during validation")
     blocked = len(ids) - len(ordered)
-    return {"schema": 1, "kind": "offline_selection_validation",
+    report = {"schema": 1, "kind": "offline_selection_validation",
             "proposal_count": len(ids), "observed_recipient_pairs": len(known),
             "uncertain_recipient_pairs": len(unknown), "missing_destinations": missing,
             "overlapping_proposal_conflicts": len(collision_pairs),
@@ -141,13 +161,31 @@ def validate_selection(workspace, manifest):
             "dependency_order_blocked": blocked,
             "review_export_gates_passed": not (missing or collision_pairs or blocked),
             "complete": False, "safe_to_apply": False}
+    plan = None
+    if reconstruct and report["review_export_gates_passed"]:
+        # The browser's recommendation bodies, order, recipient lists and
+        # summary are never consulted. This is private review evidence only.
+        plan = {"schema": 1, "kind": "reconstructed_consolidation_review",
+                "selection_manifest": {"schema": 1, "kind": "consolidation_selection",
+                                       "snapshot": name, "snapshot_binding": binding,
+                                       "selections": sorted(selections, key=lambda s: s["id"])},
+                "validation": report,
+                "recommendations": [reconstructed[fid] for fid in ordered],
+                "review_order": ordered,
+                "cleanup_review_order": list(reversed(ordered)),
+                "complete": False, "safe_to_apply": False}
+    return report, plan
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", required=True, type=Path)
     parser.add_argument("--preview", required=True, type=Path)
+    parser.add_argument("--reconstruct-output", type=Path,
+                        help="Write a new private, independently reconstructed review artifact")
     args = parser.parse_args()
+    if args.reconstruct_output is not None and (args.reconstruct_output.exists() or args.reconstruct_output.is_symlink()):
+        parser.error("Output already exists; choose a new filename")
     try:
         payload = json.loads(args.preview.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
@@ -155,7 +193,14 @@ def main():
         manifest = payload.get("selection_manifest")
         if manifest is None:
             raise ValueError("Preview has no snapshot-bound selection manifest; export again")
-        report = validate_selection(Workspace(args.directory), manifest)
+        workspace = Workspace(args.directory)
+        if args.reconstruct_output is None:
+            report = validate_selection(workspace, manifest)
+        else:
+            from .central_tool import write_private
+            plan = reconstruct_selection(workspace, manifest)
+            write_private(args.reconstruct_output, plan)
+            report = plan["validation"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         # Do not print a raw body, snapshot identifier or path in diagnostics.
         parser.error("Selection validation failed: " + (str(exc) if type(exc) is ValueError and not isinstance(exc, json.JSONDecodeError) else "invalid or unavailable local evidence"))

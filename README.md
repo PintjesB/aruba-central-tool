@@ -204,8 +204,12 @@ without a manifest must be exported again. The validator ignores client-provided
 proposal bodies and bulk summaries; it reconstructs the selection from the
 capture. A passing result qualifies the local review selection only, not the
 contents of every exported field, live state, authorization, deployment,
-or permission to execute. Do not transfer these private exports to the public
-repository.
+or permission to execute. To create a fresh private review artifact containing
+only independently reconstructed proposals, selected destinations, recipient
+evidence and review order, add `--reconstruct-output <new-private-review.json>`.
+The file is created exclusively and only when review export gates pass. It
+remains non-executable and bound to the original capture. Do not transfer
+these private exports to the public repository.
 
 
 ### Measure local browser responsiveness (optional)
