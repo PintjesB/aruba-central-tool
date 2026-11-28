@@ -30,3 +30,15 @@ class FocusedEngineeringTests(unittest.TestCase):
                                            {**base,"source_value_shape":"private-value"}])
         self.assertEqual({r["source_value_shape"] for r in report},{"empty_string","unknown"})
         self.assertNotIn("private",json.dumps(report))
+
+    def test_role_vlan_name_evidence_hides_names_ids_and_unknown_values(self):
+        from aruba_central.engineering_qualification import role_vlan_name_evidence
+        ref={"status":"unresolved","role_vlan_name_review":{"field_context":"gateway_access_vlan_name",
+             "status":"single_candidate_id","configured_name":"private-name","observations":[
+                 {"context":"library_vlan_name","status":"identity_observed","vlan_id":"private-id"},
+                 {"context":"library_vlan_name","status":"identity_observed","vlan_id":"private-id2"},
+                 {"context":"private-context","status":"identity_observed"}]}}
+        result=role_vlan_name_evidence([ref,ref,{**ref,"status":"conflicting_observation"}])
+        self.assertEqual(result,[{"field_context":"gateway_access_vlan_name","status":"single_candidate_id",
+                                  "positive_contexts":["library_vlan_name"],"observations":2}])
+        self.assertNotIn("private",json.dumps(result))
