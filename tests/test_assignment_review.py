@@ -137,3 +137,28 @@ class AssignmentReviewTests(unittest.TestCase):
             self.assertIn("999", detail)
             with self.assertRaises(ValueError):
                 workspace.assignments({**query, "detail": "assignment", "index": "1", "binding": binding})
+
+
+    def test_direct_conflicts_do_not_qualify_matching_shared_or_confirmed_absence(self):
+        from aruba_central.assignment_review import filter_assignment_review
+        from test_configuration_history import snapshot
+        data = snapshot()
+        data["library"]["assignments"] = {"status":"response_received","rows":[
+            {"profile-type":"layer2-vlan","profile-instance":"20","device-function":"ACCESS_SWITCH","scope-id":"4"}]}
+        view = data["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"][-1]["effective_view"]
+        view["profiles"]["20"]["@"] = {"aruba-annotation:object_type":"SHARED"}
+        direct={"status":"identity_observed","profile":{"vlan":20,"name":"Different"}}
+        data["keyed_profile_details"]={"profiles":{"ACCESS_SWITCH":{"4":{"layer2-vlan":{"20":{"effective":direct}}}}}}
+        report=assignment_review(data)
+        recipient=report["rows"][0]["recipients"][0]
+        self.assertEqual(recipient["status"],"individual_evidence_conflict")
+        self.assertEqual(len(filter_assignment_review(report,state="individual_evidence_conflict")["rows"]),1)
+        self.assertEqual(len(filter_assignment_review(report,state="matching_shared")["rows"]),0)
+        view["profiles"].clear()
+        self.assertEqual(assignment_review(data)["rows"][0]["recipients"][0]["individual_conflict"]["collection_state"],"count_confirmed_absent")
+        direct["status"]="collection_only_sampled"
+        self.assertEqual(assignment_review(data)["rows"][0]["recipients"][0]["status"],"not_visible")
+        data["keyed_profile_details"]["profiles"]["Library"]={"":{"layer2-vlan":{"20":{"library":{"status":"identity_observed","profile":{"vlan":20,"name":"Different"}}}}}}
+        report=assignment_review(data)
+        self.assertIn("library_individual_conflict",report["rows"][0])
+        self.assertEqual(report["rows"][0]["recipients"][0]["status"],"individual_evidence_conflict")
