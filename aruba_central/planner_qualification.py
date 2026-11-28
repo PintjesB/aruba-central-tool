@@ -26,7 +26,11 @@ def planner_qualification(directory, snapshot, *, max_validations=200, max_pair_
         if action == "promote_local":
             for blocked in finding.get("blocked_destinations", []):
                 kind = blocked["kind"] if blocked["kind"] in DESTINATIONS else "other"
-                options.setdefault(kind, Counter())["blocked_by_individual_evidence"] += 1
+                stats = options.setdefault(kind, Counter())
+                if blocked.get("individual_conflicts"):
+                    stats["blocked_by_individual_evidence"] += 1
+                if blocked.get("existing_definition_conflicts"):
+                    stats["blocked_by_existing_definition"] += 1
         if action not in ACTIONS or not finding["preview_selectable"]:
             row["not_selectable"] += 1
             continue

@@ -139,7 +139,7 @@ def profile_recommendations(bundle):
     library_modules = library.get("modules", {})
     assignments = (library.get("assignments") or {}).get("rows", [])
     assigned = {(a.get("profile-type"), str(a["profile-instance"])) for a in assignments
-                if isinstance(a.get("profile-type"), str) and type(a.get("profile-instance")) in (str, int)}
+                if isinstance(a, dict) and isinstance(a.get("profile-type"), str) and type(a.get("profile-instance")) in (str, int)}
     def add(action, persona, module, identity, sources, body, target, reference=None,
             observed=None, blockers=(), steps=(), scope_references=(), placement=(), fallbacks=(),
             individual_conflicts=(), blocked_destinations=()):
@@ -334,23 +334,47 @@ def profile_recommendations(bundle):
                                 result.append({"persona": function, "scope": sid, "identity": identity, "view": kind,
                                                "differences": differences, "collection_presence": "present" if stored is not None else "count_confirmed_absent"})
                         return result
+                    def existing_definition_conflicts(function, sid, kind, view):
+                        # A consolidation preview is not an overwrite request.
+                        # Only a positive existing committed/Library definition
+                        # qualifies as an overwrite collision. Effective inherited
+                        # settings alone do not establish a committed definition.
+                        if view.get("status") != "list_parsed":
+                            return []
+                        from .inheritance_review import ATOMIC
+                        collisions = []
+                        for name, stored in view.get("profiles", {}).items():
+                            if name != identity and (module not in ATOMIC or kind == "library"):
+                                continue
+                            if not isinstance(stored, dict):
+                                continue
+                            existing = profile_body(stored)
+                            if name != identity or canonical(existing) != signature:
+                                collisions.append({"persona": function, "scope": sid, "view": kind,
+                                                   "existing_identity": name, "proposed_identity": identity,
+                                                   "differences": field_differences(existing, local)})
+                        return collisions
                     eligible = []
                     for option in placements:
                         sid = option["scope"]
                         row = by_scope.get(sid, {})
                         discrepancies = destination_conflicts(persona, sid, [(k, row.get(k + "_view", {})) for k in ("local", "effective")])
-                        if discrepancies:
+                        collisions = existing_definition_conflicts(persona, sid, "local", row.get("local_view", {}))
+                        if discrepancies or collisions:
                             blocked_destinations.append({"destination": sid, "name": option["name"], "kind": option["kind"],
-                                                         "individual_conflicts": discrepancies})
+                                                         "individual_conflicts": discrepancies, "existing_definition_conflicts": collisions})
                         else:
                             eligible.append(option)
                     placements = eligible
                     discrepancies = destination_conflicts("Library", "", [("library", lib_view)])
-                    if discrepancies:
+                    collisions = existing_definition_conflicts("Library", "", "library", lib_view)
+                    if discrepancies or collisions:
                         blocked_destinations.append({"destination": "library", "name": "Library", "kind": "library",
-                                                     "individual_conflicts": discrepancies})
-                    if blocked_destinations:
+                                                     "individual_conflicts": discrepancies, "existing_definition_conflicts": collisions})
+                    if any(d["individual_conflicts"] for d in blocked_destinations):
                         conflicts.append("Some promotion destinations have contradictory individual configuration evidence and are excluded from review selection.")
+                    if any(d.get("existing_definition_conflicts") for d in blocked_destinations):
+                        conflicts.append("Some destinations contain an existing different committed definition; consolidation must not overwrite it.")
                     exact = next((p for p in placements if p["membership_status"] == "exact_observed_recipient_set"
                                   and p["effective"] in ("matching", "absent")), None)
                     library_blocked = any(d["destination"] == "library" for d in blocked_destinations)
@@ -358,7 +382,7 @@ def profile_recommendations(bundle):
                         target = f"Review {exact['kind']} / {exact['name']}" + ("" if library_blocked else "; or Library")
                     elif library_blocked:
                         target = "Review remaining scoped destinations" if placements else "Retain: conflicting destination evidence"
-                        conflicts.append("Library destination evidence is contradictory; review only remaining qualified choices.")
+                        conflicts.append("Library destination is blocked; review only remaining available choices.")
                     else:
                         conflicts.append("No common higher scope with exactly the intended observed device set is established; review exact-scope Library assignments instead.")
                 individual_conflicts = []
