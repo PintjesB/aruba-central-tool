@@ -292,6 +292,8 @@ def advanced_analysis(bundle):
     library = bundle.get("library") or {}
     library_modules = library.get("modules", {})
     port_library = library_modules.get("sw-port-profiles", {})
+    from .standard_evidence import conflicting_profiles
+    port_library_conflicts = conflicting_profiles(bundle, "Library", "sw-port-profiles", "", port_library, side="library")
     port_library_index = defaultdict(list)
     if port_library.get("status") == "list_parsed":
         for name, profile in sorted(port_library["profiles"].items()):
@@ -304,6 +306,8 @@ def advanced_analysis(bundle):
         names = {s["id"]: s.get("name") or s["id"] for s in entry["scopes"]}
         scope_kinds = {s["kind"] for s in entry["scopes"]}
         port_groups = defaultdict(list)
+        port_saved_views = {v["scope"]: v for v in entry["modules"].get("ethernet-interfaces", {}).get("scope_results", [])}
+        port_conflicts, profile_conflicts = {}, {}
         for device in (s for s in entry["scopes"] if s["kind"] == "device"):
             sid = device["id"]
             def get(module):
@@ -333,13 +337,18 @@ def advanced_analysis(bundle):
                         if not portable or not isinstance(portable.get("switchport"), dict):
                             continue
                         unsupported = sorted(set(body) - PORT_FIELDS - PORT_IDENTITY)
+                        if sid not in port_conflicts:
+                            port_conflicts[sid] = {
+                                "effective": conflicting_profiles(bundle, persona, module, sid, view),
+                                "local": conflicting_profiles(bundle, persona, module, sid, port_saved_views.get(sid, {}).get("local_view", {}), side="local")}
+                        evidence_conflicts = {side: records[identity] for side, records in port_conflicts[sid].items() if identity in records}
                         # Include all non-identity fields in the signature: unknown fields
                         # cannot disappear from the comparison.
                         signature = canonical({k: v for k, v in body.items() if k not in PORT_IDENTITY})
                         port_groups[signature].append({"scope": sid, "device": names[sid],
                             "port": identity, "description": body.get("description"),
                             "portable": portable, "unsupported": unsupported,
-                            "before": body})
+                            "before": body, **({"individual_conflicts": evidence_conflicts} if evidence_conflicts else {})})
             for module in sorted(ADDITIVE & views.keys()):
                 device_view = get(module)
                 if device_view.get("status") != "list_parsed":
@@ -399,26 +408,33 @@ def advanced_analysis(bundle):
         for ref in result["references"]:
             if ref["persona"] == persona and ref["source_module"] == "ethernet-interfaces":
                 port_reference_index[(ref["scope"], ref["source"])].append(ref)
-        port_saved_views = {v["scope"]: v for v in entry["modules"].get("ethernet-interfaces", {}).get("scope_results", [])}
         for ports in port_groups.values():
             if len(ports) < 2:
                 continue
             settings = ports[0]["portable"]
             profile_view = port_library
             library_matches = []
+            conflicting_library_matches = []
             settings_signature = canonical(settings)
             if profile_view.get("status") == "list_parsed":
                 for name in port_library_index.get(settings_signature, ()):
+                    if name in port_library_conflicts:
+                        conflicting_library_matches.append({"identity": name, "individual_conflict": port_library_conflicts[name]})
+                        continue
                     visibility = []
                     for sid in sorted({p["scope"] for p in ports}):
                         v = views.get("sw-port-profiles", {}).get(sid, {})
                         actual = v.get("profiles", {}).get(name) if v.get("status") == "list_parsed" else None
-                        status = ("unknown" if v.get("status") != "list_parsed" else
-                                  "not_observed" if actual is None else
+                        if sid not in profile_conflicts:
+                            profile_conflicts[sid] = conflicting_profiles(bundle, persona, "sw-port-profiles", sid, v)
+                        status = ("individual_evidence_conflict" if name in profile_conflicts[sid] else
+                                  "unknown" if v.get("status") != "list_parsed" else
+                                  ("not_observed" if v.get("count_confirmed") is True else "unknown") if actual is None else
                                   "matching" if canonical({k: val for k, val in profile_body(actual).items()
                                                            if k not in ("profile-name", "description")}) == settings_signature
                                   else "different")
-                        visibility.append({"scope": sid, "device": names[sid], "status": status})
+                        visibility.append({"scope": sid, "device": names[sid], "status": status,
+                                           **({"individual_conflict": profile_conflicts[sid][name]} if name in profile_conflicts[sid] else {})})
                     library_matches.append({"identity": name, "visibility": visibility})
             port_ids = {(p["scope"], p["port"]) for p in ports}
             dependencies = [r for key in sorted(port_ids) for r in port_reference_index[key]]
@@ -426,9 +442,11 @@ def advanced_analysis(bundle):
             result["port_groups"].append({"persona": persona, "ports": ports,
                 "conversion_review": port_conversion_review(entry, ports, settings, library_matches, views=port_saved_views),
                 "portable_settings": settings, "unsupported_fields": ports[0]["unsupported"],
-                "matching_library_profiles": library_matches, "library_status": profile_view.get("status", "not_collected"),
+                "matching_library_profiles": library_matches, "conflicting_library_matches": conflicting_library_matches,
+                "library_status": profile_view.get("status", "not_collected"),
                 "dependencies": dependencies,
-                "recommendation": "Review existing matching Library profile" if library_matches else
+                "recommendation": "Resolve contradictory port or Library evidence" if conflicting_library_matches or any(p.get("individual_conflicts") for p in ports) or any(v["status"] == "individual_evidence_conflict" for m in library_matches for v in m["visibility"]) else
+                                  "Review existing matching Library profile" if library_matches else
                                   "Review creation of a reusable switch port profile",
                 "proposed_mapping": [{"scope": p["scope"], "port": p["port"],
                                       "retain_description": p["description"],

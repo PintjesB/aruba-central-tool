@@ -417,3 +417,28 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(len(identity_refs),1)
         self.assertEqual(identity_refs[0]["target"],"10")
         self.assertEqual(identity_refs[0]["status"],"definition_observed")
+
+    def test_port_conversion_and_library_matching_retain_contradictions(self):
+        p="ACCESS_SWITCH"
+        settings={"switchport":{"access-vlan":10}}
+        ports={str(i):{"name":str(i),**settings} for i in (1,2)}
+        lib={n:{"profile-name":n,**settings} for n in ("a","b")}
+        data={"results":{p:{"scopes":[{"id":"1","kind":"device","name":"Switch"}],"modules":{
+            "ethernet-interfaces":{"scope_results":[{"scope":"1","local_view":view(ports),"effective_view":view(ports)}]},
+            "sw-port-profiles":{"scope_results":[{"scope":"1","effective_view":view({"b":lib["b"]})}]}}}},
+            "library":{"modules":{"sw-port-profiles":view(lib)}}}
+        def read(profile):
+            return {"status":"identity_observed","profile":profile}
+        data["keyed_profile_details"]={"profiles":{
+            p:{"1":{"ethernet-interfaces":{"1":{"local":read({"name":"1","enable":False})}},
+                    "sw-port-profiles":{"b":{"effective":read({"profile-name":"b","enable":False})}}}},
+            "Library":{"":{"sw-port-profiles":{"a":{"library":read({"profile-name":"a","enable":False})}}}}}}
+        group=advanced_analysis(data)["port_groups"][0]
+        self.assertEqual([m["identity"] for m in group["matching_library_profiles"]],["b"])
+        self.assertEqual([m["identity"] for m in group["conflicting_library_matches"]],["a"])
+        self.assertEqual(group["matching_library_profiles"][0]["visibility"][0]["status"],"individual_evidence_conflict")
+        conversion={r["port"]:r for r in group["conversion_review"]}
+        self.assertEqual(conversion["1"]["status"],"individual_evidence_conflict")
+        self.assertEqual(conversion["2"]["status"],"exact_saved_effective_match")
+        self.assertIn("local",conversion["1"]["individual_conflicts"])
+        self.assertFalse(group["safe_to_apply"])
