@@ -432,6 +432,8 @@ ADVISOR_CSS = """
 #advisor-table th:first-child{font-size:0;width:38px}.selection-bar{position:sticky;bottom:12px;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:14px 18px;background:var(--surface);border:1px solid var(--line);box-shadow:0 5px 24px #0002;border-radius:10px}
 .selection-bar small{display:block}.selection-actions{display:flex;gap:8px;flex-wrap:wrap}.plan-content{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:22px}.plan-item{padding:14px 0;border-bottom:1px solid var(--line)}.plan-item h3{margin:0 0 5px}.preview-metrics,.preview-transition{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:10px 0}.preview-metrics>div,.preview-transition>div,.preview-decision{border:1px solid var(--line);border-radius:9px;padding:12px;min-width:0;overflow-wrap:anywhere}.preview-metrics strong{font-size:24px}.preview-metrics small,.preview-transition small{display:block;color:var(--muted)}.preview-decision{background:var(--bg)}.preview-transition ul{padding-left:18px;margin-bottom:0}.plan-item p{margin:4px 0}.tabs button[aria-pressed=true]{border-bottom-color:var(--accent);color:var(--accent);font-weight:700}
 """
+from .inheritance_review import ATOMIC as _ATOMIC_MODULES
+
 ADVISOR_JS = r"""
 (()=>{
 'use strict';
@@ -504,6 +506,8 @@ function bulkReview(chosen){
  const collisions=[],seen=new Set(),stages={prepare:[],verify:[],cleanup:[]};
  const missing=[];
  const key=(...parts)=>JSON.stringify(parts);
+ const atomicModules=new Set(__ATOMIC_MODULES__);
+ const touchIdentity=f=>atomicModules.has(f.module)?null:f.identity;
  function collision(a,b,message){
   if(a===b)return;
   const k=key(...[a,b].sort(),message);
@@ -516,18 +520,18 @@ function bulkReview(chosen){
   ids.add(f.id);
  }
  function touch(k,f){
-  addTouch(touches,k,f,'Overlapping source or destination profile at the same scope');
+  addTouch(touches,k,f,'Overlapping source or destination profile or atomic module at the same scope');
  }
  function recipients(f,items,map){
   for(const d of items||[]){
    map.set(key(f.persona,d.scope),{persona:f.persona,...d});
-   if(map===known)addTouch(recipientTouches,key(f.persona,f.module,f.identity,d.scope),f,'Selected proposals affect the same profile at an observed device recipient');
+   if(map===known)addTouch(recipientTouches,key(f.persona,f.module,touchIdentity(f),d.scope),f,'Selected proposals affect the same profile or atomic module at an observed device recipient');
   }
  }
  for(const f of chosen){
   const recipient=f.recipient_evidence||{};
   recipients(f,recipient.known,known);recipients(f,recipient.unknown,unknown);
-  const scopeKey=s=>key(f.persona,f.module,f.identity,s);
+  const scopeKey=s=>key(f.persona,f.module,touchIdentity(f),s);
   for(const source of f.sources)touch(scopeKey(source.scope),f);
   if(f.action==='promote_local'){
    const d=f.selected_destination;
@@ -709,7 +713,7 @@ $('export-plan').addEventListener('click',()=>{
 });
 filter();selection();
 })();
-"""
+""".replace("__ATOMIC_MODULES__", json.dumps(sorted(_ATOMIC_MODULES)))
 
 
 def usage_cells(usage):
