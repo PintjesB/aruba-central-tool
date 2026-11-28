@@ -87,6 +87,8 @@ def _selection_review(workspace, manifest, *, reconstruct):
             if destination is None:
                 missing += 1
             elif destination == "library":
+                if any(d["destination"] == destination for d in f.get("blocked_destinations", [])):
+                    raise ValueError("Destination blocked by contradictory individual evidence")
                 promotions[module, identity].add(fid)
                 selected_destination = {"kind": "library", "assignment_scopes": [r["scope"] for r in f["sources"]]}
             else:

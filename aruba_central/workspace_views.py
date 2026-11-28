@@ -304,9 +304,11 @@ def advisor_view(workspace, query):
         if len(sources) > 2:
             names += f" +{len(sources)-2}"
         summary = f'<strong>{e(profile)}</strong><small>{e(module_label(f["module"]))} · {e(persona_label(f["persona"]))}</small>'
-        placement = e(f["target"] if action == "remove_override" or f.get("individual_conflicts") else ACTION_GUIDE[action][2])
+        placement = e(f["target"] if action == "remove_override" or f.get("individual_conflicts") or f.get("blocked_destinations") else ACTION_GUIDE[action][2])
         if action == "promote_local" and f["preview_selectable"]:
-            choices = [("", "Choose destination for review"), ("library", "Library / exact source scopes")]
+            choices = [("", "Choose destination for review")]
+            if not any(d["destination"] == "library" for d in f.get("blocked_destinations", [])):
+                choices.append(("library", "Library / exact source scopes"))
             choices += [(p["scope"], f'{pretty(p["kind"])} / {p["name"]} · {len(p["additional_devices"])} extra ({len(p["additional_not_confirmed_matching"])} not confirmed matching), {len(p["unknown_membership"])} unknown')
                         for p in f["placement_options"]]
             placement = '<select class="destination" aria-label="Proposed destination">' + "".join(
@@ -347,6 +349,11 @@ def advisor_view(workspace, query):
                 fallback_html += '<h4>Conflicting individual evidence</h4><p>' + e(
                     str(conflict["persona"]) + " / " + str(conflict["scope"]) + " / " + conflict["view"]) + '</p>'
                 fallback_html += diff_table(conflict["differences"], "Collection", "Individual read")
+            for blocked in f.get("blocked_destinations", []):
+                fallback_html += '<h4>Blocked destination: ' + e(blocked["name"]) + '</h4>'
+                for conflict in blocked["individual_conflicts"]:
+                    fallback_html += '<p>' + e(conflict["view"] + " / " + pretty(conflict["collection_presence"])) + '</p>'
+                    fallback_html += diff_table(conflict["differences"], "Collection", "Individual read")
             dep = f["dependency_review"]
             dependency_rows = []
             for key, label in (("consumers", "Consumer"), ("dependencies", "Prerequisite"), ("unresolved_target_observations", "Unresolved target")):

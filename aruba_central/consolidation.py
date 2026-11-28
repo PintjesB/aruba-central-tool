@@ -142,7 +142,7 @@ def profile_recommendations(bundle):
                 if isinstance(a.get("profile-type"), str) and type(a.get("profile-instance")) in (str, int)}
     def add(action, persona, module, identity, sources, body, target, reference=None,
             observed=None, blockers=(), steps=(), scope_references=(), placement=(), fallbacks=(),
-            individual_conflicts=()):
+            individual_conflicts=(), blocked_destinations=()):
         payload = {"action": action, "persona": persona, "module": module,
                    "identity": identity, "sources": sources, "local": body,
                    "target": target, "reference": reference,
@@ -157,6 +157,10 @@ def profile_recommendations(bundle):
         if individual_conflicts:
             payload["individual_conflicts"] = list(individual_conflicts)
             payload["preview_selectable"] = False
+        if blocked_destinations:
+            payload["blocked_destinations"] = list(blocked_destinations)
+            if any(d["destination"] == "library" for d in blocked_destinations) and not placement:
+                payload["preview_selectable"] = False
         payload["id"] = hashlib.sha256(canonical(payload).encode()).hexdigest()[:24]
         findings.append(payload)
     for persona, entry in sorted(bundle["results"].items()):
@@ -306,11 +310,55 @@ def profile_recommendations(bundle):
                              "Verify effective configuration before removing any local definition.")
                     conflicts.append("A unique local profile may be intentional; no reuse is proven.")
                 placements = placement_evidence(entry["scopes"], sources, observed, scope_references, index=placement)
+                blocked_destinations = []
                 if action == "promote_local":
+                    all_details = (bundle.get("keyed_profile_details") or {}).get("profiles", {})
+                    def destination_conflicts(function, sid, views):
+                        result = []
+                        for kind, view in views:
+                            evidence = all_details.get(function, {}).get(str(sid), {}).get(module, {}).get(identity, {}).get(kind, {})
+                            body = evidence.get("profile")
+                            if evidence.get("status") != "identity_observed" or not isinstance(body, dict) or view.get("status") != "list_parsed":
+                                continue
+                            stored = view.get("profiles", {}).get(identity)
+                            if isinstance(stored, dict):
+                                differences = field_differences(profile_body(stored), profile_body(body))
+                            elif view.get("count_confirmed") is True:
+                                differences = field_differences({}, profile_body(body))
+                                if not differences:
+                                    differences = [{"path": [], "kind": "missing_local", "local_type": "missing",
+                                                    "reference_type": "dict", "reference_value": profile_body(body)}]
+                            else:
+                                continue
+                            if differences:
+                                result.append({"persona": function, "scope": sid, "identity": identity, "view": kind,
+                                               "differences": differences, "collection_presence": "present" if stored is not None else "count_confirmed_absent"})
+                        return result
+                    eligible = []
+                    for option in placements:
+                        sid = option["scope"]
+                        row = by_scope.get(sid, {})
+                        discrepancies = destination_conflicts(persona, sid, [(k, row.get(k + "_view", {})) for k in ("local", "effective")])
+                        if discrepancies:
+                            blocked_destinations.append({"destination": sid, "name": option["name"], "kind": option["kind"],
+                                                         "individual_conflicts": discrepancies})
+                        else:
+                            eligible.append(option)
+                    placements = eligible
+                    discrepancies = destination_conflicts("Library", "", [("library", lib_view)])
+                    if discrepancies:
+                        blocked_destinations.append({"destination": "library", "name": "Library", "kind": "library",
+                                                     "individual_conflicts": discrepancies})
+                    if blocked_destinations:
+                        conflicts.append("Some promotion destinations have contradictory individual configuration evidence and are excluded from review selection.")
                     exact = next((p for p in placements if p["membership_status"] == "exact_observed_recipient_set"
                                   and p["effective"] in ("matching", "absent")), None)
+                    library_blocked = any(d["destination"] == "library" for d in blocked_destinations)
                     if exact:
-                        target = f"Review {exact['kind']} / {exact['name']}; or Library"
+                        target = f"Review {exact['kind']} / {exact['name']}" + ("" if library_blocked else "; or Library")
+                    elif library_blocked:
+                        target = "Review remaining scoped destinations" if placements else "Retain: conflicting destination evidence"
+                        conflicts.append("Library destination evidence is contradictory; review only remaining qualified choices.")
                     else:
                         conflicts.append("No common higher scope with exactly the intended observed device set is established; review exact-scope Library assignments instead.")
                 individual_conflicts = []
@@ -361,7 +409,7 @@ def profile_recommendations(bundle):
                         conflicts.append("Individual profile evidence contradicts the configuration comparison; removal preview is blocked.")
                         target = "Retain: conflicting individual configuration evidence"
                 add(action, persona, module, identity, sources, local, target, ref, observed, conflicts, steps, scope_references, placements, fallbacks if action == "remove_override" else (),
-                    individual_conflicts=individual_conflicts)
+                    individual_conflicts=individual_conflicts, blocked_destinations=blocked_destinations)
     for module, view in sorted(library_modules.items()):
         if (library.get("assignments") or {}).get("status") != "response_received":
             continue
