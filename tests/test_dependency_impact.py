@@ -109,3 +109,18 @@ class ImpactTests(unittest.TestCase):
                 self.assertIn("last-private-marker",detail)
                 with self.assertRaises(ValueError):
                     w.impact({**query,"identity":"20","detail":"direct","index":"119","binding":key})
+
+    def test_unqualified_root_contexts_are_boundaries_without_resolved_paths(self):
+        root=("roles","employee")
+        refs=[edge(root,("policies","missing"),scope="1",state="not_observed"),
+              edge(("wlan-ssids","Office"),root,scope="2",state="conflicting_observation"),
+              edge(root,("object-groups",None),scope="3",state="unresolved"),
+              edge(("wlan-ssids","Other"),("roles","unrelated"),scope="4",state="not_observed")]
+        result=dependency_impact(refs,*root)
+        self.assertFalse(result["paths"])
+        self.assertEqual(len(result["direct"]),3)
+        self.assertEqual({(b["scope"],b["direction"],b["depth"]) for b in result["unqualified_boundaries"]},
+                         {("1","dependencies",0),("2","consumers",0),("3","dependencies",0)})
+        self.assertTrue(all(not b["resolved_prefix"] for b in result["unqualified_boundaries"]))
+        self.assertEqual(len(dependency_impact(refs,*root,scope="2")["unqualified_boundaries"]),1)
+        self.assertFalse(result["safe_to_apply"])

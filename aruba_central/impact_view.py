@@ -97,7 +97,8 @@ def impact_view(workspace, query):
                        e(module_label(r["target_module"]) + " / " + (str(r["target"]) if r["target"] is not None else "Unknown")),
                        badge(pretty(r["status"])), control(kind,index)) for index,r in selected],search=True)
         headers = ("Scope", "Function", "View", "Source", "Target", "Result", "")
-        boundaries,controls=batch("boundary",("persona","scope","view","direction","module","identity","unqualified_edge"))
+        boundaries,controls=batch("boundary",("persona","scope","view","direction","module","identity","unqualified_edge"),
+                                  lambda item:not direction or item["direction"]==direction)
         boundary_rows=[]
         for index,item in boundaries:
             ref=item["unqualified_edge"]
@@ -105,7 +106,7 @@ def impact_view(workspace, query):
                 e(item["module"]+" / "+item["identity"]),str(item["depth"]),
                 e(ref["source_module"]+" / "+str(ref["source"])),e(ref["target_module"]+" / "+str(ref["target"] or "Unknown")),
                 badge(pretty(ref["status"])),control("boundary",index)))
-        body += '<section><h2>Unqualified dependency boundaries</h2><p>These observations stop an otherwise resolved chain. They may affect indirect impact, but do not establish a further reachable profile.</p>'+controls+table(("Direction","Scope","Function","Last resolved profile","Resolved hops","Source","Target","Evidence",""),boundary_rows,search=True)
+        body += '<section><h2>Unqualified dependency boundaries</h2><p>These observations stop traversal at the selected profile or along a resolved chain. They may affect direct or indirect impact, but do not establish a further reachable profile.</p>'+controls+table(("Direction","Scope","Function","Last resolved profile","Resolved hops","Source","Target","Evidence",""),boundary_rows,search=True)
         if result["boundary_truncated"] or result["truncated"]:
             body += '<p class="note">Traversal or boundary limit reached; additional unresolved observations may exist.</p>'
         body += '</section>'
