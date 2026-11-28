@@ -895,7 +895,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
         raise ValueError("Invalid reference filter")
     terms = keyword.casefold().split()
     fields = ("device", "persona", "scope", "source_view", "source_module", "source",
-              "target_module", "target", "status", "target_evidence", "path")
+              "target_module", "target", "status", "target_evidence", "target_individual_status", "path")
     selected = [(i, r) for i, r in enumerate(records)
                 if (not state or r["status"] == state) and (not persona or r["persona"] == persona)
                 and (not module or r["target_module"] == module)
@@ -932,7 +932,8 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
         rows.append(tr(e(r["device"]), e(persona_label(r["persona"])),
                        f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
                        f'{e(module_label(r["target_module"]))}<small>{e(r["target"] if r["target"] is not None else "Unknown")}</small>',
-                       status(r["status"]) + (f'<small>{e(pretty(r["target_evidence"]))}</small>' if r.get("target_evidence") else ""),
+                       status(r["status"]) + (f'<small>{e(pretty(r["target_evidence"]))}</small>' if r.get("target_evidence") else "")
+                       + (f'<small>Individual target: {e(pretty(r["target_individual_status"]))}</small>' if r.get("target_individual_status") else ""),
                        e("Keep reference; verify before profile removal" if r["status"] in ("observed","definition_observed") else
                          "Verify target profile and scope" if r["status"] == "not_observed" else "Collect or interpret missing reference evidence"), control))
     return controls + table(("Source scope", "Function", "Source", "Target", "State", "Suggested next step", ""), rows)
