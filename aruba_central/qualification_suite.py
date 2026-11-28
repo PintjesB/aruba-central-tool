@@ -1,5 +1,6 @@
 """Run anonymous offline acceptance reports against one unchanged capture."""
 import argparse
+from contextlib import contextmanager
 from pathlib import Path
 
 from .config_app import audit_files, read_audit
@@ -8,6 +9,31 @@ from .local_benchmark import benchmark
 from .keyed_qualification import keyed_qualification
 from .browser_benchmark import browser_benchmark
 from .planner_qualification import planner_qualification
+
+
+class QualificationStageError(ValueError):
+    """Public diagnostic with a fixed stage and no captured data."""
+
+
+@contextmanager
+def qualification_stage(stage):
+    try:
+        yield
+    except Exception as exc:
+        hint = "Check local capture and qualification dependencies."
+        if stage == "browser benchmark":
+            if isinstance(exc, ImportError):
+                hint = "Install the optional Playwright dependency using the same Python interpreter."
+            elif "Executable doesn't exist at" in str(exc) and "BrowserType.launch" in str(exc):
+                hint = "Run python -m playwright install chromium using the same Python interpreter, or supply --browser."
+            else:
+                hint = "Check local browser availability and browser benchmark execution."
+        elif stage == "capture verification":
+            hint = "Verify that the saved capture is unchanged."
+        # Do not expose exception text: it may contain tenant data, local paths
+        # or the workspace URL/token. The original cause remains available to
+        # local Python callers for explicit debugging.
+        raise QualificationStageError(f"Qualification failed during {stage}. {hint}") from exc
 
 
 def qualification_suite(directory, snapshot=None, *, repeat=3, executable=None, previous=None, confirm_history_same_tenant=False):
@@ -40,24 +66,36 @@ def qualification_suite(directory, snapshot=None, *, repeat=3, executable=None, 
         if [fingerprint(p) for p in selected_paths] != initial:
             raise ValueError("Snapshot changed during qualification")
 
-    performance = benchmark(directory, selected, repeat=repeat, ui=True)
-    unchanged()
-    from .engineering_qualification import engineering_qualification
-    capture=read_audit(Path(directory),selected)
-    qualification = keyed_qualification(capture)
-    engineering=engineering_qualification(capture,include_reference_patterns=True)
+    with qualification_stage("local performance"):
+        performance = benchmark(directory, selected, repeat=repeat, ui=True)
+    with qualification_stage("capture verification"):
+        unchanged()
+    with qualification_stage("capture loading"):
+        from .engineering_qualification import engineering_qualification
+        capture=read_audit(Path(directory),selected)
+    with qualification_stage("keyed evidence"):
+        qualification = keyed_qualification(capture)
+    with qualification_stage("engineering evidence"):
+        engineering=engineering_qualification(capture,include_reference_patterns=True)
     del capture
-    unchanged()
-    planner = planner_qualification(directory, selected)
-    unchanged()
+    with qualification_stage("capture verification"):
+        unchanged()
+    with qualification_stage("planner validation"):
+        planner = planner_qualification(directory, selected)
+    with qualification_stage("capture verification"):
+        unchanged()
     history = None
     if historical is not None:
-        from .history_qualification import history_qualification
-        history = history_qualification(directory, selected, historical.name, repeat=repeat)
+        with qualification_stage("history comparison"):
+            from .history_qualification import history_qualification
+            history = history_qualification(directory, selected, historical.name, repeat=repeat)
+        with qualification_stage("capture verification"):
+            unchanged()
+    with qualification_stage("browser benchmark"):
+        browser = browser_benchmark(directory, selected, repeat=repeat, executable=executable,
+                                    **({"previous": historical.name} if historical is not None else {}))
+    with qualification_stage("capture verification"):
         unchanged()
-    browser = browser_benchmark(directory, selected, repeat=repeat, executable=executable,
-                                **({"previous": historical.name} if historical is not None else {}))
-    unchanged()
     # Export fixed report names, not the selected filename, filesystem identity
     # or customer data. Do not publish a partial suite when any stage fails.
     return {"schema": 1, "kind": "anonymous_offline_qualification_suite",
@@ -83,11 +121,11 @@ def main():
     try:
         report = qualification_suite(args.directory, args.snapshot, repeat=args.repeat, executable=args.browser,
                                      previous=args.previous, confirm_history_same_tenant=args.confirm_history_same_tenant)
-    except ImportError:
-        parser.error("Optional Playwright dependency not installed")
+    except QualificationStageError as exc:
+        parser.error(str(exc))
     except Exception:
-        # Browser and filesystem exceptions can contain private information.
-        parser.error("Qualification suite failed; verify the unchanged saved capture and local browser availability")
+        # Capture selection and filesystem errors can contain private information.
+        parser.error("Qualification failed during capture selection or initialization. Verify the saved capture and requested options.")
     write_private(args.output, report)
     print("Anonymous offline qualification suite saved.")
 

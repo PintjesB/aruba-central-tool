@@ -69,3 +69,29 @@ class QualificationSuiteTests(unittest.TestCase):
             self.assertNotIn("private-after",payload)
             self.assertNotIn("Changed",payload)
             self.assertNotIn("Office",payload)
+
+    def test_browser_install_error_is_actionable_and_private(self):
+        from aruba_central.qualification_suite import QualificationStageError, qualification_stage
+        for error, hint in (
+            (RuntimeError("BrowserType.launch: Executable doesn't exist at private-path"), "playwright install chromium"),
+            (ImportError("private-module"), "optional Playwright dependency"),
+            (RuntimeError("private-tenant-token"), "browser benchmark execution"),
+        ):
+            with self.assertRaises(QualificationStageError) as raised:
+                with qualification_stage("browser benchmark"):
+                    raise error
+            self.assertIn("browser benchmark", str(raised.exception))
+            self.assertIn(hint, str(raised.exception))
+            self.assertNotIn("private", str(raised.exception))
+            self.assertIs(raised.exception.__cause__, error)
+
+    def test_actual_browser_stage_failure_is_not_reported_as_capture_failure(self):
+        from aruba_central.qualification_suite import QualificationStageError
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-private-name.json"
+            (Path(directory) / name).write_text(json.dumps(fixture()))
+            with patch("aruba_central.qualification_suite.benchmark", return_value={}), \
+                 patch("aruba_central.qualification_suite.browser_benchmark", side_effect=RuntimeError("BrowserType.launch: Executable doesn't exist at private-path")):
+                with self.assertRaisesRegex(QualificationStageError, "browser benchmark.*playwright install chromium") as raised:
+                    qualification_suite(directory, repeat=1)
+            self.assertNotIn("private", str(raised.exception))
