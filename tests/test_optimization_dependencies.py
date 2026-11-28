@@ -16,6 +16,10 @@ class OptimizationDependencyTests(unittest.TestCase):
                 ref("Library", "sw-port-profiles", "p", "layer2-vlan", "20", "definition_observed")]
         report = attach_dependency_review([finding], refs)[0]["dependency_review"]
         self.assertEqual(len(report["consumers"]), 2)
+        self.assertEqual(len(report["other_function_consumers"]),1)
+        self.assertEqual(report["other_function_consumers"][0]["persona"],"CAMPUS_AP")
+        self.assertEqual(report["other_function_dependencies"],[])
+        self.assertEqual(report["other_function_unresolved_targets"],[])
         self.assertEqual(len(report["dependencies"]), 1)
         self.assertEqual(len(report["unresolved_target_observations"]), 1)
         self.assertEqual(report["observed_consumer_devices"], 2)
