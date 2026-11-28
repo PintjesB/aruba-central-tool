@@ -51,3 +51,29 @@ class KeyedQualificationTests(unittest.TestCase):
         self.assertEqual(len({v["anonymous_path_number"] for v in report["difference_locations"]}), 2)
         self.assertNotIn("private", json.dumps(report).lower())
         self.assertFalse(report["safe_to_apply"])
+
+
+    def test_case_candidate_body_and_collision_without_identity_qualification(self):
+        bundle = {"library": {"modules": {"roles": {"status": "list_parsed",
+            "profiles": {"private-role": {"name": "private-role", "description": "private-value"}}}}},
+            "keyed_profile_details": {"profiles": {"Library": {"": {"roles": {
+                "private-role": {"library": {"status": "schema_unresolved",
+                    "raw": {"name": "PRIVATE-ROLE", "description": "private-value"}}}}}}}}}
+        report = keyed_qualification(bundle)
+        self.assertEqual(report["role_case_collection_evidence"][0]["relationship"], "body_matches_except_name")
+        self.assertFalse(report["safe_to_apply"])
+        self.assertNotIn("private", json.dumps(report).lower())
+        bundle["library"]["modules"]["roles"]["profiles"]["PRIVATE-ROLE"] = {"name": "PRIVATE-ROLE"}
+        self.assertEqual(keyed_qualification(bundle)["role_case_collection_evidence"][0]["relationship"],
+                         "observed_case_collision")
+
+    def test_anonymous_server_count_relationship(self):
+        read = {"status": "identity_observed", "profile": {"servers": [{"name": "private-server"}]},
+                "differences": field_differences({"private-field": 1}, {})}
+        bundle = {"keyed_profile_details": {"profiles": {"Library": {"": {"server-groups": {
+            "private-group": {"library": read}}}}}}}
+        report = keyed_qualification(bundle)
+        self.assertEqual(report["server_group_integer_relationships"][0]["relationship"],
+                         "equals_observed_server_count")
+        self.assertFalse(report["safe_to_apply"])
+        self.assertNotIn("private", json.dumps(report))
