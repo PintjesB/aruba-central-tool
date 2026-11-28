@@ -57,3 +57,41 @@ COVERAGE_CSS = """
 .gap-filter[aria-current=true],.gap-filter:hover { border-color:var(--accent); background:var(--soft); text-decoration:none; }
 section[id^=coverage-] { scroll-margin-top:80px; }
 """
+
+
+def coverage_batch(root, snapshot, query, section, records, search_text, *, page_size=100):
+    """Search the complete selected table, then render only one bounded batch."""
+    active = query.get("coverage_table") == section
+    keyword = query.get("coverage_q", "") if active else ""
+    if len(keyword) > 200:
+        raise ValueError("Invalid coverage search")
+    try:
+        offset = int(query.get("coverage_offset", "0")) if active else 0
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid coverage offset") from exc
+    if offset < 0:
+        raise ValueError("Invalid coverage offset")
+    terms = keyword.casefold().split()
+    filtered = [row for row in records if all(term in search_text(row).casefold() for term in terms)] if terms else records
+    total = len(filtered)
+    batch = filtered[offset:offset + page_size]
+    params = {"snapshot": snapshot, "coverage_table": section}
+    if query.get("gap_reason"):
+        params["gap_reason"] = query["gap_reason"]
+    anchor = "#coverage-" + section
+    hidden = "".join(f'<input type="hidden" name="{e(key)}" value="{e(value)}">' for key, value in params.items())
+    controls = (f'<form class="filter-bar" method="get" action="{e(root + "coverage" + anchor)}">'
+                + hidden + f'<label>Search all rows<input type="search" name="coverage_q" maxlength="200" value="{e(keyword)}"></label>'
+                + '<button type="submit">Search</button></form>')
+    if keyword:
+        params["coverage_q"] = keyword
+    first = offset + 1 if batch else 0
+    last = offset + len(batch) if batch else 0
+    controls += f'<p class="filter-hint">Showing {first}–{last} of {total} matching rows ({len(records)} total). Table filters and CSV export apply to the loaded batch only.</p>'
+    if offset:
+        controls += f'<a class="button" href="{url(root, "coverage", **params, coverage_offset=max(0, offset-page_size)) + anchor}">Previous batch</a> '
+    if offset + len(batch) < total:
+        controls += f'<a class="button" href="{url(root, "coverage", **params, coverage_offset=offset+page_size) + anchor}">Next batch</a> '
+    if offset and not batch:
+        controls += f'<a class="button" href="{url(root, "coverage", **params) + anchor}">First batch</a> '
+    return batch, controls
