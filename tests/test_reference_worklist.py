@@ -87,3 +87,32 @@ class ReferenceWorklistTests(unittest.TestCase):
                 self.assertIn("Clear field filter",detail)
                 exact=w.advanced({**query,"ref_source":"roles","ref_field":canonical(["fields","0","vlan"])})
                 self.assertIn("of 1 matching observations",exact)
+
+    def test_alternative_context_filters_exclude_conflicts_and_unknown_identities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            name="config-audit-test.json"
+            (Path(directory)/name).write_text(json.dumps(fixture()))
+            w=Workspace(directory)
+            base={"persona":"CAMPUS_AP","scope":"1","device":"AP","source_module":"wlan-ssids",
+                  "source":"test","target_module":"layer2-vlan","target":"20","status":"unresolved",
+                  "path":["vlan-id-range"],"target_evidence":"target_view_unqualified"}
+            refs=[{**base,"source":"positive-site","target_alternative_observations":[
+                      {"context":"same_site_observation","status":"identity_observed"}]},
+                  {**base,"source":"conflicting-site","target_alternative_observations":[
+                      {"context":"same_site_observation","status":"individual_evidence_conflict"}]},
+                  {**base,"source":"unknown-identity","target":None},
+                  {**base,"source":"positive-library","target_alternative_observations":[
+                      {"context":"library_definition","status":"identity_observed"}]}]
+            with patch.object(w,"advanced_snapshot",return_value={"references":refs,"shadowed":[],"port_groups":[],"library_duplicates":[]}):
+                query={"snapshot":name,"workflow":"references"}
+                html=w.advanced({**query,"ref_context":"same_site_observation"})
+                self.assertIn("of 1 matching observations",html)
+                self.assertIn("positive-site",html)
+                self.assertNotIn("conflicting-site",html)
+                self.assertIn("Observed elsewhere",html)
+                html=w.advanced({**query,"ref_context":"no_positive_context"})
+                self.assertIn("of 1 matching observations",html)
+                self.assertIn("conflicting-site",html)
+                self.assertNotIn("unknown-identity",html)
+                with self.assertRaises(ValueError):
+                    w.advanced({**query,"ref_context":"invalid"})
