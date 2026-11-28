@@ -6,6 +6,7 @@ from .consolidation import profile_recommendations
 from .policy_variants import policy_variants
 from .policy_rule_review import policy_rule_groups, POLICY_SCHEMA_STATES, POLICY_BODY_SHAPES, predicate_pattern_summary
 from .policy_service_review import SERVICE_STATES
+from .policy_transport_review import TRANSPORT_STATES
 from .policy_sequence_review import policy_sequence_reviews
 from .dependency_evidence import reference_semantics, REFERENCE_SEMANTICS
 
@@ -48,6 +49,7 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
     unique_library_candidates={canonical(finding) for row in previews for finding in row["findings"]}
     conditional_previews=[row["conditional_security_preview"] for row in rules if "conditional_security_preview" in row]
     service_states=Counter(ref["status"] for group in rules for location in group.get("service_definition_evidence",[]) for ref in location["references"])
+    transport_states=Counter(ref["status"] for group in rules for ref in group.get("transport_evidence",[]))
     for row in rules:
         if row.get("module") == "policies":
             security_reasons.update(row.get("unsupported_reasons", {}))
@@ -167,6 +169,7 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "groups_with_unsupported_rules": sum(bool(row["unsupported_rules"]) or row["status"] == "rule_schema_unqualified" for row in rules),
                 "unsupported_schema_groups":sum(row["status"]=="rule_schema_unqualified" for row in rules),
                 **{"service_"+key:service_states[key] for key in SERVICE_STATES},
+                **{"transport_"+key:transport_states[key] for key in TRANSPORT_STATES},
                 "conditional_preview_groups":len(conditional_previews),
                 "conditional_preview_order_verified":sum(row["order_verified"] for row in conditional_previews),
                 "conditional_preview_rules":sum(row["rules"] for row in conditional_previews),

@@ -178,6 +178,8 @@ def rule_review(module, body, limit=2000):
         result["status"] = "literal_acl_prefix_review" if result["order_verified"] else "structural_acl_review"
         return result
     result["body_shape"] = policy_body_shape(body)
+    from .policy_transport_review import transport_review
+    result["transport_evidence"]=transport_review(body)
     security = body.get("security-policy")
     if result["schema_state"] != "qualified":
         result["status"] = "rule_schema_unqualified"

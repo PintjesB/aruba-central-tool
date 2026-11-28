@@ -1082,6 +1082,15 @@ def policy_rule_detail(finding):
     if finding.get("unsupported_reasons"):
         detail += '<h3>Unsupported rule observations</h3>'+table(("Reason","Rules"),[
             tr(e(pretty(reason)),str(count)) for reason,count in sorted(finding["unsupported_reasons"].items())])
+    if finding.get("transport_evidence"):
+        def clause_text(clause):
+            if clause["state"]!="literal_observed":
+                return pretty(clause["state"])
+            return str(clause["min"]) if "max" not in clause else str(clause["min"])+"–"+str(clause["max"])
+        detail += '<h3>Captured transport clauses</h3><p>Literal port clauses and explicit protocol evidence only. Omitted ports remain not specified; other conditions and policy family can restrict packet matching.</p>'+table(("Position","Protocol","Source port","Destination port","Established","Evidence"),[
+            tr(e(str(v.get("position"))),e(v.get("protocol","Unknown")),e(clause_text(v["source_port"])),e(clause_text(v["destination_port"])),
+               e(str(v["established"]) if "established" in v else "Not specified"),e(pretty(v["status"]))) for v in finding["transport_evidence"]])
+        detail += raw(finding["transport_evidence"],"Full private transport evidence")
     if finding.get("service_definition_evidence"):
         evidence=finding["service_definition_evidence"]
         detail += '<h3>Referenced network service definitions</h3><p>Exact captured scope or Library evidence. Literal protocol and ports describe the referenced definition, not the complete policy predicate.</p>'

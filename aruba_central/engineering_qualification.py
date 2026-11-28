@@ -4,6 +4,7 @@ from .assessment_review import (assessment, SECURITY_REASONS, ACL_REASONS, SEQUE
     POLICY_SCHEMA_STATES, ALTERNATIVE_POLICY_CONTEXTS, ASSIGNMENT_FUNCTION_CONTEXTS, POLICY_BODY_SHAPES, POLICY_LIBRARY_RELATIONS)
 from .dependency_evidence import REFERENCE_SEMANTICS, reference_semantics
 from .policy_service_review import SERVICE_STATES
+from .policy_transport_review import TRANSPORT_STATES
 
 # Fixed output keys only. Do not serialize action names, checkpoint data,
 # timestamps, names, identities, values or any raw report structures.
@@ -29,6 +30,7 @@ FIELDS={
                     + tuple("body_shape_" + key for key in POLICY_BODY_SHAPES + ("unknown",))
                     + tuple("library_relation_" + key for key in POLICY_LIBRARY_RELATIONS)
                     + tuple("service_" + key for key in SERVICE_STATES)
+                    + tuple("transport_" + key for key in TRANSPORT_STATES)
                     + tuple("security_" + key for key in SECURITY_REASONS)
                     + tuple("acl_" + key for key in ACL_REASONS),
     "policy_sequences":("captures","unqualified_order","unqualified_targets","cross_policy_candidates","qualified_rule_occurrences","unsupported_rule_occurrences","targets_with_unsupported_rules",
