@@ -19,7 +19,7 @@ def browser_benchmark(directory, snapshot, *, repeat=3, executable=None, previou
     bundle = workspace.reviewed_snapshot(snapshot)
     # Use a warm reviewed snapshot to isolate browser navigation/interaction.
     # Browser/HTTP timings still include normal server-side request processing.
-    workspace.advanced_snapshot(bundle)
+    engineering=workspace.advanced_snapshot(bundle)
     routes = [
         ("dashboard", "", {}), ("assessment", "assessment", {}), ("coverage", "coverage", {}),
         ("assignments", "assignments", {}),
@@ -33,7 +33,17 @@ def browser_benchmark(directory, snapshot, *, repeat=3, executable=None, previou
         ("configuration_explorer", "report", {"view": "all"}),
         ("port_mapping", "advanced", {"workflow": "ports"}),
         ("duplicates", "advanced", {"workflow": "duplicates"}),
+        ("identity_review","assessment",{"mode":"identities"}),
+        ("policy_variants","advanced",{"workflow":"variants"}),
+        ("policy_rules","advanced",{"workflow":"rules"}),
+        ("remediation","remediation",{}),
     ]
+    target=next((r for r in engineering["references"] if isinstance(r.get("target"),str) and r["target"]
+                 and r["status"] in ("observed","definition_observed")),None)
+    if target:
+        routes.append(("dependency_impact","impact",{"module":target["target_module"],"identity":target["target"]}))
+    else:
+        routes.append(("dependency_impact","impact",{}))
     if previous is not None:
         routes.append(("history_drift", "drift", {"previous":previous,"confirmed":"yes"}))
     samples = {}
@@ -81,6 +91,8 @@ def browser_benchmark(directory, snapshot, *, repeat=3, executable=None, previou
                         samples.setdefault(label, []).append({"navigation_seconds": elapsed, **nav,
                                                               "html_bytes": len(response.body())})
                         button = tab.locator("[data-inspect-url]:visible").first
+                        if not button.count() and label in ("policy_variants","policy_rules","dependency_impact","nac"):
+                            button=tab.locator("[data-inspect]:visible").first
                         if button.count():
                             start = perf_counter()
                             button.click()
