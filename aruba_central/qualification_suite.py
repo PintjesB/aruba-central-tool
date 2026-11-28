@@ -32,7 +32,7 @@ def qualification_suite(directory, snapshot=None, *, repeat=3, executable=None):
 
     performance = benchmark(directory, selected, repeat=repeat, ui=True)
     unchanged()
-    qualification = keyed_qualification(read_audit(directory, selected))
+    qualification = keyed_qualification(read_audit(Path(directory), selected))
     unchanged()
     browser = browser_benchmark(directory, selected, repeat=repeat, executable=executable)
     unchanged()
