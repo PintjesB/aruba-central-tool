@@ -41,6 +41,7 @@ def vlan_identity(value):
 
 def vlan_coverage(bundle, identities):
     """Only switch device configuration is eligible for L2 VLAN visibility checks."""
+    from .standard_evidence import conflicting_profiles
     output = {identity: [] for identity in identities}
     for persona, entry in sorted(bundle["results"].items()):
         if persona not in PERSONAS:
@@ -52,9 +53,10 @@ def vlan_coverage(bundle, identities):
                 continue
             view = views.get(scope["id"], {})
             profiles = view.get("profiles", {}) if view.get("status") == "list_parsed" else {}
+            conflicts=conflicting_profiles(bundle,persona,"layer2-vlan",scope["id"],view,identities)
             for vid in identities:
                 raw = profiles.get(vid)
-                state = ("observed" if isinstance(raw, dict) else
+                state = ("individual_evidence_conflict" if vid in conflicts else "observed" if isinstance(raw, dict) else
                          "count_confirmed_absence" if view.get("status") == "list_parsed" and view.get("count_confirmed") is True else
                          "unverified")
                 output[vid].append({"persona": persona, "scope": scope["id"], "device": scope.get("name") or scope["id"],
@@ -71,7 +73,8 @@ def nac_bindings(bundle, registrations, authorization):
         groups = [(None, None, policy["default_attributes"], not policy["default_gaps"], policy["enabled"])]
         for index, rule in enumerate(policy["rules"]):
             for row in tag_condition_observations(rule["conditions"], tags):
-                conditions.append({"policy_id": policy["id"], "policy": policy["name"], "rule": rule["position"], "rule_index": index, **row})
+                conditions.append({"policy_id": policy["id"], "policy": policy["name"], "rule": rule["position"], "rule_index": index,
+                                   "captured_rule_index":rule.get("captured_index",index), **row})
             groups.append((rule["position"], index, rule["combined_candidate_attributes"] if not rule["gaps"] else rule["attributes"],
                            not rule["gaps"], rule["enabled"]))
         for position, index, attrs, qualified, enabled in groups:
@@ -106,7 +109,7 @@ def nac_bindings(bundle, registrations, authorization):
 
 def context_label(row, policy_label="Policy precondition"):
     """Use captured rule occurrence, not an ambiguous position, as context."""
-    index = row["rule_index"]
+    index = row.get("captured_rule_index",row["rule_index"])
     if index is None:
         return policy_label
     position = row.get("rule")
