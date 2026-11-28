@@ -47,7 +47,10 @@ class LocalBenchmarkTests(unittest.TestCase):
             self.assertEqual(path.read_text(), original)
             self.assertEqual(result["central_api_requests"], 0)
             for stage in ("optimization_worklist", "configuration_health", "configuration_search",
-                          "configuration_search_grouped", "render_assessment", "render_health",
+                          "configuration_search_grouped", "configuration_search_index_build",
+                          "configuration_search_indexed", "configuration_search_grouped_indexed",
+                          "render_field_search_alternate", "render_field_search_grouped",
+                          "render_assessment", "render_health",
                           "render_customer_report", "render_device_review", "render_keyed_evidence",
                           "render_assessment_repeat", "consolidation_workspace_lookup", "consolidation_cache_hit",
                           "optimization_worklist_lookup", "optimization_worklist_cache_hit", "render_inventory",
@@ -57,5 +60,7 @@ class LocalBenchmarkTests(unittest.TestCase):
                 self.assertEqual(len(result["stages"][stage]["samples"]), 2)
             self.assertGreater(result["counts"]["render_assessment_bytes"], 0)
             self.assertGreater(result["counts"]["search_observations"], 0)
+            self.assertTrue(result["counts"]["search_index_admitted"])
+            self.assertGreater(result["counts"]["search_index_leaves"], 0)
             for private in ("private-tenant-marker", "private-device-marker", name):
                 self.assertNotIn(private, json.dumps(result))

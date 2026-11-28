@@ -82,6 +82,17 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
             grouped = measure("configuration_search_grouped", lambda: grouped_search(bundle, "vlan"))
             trial_counts.update(optimization_worklist_rows=len(worklist), health_rows=len(health),
                                 search_observations=matches["total"], search_groups=grouped["total_groups"])
+            index = measure("configuration_search_index_build", lambda: workspace.configuration_search_index(bundle))
+            trial_counts["search_index_admitted"] = index is not None
+            if index is not None:
+                trial_counts.update(search_index_sources=len(index),
+                                    search_index_leaves=sum(len(fields) for _, _, fields in index))
+                indexed_matches = measure("configuration_search_indexed", lambda: search_configuration(bundle, "vlan", index=index))
+                indexed_groups = measure("configuration_search_grouped_indexed", lambda: grouped_search(bundle, "vlan", index=index))
+                if indexed_matches != matches or indexed_groups != grouped:
+                    raise ValueError("Indexed search differs from streaming search")
+                del indexed_matches, indexed_groups
+            del index
             cached_worklist = measure("optimization_worklist_lookup", lambda: workspace.optimization_worklist(bundle))
             if cached_worklist != worklist:
                 raise ValueError("Cached worklist differs from direct analysis")
@@ -99,6 +110,8 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
                 ("render_coverage", lambda: workspace.coverage({"snapshot": snapshot})),
                 ("render_entity_search", lambda: workspace.report({"snapshot": snapshot, "mode": "entities", "q": "vlan"})),
                 ("render_field_search", lambda: workspace.report({"snapshot": snapshot, "mode": "search", "q": "vlan"})),
+                ("render_field_search_alternate", lambda: workspace.report({"snapshot": snapshot, "mode": "search", "q": "name"})),
+                ("render_field_search_grouped", lambda: workspace.report({"snapshot": snapshot, "mode": "search", "q": "vlan", "presentation": "grouped"})),
             ):
                 render(label, action)
             from .optimization_worklist import engineering_group_id
