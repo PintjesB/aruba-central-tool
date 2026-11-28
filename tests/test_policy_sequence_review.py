@@ -39,3 +39,16 @@ class PolicySequenceTests(unittest.TestCase):
         results = policy_sequence_reviews(bundle)
         self.assertEqual(results[0]["references"][0]["status"], "target_unverified")
         self.assertEqual(results[1]["references"][0]["status"], "rules_observed")
+
+
+    def test_conflicting_policy_target_never_participates_in_sequence_comparison(self):
+        raw=capture([{"name":"broad","position":1},{"name":"specific","position":2}])
+        view={"status":"list_parsed","count_confirmed":True,"profiles":{
+            "broad":policy([rule(1,source=None)]),"specific":policy([rule(1)])}}
+        data={"results":{},"unadapted_profiles":{"policy-groups":{"library":raw}},
+              "library":{"modules":{"policies":view}},
+              "keyed_profile_details":{"profiles":{"Library":{"":{"policies":{"broad":{"library":{
+                  "status":"identity_observed","profile":policy([])}}}}}}}}
+        result=policy_sequence_reviews(data)[0]
+        self.assertEqual([r["status"] for r in result["references"]],["individual_evidence_conflict","rules_observed"])
+        self.assertFalse(result["findings"])
