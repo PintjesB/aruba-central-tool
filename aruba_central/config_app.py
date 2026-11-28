@@ -138,12 +138,12 @@ def credential_refresh(client_id, client_secret, region, *, deep_catalog=False, 
 AUDIT_PHASES = (
     "Connection", "Discovery", "Assignment coverage", "Configuration scopes",
     "Library", "Additional profile types", "NAC configuration", "NAC registrations",
-    "NAC portal assets", "Configuration health", "Profile details",
+    "NAC portal assets", "NAC service inventory", "Configuration health", "Profile details",
     "Profile detail expansion", "Scope hierarchy", "Individual assignments",
     "VLAN details", "Operational VLANs", "Switch VLAN verification",
     "Switch VLAN features", "Saving snapshot",
 )
-DEEP_ONLY_PHASES = {"NAC portal assets", "Profile details", "Profile detail expansion",
+DEEP_ONLY_PHASES = {"NAC portal assets", "NAC service inventory", "Profile details", "Profile detail expansion",
                     "Scope hierarchy", "Individual assignments"}
 
 
@@ -399,6 +399,7 @@ class Workspace:
         self.snapshot_lock = threading.Lock()
         self._reviewed_snapshot = None
         self._overview_snapshot = None
+        self._reviewed_saved_summary = None
         self._advanced_snapshot = None
         self._consolidation_snapshot = None
         self._assessment_snapshot = None
@@ -573,20 +574,46 @@ class Workspace:
             before = fingerprint()
             if self._reviewed_snapshot is not None and self._reviewed_snapshot[0] == before:
                 return self._reviewed_snapshot[1]
-            # Release the previous large bundle before parsing another file.
-            self._reviewed_snapshot = None
-            self._advanced_snapshot = None
-            self._consolidation_snapshot = None
-            self._assessment_snapshot = None
-            self._optimization_worklist = None
-            self._vlan_summary = None
-            self._configuration_search_index = None
-            self._configuration_search_pages.clear()
-            bundle = refresh_configuration_review(read_audit(self.directory, name))
+            self._clear_reviewed_snapshot()
+            saved = read_audit(self.directory, name)
+            summary = self._saved_snapshot_summary(saved)
+            bundle = refresh_configuration_review(saved)
             if before != fingerprint():
                 raise ValueError("Snapshot changed while loading; open it again")
             self._reviewed_snapshot = (before, bundle)
+            self._reviewed_saved_summary = summary
             return bundle
+
+    def _clear_reviewed_snapshot(self):
+        """Release the active bundle and all derived caches under snapshot_lock."""
+        self._reviewed_snapshot = None
+        self._reviewed_saved_summary = None
+        self._advanced_snapshot = None
+        self._consolidation_snapshot = None
+        self._assessment_snapshot = None
+        self._optimization_worklist = None
+        self._vlan_summary = None
+        self._configuration_search_index = None
+        self._configuration_search_pages.clear()
+
+    @staticmethod
+    def _saved_snapshot_summary(bundle):
+        """Compute dashboard coverage from saved, not reinterpreted, evidence."""
+        coverage = module_coverage(bundle)
+        devices = {s["id"] for entry in bundle["results"].values() for s in entry["scopes"] if s["kind"] == "device"}
+        scopes = {s["id"] for entry in bundle["results"].values() for s in entry["scopes"] if s["kind"] != "device"}
+        library = (bundle.get("library") or {}).get("modules", {})
+        complete_structure = all(
+            {"scope_kind", "local_view", "effective_view"} <= scope.keys()
+            for entry in bundle["results"].values() for data in entry["modules"].values()
+            for scope in data["scope_results"])
+        return {"device_count": len(devices), "scope_count": len(scopes),
+                "library_count": sum(len(v["profiles"]) for v in library.values() if v["status"] == "list_parsed"),
+                "coverage_count": len(coverage),
+                "qualified_count": sum(r["status"] == "qualified" for r in coverage),
+                "tenant_name": bundle.get("tenant_name"),
+                "captured_at": bundle.get("captured_at", "unknown"),
+                "findings_available": complete_structure, "counts": {}}
 
     def advanced_snapshot(self, bundle):
         """Share read-only engineering evidence for the active reviewed capture.
@@ -707,7 +734,7 @@ class Workspace:
         return navigation("/" + self.token + "/", snapshot)
 
     def snapshot_overview(self, name):
-        """Cache only the small dashboard summary, never another full capture."""
+        """Share one reviewed capture and a small saved-evidence dashboard summary."""
         from .consolidation import profile_recommendations
         from collections import Counter
         from .central_tool import refresh_configuration_review
@@ -725,36 +752,27 @@ class Workspace:
             if self._overview_snapshot is not None and self._overview_snapshot[0] == before:
                 return self._overview_snapshot[1]
             self._overview_snapshot = None
-            bundle = read_audit(self.directory, name)
-            coverage = module_coverage(bundle)
-            devices = {s["id"] for entry in bundle["results"].values() for s in entry["scopes"] if s["kind"] == "device"}
-            scopes = {s["id"] for entry in bundle["results"].values() for s in entry["scopes"] if s["kind"] != "device"}
-            library = (bundle.get("library") or {}).get("modules", {})
-            complete_structure = all(
-                {"scope_kind", "local_view", "effective_view"} <= scope.keys()
-                for entry in bundle["results"].values() for data in entry["modules"].values()
-                for scope in data["scope_results"])
-            # Coverage and inventory are based on the saved evidence, as before.
-            # Only the recommendation calculation reparses adapter evidence.
-            summary = {"device_count": len(devices), "scope_count": len(scopes),
-                       "library_count": sum(len(v["profiles"]) for v in library.values() if v["status"] == "list_parsed"),
-                       "coverage_count": len(coverage),
-                       "qualified_count": sum(r["status"] == "qualified" for r in coverage),
-                       "tenant_name": bundle.get("tenant_name"),
-                       "captured_at": bundle.get("captured_at", "unknown"),
-                       "findings_available": complete_structure, "counts": {}}
-            if complete_structure:
-                reviewed = (self._reviewed_snapshot[1] if self._reviewed_snapshot is not None
-                            and self._reviewed_snapshot[0] == before else refresh_configuration_review(bundle))
-                if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is reviewed:
-                    if self._consolidation_snapshot is None:
-                        self._consolidation_snapshot = profile_recommendations(reviewed)
-                    findings = self._consolidation_snapshot
-                else:
-                    findings = profile_recommendations(reviewed)
+            active = self._reviewed_snapshot is not None and self._reviewed_snapshot[0] == before
+            if active and self._reviewed_saved_summary is not None:
+                summary = dict(self._reviewed_saved_summary)
+                reviewed = self._reviewed_snapshot[1]
+            else:
+                # Dashboard opens this capture as the active selection, not a
+                # second large snapshot. Keep saved coverage before reparsing.
+                self._clear_reviewed_snapshot()
+                saved = read_audit(self.directory, name)
+                summary = self._saved_snapshot_summary(saved)
+                reviewed = refresh_configuration_review(saved) if summary["findings_available"] else None
+            if summary["findings_available"]:
+                findings = (self._consolidation_snapshot if active and self._consolidation_snapshot is not None
+                            else profile_recommendations(reviewed))
                 summary["counts"] = dict(Counter(f["action"] for f in findings))
             if before != fingerprint():
                 raise ValueError("Snapshot changed while loading; open it again")
+            if summary["findings_available"]:
+                self._reviewed_snapshot = (before, reviewed)
+                self._reviewed_saved_summary = {**summary, "counts": {}}
+                self._consolidation_snapshot = findings
             self._overview_snapshot = (before, summary)
             return summary
 

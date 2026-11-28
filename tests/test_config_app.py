@@ -503,3 +503,46 @@ class WorkspaceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DashboardCaptureReuseTests(unittest.TestCase):
+    def test_dashboard_and_review_share_one_parse_and_preserve_saved_coverage(self):
+        from test_consolidation import fixture
+        from unittest.mock import patch
+        from aruba_central.config_app import Workspace, read_audit
+        import tempfile
+        import json
+        from pathlib import Path
+        data = fixture()
+        for entry in data["results"].values():
+            for module in entry["modules"].values():
+                for scope in module["scope_results"]:
+                    scope["review"] = {"qualified": False}
+        with tempfile.TemporaryDirectory() as directory:
+            one = Path(directory) / "config-audit-one.json"
+            two = Path(directory) / "config-audit-two.json"
+            one.write_text(json.dumps(data))
+            two.write_text(json.dumps(data))
+            for dashboard_first in (True, False):
+                workspace = Workspace(directory)
+                with patch("aruba_central.config_app.read_audit", wraps=read_audit) as read:
+                    if dashboard_first:
+                        overview = workspace.snapshot_overview(one.name)
+                        reviewed = workspace.reviewed_snapshot(one.name)
+                    else:
+                        reviewed = workspace.reviewed_snapshot(one.name)
+                        overview = workspace.snapshot_overview(one.name)
+                    self.assertEqual(read.call_count, 1)
+                    self.assertEqual(overview["qualified_count"], 0)
+                    self.assertTrue(overview["findings_available"])
+                    self.assertIs(workspace.reviewed_snapshot(one.name), reviewed)
+                    workspace.snapshot_overview(two.name)
+                    self.assertEqual(read.call_count, 2)
+                    self.assertIsNot(workspace.reviewed_snapshot(two.name), reviewed)
+                    self.assertEqual(read.call_count, 2)
+                    changed = {**data, "tenant_name": "Updated"}
+                    two.write_text(json.dumps(changed))
+                    self.assertEqual(workspace.snapshot_overview(two.name)["tenant_name"], "Updated")
+                    self.assertEqual(read.call_count, 3)
+                    self.assertEqual(workspace.reviewed_snapshot(two.name)["tenant_name"], "Updated")
+                    self.assertEqual(read.call_count, 3)
