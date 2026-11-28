@@ -21,7 +21,9 @@ def port_conversion_review(entry, ports, portable, matches, *, views=None):
         shared_fields = sorted(set(body or {}) & set(portable))
         retained = {k: v for k, v in (body or {}).items() if k not in portable}
         differences = field_differences({k: v for k, v in (body or {}).items() if k in portable}, portable)
-        if body is None:
+        if port.get("individual_conflicts"):
+            state = "individual_evidence_conflict"
+        elif body is None:
             state = "saved_configuration_unverified"
         elif canonical(body) != canonical(current):
             state = "saved_effective_differ"
@@ -35,5 +37,6 @@ def port_conversion_review(entry, ports, portable, matches, *, views=None):
                         "proposed_shared_fields": shared_fields, "retained_local_fields": retained,
                         "expected_identity_fields": expected, "saved_vs_shared": differences,
                         "candidate_visibility": visibility,
+                        **({"individual_conflicts": port["individual_conflicts"]} if port.get("individual_conflicts") else {}),
                         "safe_to_apply": False})
     return results
