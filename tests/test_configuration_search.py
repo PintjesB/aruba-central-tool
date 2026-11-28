@@ -213,3 +213,44 @@ class ConfigurationSearchTests(unittest.TestCase):
             result = search_configuration(bundle, "needle", group=group["id"])
             self.assertEqual(result["total"], 1)
             self.assertEqual(result["matches"][0]["path"], group["selector"][-2])
+
+
+    def test_index_preserves_exact_search_results_and_bounds(self):
+        from aruba_central.configuration_search import build_search_index
+        bundle = fixture()
+        bundle["nac_configuration"] = {"example": {"status": "list_parsed", "profiles": {
+            "object": {"items": {"0": "Straße"}, "flag": False, "float": -0.0},
+            "array": {"items": ["Straße"], "flag": 0, "float": 0.0, "empty": []}}}}
+        index = build_search_index(bundle)
+        self.assertIsNotNone(index)
+        self.assertIsNone(build_search_index(bundle, max_leaves=1))
+        self.assertIsNone(build_search_index(bundle, max_chars=1))
+        self.assertIsNone(build_search_index(bundle, max_sources=1))
+        for query in ("strasse", "NAC flag false", "items 0", "0.0", "10", "not-found"):
+            for filters in ({}, {"persona": "NAC", "scope": ""}, {"module": "layer2-vlan"}):
+                self.assertEqual(search_configuration(bundle, query, index=index, **filters),
+                                 search_configuration(bundle, query, **filters))
+                self.assertEqual(grouped_search(bundle, query, index=index, **filters),
+                                 grouped_search(bundle, query, **filters))
+                self.assertEqual(search_configuration(bundle, query, offset=1, limit=1, index=index, **filters),
+                                 search_configuration(bundle, query, offset=1, limit=1, **filters))
+
+    def test_workspace_index_reuse_and_replacement(self):
+        bundle = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            path = Path(directory) / name
+            path.write_text(json.dumps(bundle))
+            workspace = Workspace(directory)
+            first = workspace.reviewed_snapshot(name)
+            index = workspace.configuration_search_index(first)
+            self.assertIsNotNone(index)
+            self.assertIs(workspace.configuration_search_index(first), index)
+            bundle["nac_configuration"] = {"example": {"status": "list_parsed",
+                "profiles": {"new": {"name": "new-value"}}}}
+            path.write_text(json.dumps(bundle))
+            second = workspace.reviewed_snapshot(name)
+            self.assertIsNone(workspace.configuration_search_index(first))
+            replacement = workspace.configuration_search_index(second)
+            self.assertIsNot(replacement, index)
+            self.assertEqual(search_configuration(second, "new-value", index=replacement)["total"], 1)
