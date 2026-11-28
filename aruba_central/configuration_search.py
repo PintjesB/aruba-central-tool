@@ -364,9 +364,9 @@ def search_view(workspace, query):
             raise ValueError("Invalid search offset") from exc
         if not 0 < len(text) <= 200 or offset < 0:
             raise ValueError("Invalid search")
-        index = workspace.configuration_search_index(bundle)
         if presentation == "grouped":
-            result = grouped_search(bundle, text, module=module, persona=persona, scope=scope, offset=offset, index=index)
+            result = workspace.configuration_search_page(bundle, text, grouped=True, module=module,
+                                                         persona=persona, scope=scope, offset=offset)
             rows = []
             for row in result["groups"]:
                 function, mod, view, source, path, value = row["selector"]
@@ -381,7 +381,8 @@ def search_view(workspace, query):
                 body += f'<a class="button" href="{url(root, "report", **common, presentation="grouped", offset=offset + 300)}">Next group batch</a>'
             body += table(("Function", "Module", "View", "Source", "Field path", "Value", "Observed devices", "Observed scopes", "Observations", ""), rows, search=True) + '</section>'
             return page("Configuration explorer", body, workspace.nav(name))
-        result = search_configuration(bundle, text, module=module, persona=persona, scope=scope, offset=offset, group=group, index=index)
+        result = workspace.configuration_search_page(bundle, text, module=module, persona=persona,
+                                                     scope=scope, offset=offset, group=group)
         if group:
             body += '<p class="note">Showing only the selected exact field/value group.</p>'
         rows = []
