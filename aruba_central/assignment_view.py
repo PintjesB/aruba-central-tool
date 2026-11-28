@@ -1,5 +1,5 @@
 """Bulk Library assignment review with recipient-level evidence."""
-from collections import Counter
+from collections import Counter, defaultdict
 from .assignment_review import filter_assignment_review, ASSIGNMENT_FILTERS
 from .workspace_ui import e, page, intro, metrics, badge, table, tr, inspect, raw, diff_table, pretty, module_label, persona_label
 from .workspace_views import load, select, url
@@ -19,7 +19,8 @@ def assignments_view(workspace, query):
                      if isinstance(a, dict) and type(a.get("device-function")) in (str, int) and str(a["device-function"]))
     module, persona, identity = (query.get(k, "") for k in ("module", "persona", "identity"))
     state = query.get("state", "all")
-    result = filter_assignment_review(workspace.assignment_snapshot(bundle), module, persona, identity, state)
+    scope = query.get("scope", "")
+    result = filter_assignment_review(workspace.assignment_snapshot(bundle), module, persona, identity, state, scope=scope)
     rows = result["rows"]
     from .review_dispositions import snapshot_binding
     binding = snapshot_binding(workspace, name, bundle)
@@ -45,7 +46,7 @@ def assignments_view(workspace, query):
         if query.get("evidence"):
             return page("Assignment evidence", intro("Assignment evidence", row["identity"], picker) + content, workspace.nav(name))
         return '<template data-advisor-evidence><div class="inspector-title"><h2>' + e(row["identity"]) + '</h2></div>' + content + '</template>'
-    common = {"snapshot": name, "module": module, "persona": persona, "identity": identity, "state": state, "binding": binding}
+    common = {"snapshot": name, "module": module, "persona": persona, "identity": identity, "state": state, "scope": scope, "binding": binding}
     def control(kind, index):
         endpoint = url(root, "assignments", **common, detail=kind, index=index)
         href = url(root, "assignments", **common, evidence=kind, index=index)
@@ -56,6 +57,7 @@ def assignments_view(workspace, query):
              + select("module", [("", "All modules")] + [(m, module_label(m)) for m in sorted(modules)], module, "Module")
              + select("persona", [("", "All functions")] + [(p, persona_label(p)) for p in sorted(functions)], persona, "Device function")
              + f'<label>Exact profile name<input name="identity" value="{e(identity)}" maxlength="512"></label>'
+             + f'<label>Exact scope ID<input name="scope" value="{e(scope)}" maxlength="128"></label>'
              + select("state", list(ASSIGNMENT_FILTERS.items()), state, "Evidence")
              + '<button type="submit">Review assignments</button></form></section>')
     conflict_count = sum(bool(r.get("library_individual_conflict") or any(d.get("individual_conflict") for d in r["recipients"])) for r in rows)
@@ -67,7 +69,22 @@ def assignments_view(workspace, query):
     scope_counts=Counter(r["scope_resolution"] for r in rows if not r["scope_resolved"])
     if scope_counts:
         body += '<section><h2>Why assignment scopes are unresolved</h2><p>Exact scope IDs in another function are diagnostic evidence only. They do not establish recipients in the requested function.</p>'+table(("Reason","Assignments"),[
-            tr(f'<a href="{url(root, "assignments", snapshot=name, module=module, persona=persona, identity=identity, state=reason)}">{e(pretty(reason))}</a>',str(count)) for reason,count in sorted(scope_counts.items())])+'</section>'
+            tr(f'<a href="{url(root, "assignments", snapshot=name, module=module, persona=persona, identity=identity, scope=scope, state=reason)}">{e(pretty(reason))}</a>',str(count)) for reason,count in sorted(scope_counts.items())])+'</section>'
+    if scope_counts:
+        groups = defaultdict(list)
+        for row in rows:
+            if not row["scope_resolved"]:
+                groups[(row["persona"], row["scope"])].append(row)
+        group_rows = []
+        for (function, sid), members in sorted(groups.items(), key=lambda item: (-len(item[1]), item[0])):
+            states = Counter(r.get("assignment_evidence_state", "not_collected") for r in members)
+            exact = states["identity_observed"] + states["body_difference_observed"]
+            contexts = sorted({c["persona"] for r in members for c in r.get("other_scope_contexts", [])})
+            link = url(root, "assignments", snapshot=name, module=module, persona=function, identity=identity, scope=sid, state=state)
+            group_rows.append(tr(e(persona_label(function)), e(sid), e(pretty(members[0]["scope_resolution"])),
+                str(len(members)), str(len({r["module"] for r in members})), str(exact),
+                e(", ".join(persona_label(p) for p in contexts) or "None observed"), f'<a href="{link}">Inspect assignments</a>'))
+        body += '<section><h2>Unresolved scope groups</h2><p>'+str(len(groups))+' distinct function/scope pairs. An exact individual identity confirms an assignment observation, not the device recipients.</p>'+table(("Function","Scope ID","Reason","Assignments","Modules","Exact individual identities","Other observed functions",""), group_rows, search=True)+'</section>'
     listing = []
     for index, row in enumerate(rows):
         counts = Counter(d["status"] for d in row["recipients"])
