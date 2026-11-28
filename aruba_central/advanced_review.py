@@ -148,17 +148,19 @@ def library_usage(bundle, module, identities, references):
         unique = {(str(a.get("scope-id")), str(a.get("device-function"))) for a in rows
                   if a.get("scope-id") is not None and a.get("device-function") is not None}
         refs = referenced[identity]
+        configured = [r for r in refs if r.get("source_evidence") != "nac_enforcement"]
+        nac = [r for r in refs if r.get("source_evidence") == "nac_enforcement"]
         def consumer(r):
             return (r["persona"], r["scope"], r["source_module"], r["source"])
-        consumers = {consumer(r) for r in refs}
-        definitions = {consumer(r) for r in refs if r.get("source_view") in ("saved", "library")}
-        effective = {consumer(r) for r in refs if r.get("source_view", "effective") == "effective"}
+        consumers = {consumer(r) for r in configured}
+        definitions = {consumer(r) for r in configured if r.get("source_view") in ("saved", "library")}
+        effective = {consumer(r) for r in configured if r.get("source_view", "effective") == "effective"}
         result[identity] = {"identity": identity, "assignment_count": len(unique),
                             "assignment_status": assignment_view.get("status", "not_collected"),
                             "assignments": rows, "reference_count": len(consumers),
                             "definition_reference_count": len(definitions), "effective_reference_count": len(effective),
                             "reference_devices": len({(r["persona"], r["scope"]) for r in refs if r.get("source_scope_kind", "device") == "device" and r.get("source_view", "effective") == "effective"}),
-                            "references": refs, "conflicting_reference_count": len({consumer(r) for r in refs if r.get("collection_conflict")}),
+                            "references": refs, "conditional_nac_observations": len(nac), "conflicting_reference_count": len({consumer(r) for r in refs if r.get("collection_conflict")}),
                             "shared_devices": [], "matching_other_devices": [],
                             "different_devices": [], "unknown_devices": [], "absent_devices": [], "compared_devices": 0,
                             "coverage_complete": False}
@@ -205,7 +207,7 @@ def library_usage(bundle, module, identities, references):
 def preferred_duplicate(usage):
     """Suggest the least observed reference/assignment migration, not safe deletion."""
     if not usage or any(u["assignment_status"] != "response_received" or u.get("conflicting_reference_count", 0)
-                        or u.get("library_individual_conflict") or u.get("individual_conflict_devices")
+                        or u.get("library_individual_conflict") or u.get("individual_conflict_devices") or u.get("conditional_nac_observations",0)
                         for u in usage.values()):
         return None
     # Do not add incomparable metrics together. Prefer more explicit consumers,
@@ -514,6 +516,8 @@ def advanced_analysis(bundle):
     # status when the individual source or target body contradicts it.
     from .dependency_evidence import qualify_reference_edges
     qualify_reference_edges(bundle, result["references"], persona_views)
+    from .nac_dependency_references import nac_dependency_references
+    result["references"].extend(nac_dependency_references(bundle))
 
     for module, view in sorted(library.get("modules", {}).items()):
         # Identity is semantic for numeric VLAN IDs and SSIDs. Report equivalent
