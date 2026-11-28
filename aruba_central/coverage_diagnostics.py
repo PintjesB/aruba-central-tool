@@ -420,6 +420,16 @@ def diagnostics(bundle):
         "count_confirmed": registration.get("count_confirmed") is True,
         "records": len(registration.get("rows", [])),
     }
+    service_rows = (bundle.get("nac_service_inventory") or {}).get("operations", [])
+    for endpoint in ("cnac-dpp-reg", "cnac-job"):
+        row = next((r for r in service_rows if r.get("operation") == endpoint), {})
+        status = row.get("status", "not_collected")
+        if status not in ("list_observed", "identity_or_page_unqualified", "pagination_unqualified",
+                          "schema_unqualified", "read_failed", "not_collected") and not (
+                          isinstance(status, str) and re.fullmatch(r"http_[45][0-9]{2}", status)):
+            status = "other"
+        nac[endpoint] = {"status": status, "count_confirmed": row.get("count_confirmed") is True,
+                         "records": count(row.get("rows"))}
     raw = Counter()
     for module, entry in bundle.get("unadapted_profiles", {}).items():
         name = module if module in modules else "other"
