@@ -173,7 +173,7 @@ ASSIGNMENT_FILTERS = {
 }
 
 
-def filter_assignment_review(report, module="", persona="", identity="", state="all"):
+def filter_assignment_review(report, module="", persona="", identity="", state="all", *, scope=""):
     """Filter cached review rows without discarding their overlap context.
 
     An atomic module may overlap across different profile names. Retain the
@@ -189,7 +189,7 @@ def filter_assignment_review(report, module="", persona="", identity="", state="
     overlap_keys = set().union(*(participants(c) for c in report["overlaps"]))
     def matches(row):
         if ((module and row["module"] != module) or (persona and row["persona"] != persona)
-                or (identity and row["identity"] != identity)):
+                or (identity and row["identity"] != identity) or (scope and row["scope"] != scope)):
             return False
         states = {r["status"] for r in row["recipients"]}
         unresolved = not row["scope_resolved"]

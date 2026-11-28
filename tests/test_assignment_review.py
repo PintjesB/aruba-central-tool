@@ -184,3 +184,30 @@ class AssignmentReviewTests(unittest.TestCase):
         self.assertEqual(len(filter_assignment_review(report,state="assignment_identity_unverified")["rows"]),3)
         self.assertEqual(report["rows"][0]["individual_assignment_observations"],records[:1])
         self.assertFalse(report["safe_to_apply"])
+
+    def test_exact_scope_filter_and_grouped_triage_preserve_function_context(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from aruba_central.config_app import Workspace
+        from aruba_central.assignment_review import filter_assignment_review
+        from test_configuration_history import snapshot
+        data=snapshot()
+        row={"profile-type":"layer2-vlan","profile-instance":"20","device-function":"ACCESS_SWITCH","scope-id":"999"}
+        data["library"]["assignments"]={"status":"response_received","rows":[
+            row,{**row,"profile-instance":"30"},{**row,"device-function":"CAMPUS_AP"},{**row,"scope-id":"998"}]}
+        report=assignment_review(data)
+        self.assertEqual(len(filter_assignment_review(report,scope="999")["rows"]),3)
+        self.assertEqual(len(filter_assignment_review(report,persona="ACCESS_SWITCH",scope="999")["rows"]),2)
+        self.assertEqual(len(filter_assignment_review(report,scope="99")["rows"]),0)
+        with tempfile.TemporaryDirectory() as directory:
+            name="config-audit-test.json"
+            (Path(directory)/name).write_text(json.dumps(data))
+            w=Workspace(directory)
+            html=w.assignments({"snapshot":name})
+            self.assertIn("Unresolved scope groups",html)
+            self.assertIn("3 distinct function/scope pairs",html)
+            self.assertIn("scope=999",html)
+            filtered=w.assignments({"snapshot":name,"persona":"ACCESS_SWITCH","scope":"999"})
+            self.assertIn("1 distinct function/scope pairs",filtered)
+            self.assertNotIn("scope=998",filtered)
