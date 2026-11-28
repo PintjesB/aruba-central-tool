@@ -1,6 +1,6 @@
 """Bulk Library assignment review with recipient-level evidence."""
 from collections import Counter
-from .assignment_review import assignment_review
+from .assignment_review import filter_assignment_review, ASSIGNMENT_FILTERS
 from .workspace_ui import e, page, intro, metrics, badge, table, tr, inspect, raw, diff_table, pretty, module_label, persona_label
 from .workspace_views import load, select, url
 from .history_view import private_export
@@ -15,8 +15,8 @@ def assignments_view(workspace, query):
     modules = set(library.get("modules", {}))
     modules.update(str(a["profile-type"]) for a in (library.get("assignments") or {}).get("rows", []) if a.get("profile-type"))
     module, persona, identity = (query.get(k, "") for k in ("module", "persona", "identity"))
-    result = (assignment_review(bundle, module, persona, identity) if any((module, persona, identity))
-              else workspace.assignment_snapshot(bundle))
+    state = query.get("state", "all")
+    result = filter_assignment_review(workspace.assignment_snapshot(bundle), module, persona, identity, state)
     rows = result["rows"]
     from .review_dispositions import snapshot_binding
     binding = snapshot_binding(workspace, name, bundle)
@@ -40,7 +40,7 @@ def assignments_view(workspace, query):
         row = records[index]
         content = assignment_detail(row) if kind == "assignment" else raw(row)
         return '<template data-advisor-evidence><div class="inspector-title"><h2>' + e(row["identity"]) + '</h2></div>' + content + '</template>'
-    common = {"snapshot": name, "module": module, "persona": persona, "identity": identity, "binding": binding}
+    common = {"snapshot": name, "module": module, "persona": persona, "identity": identity, "state": state, "binding": binding}
     def control(kind, index):
         endpoint = url(root, "assignments", **common, detail=kind, index=index)
         return f'<button type="button" class="quiet inspect-trigger" data-inspect data-inspect-url="{endpoint}">Review</button>'
@@ -49,11 +49,12 @@ def assignments_view(workspace, query):
              + select("module", [("", "All modules")] + [(m, module_label(m)) for m in sorted(modules)], module, "Module")
              + select("persona", [("", "All functions")] + [(p, persona_label(p)) for p in sorted(bundle["results"])], persona, "Device function")
              + f'<label>Exact profile name<input name="identity" value="{e(identity)}" maxlength="512"></label>'
+             + select("state", list(ASSIGNMENT_FILTERS.items()), state, "Evidence")
              + '<button type="submit">Review assignments</button></form></section>')
     body += metrics([("Observed assignments", len(rows), "Distinct profile/scope/function tuples"),
                      ("Unresolved assignment scopes", sum(not row["scope_resolved"] for row in rows), "Review scope identity"),
                      ("Overlapping assignments", len(result["overlaps"]), "Known recipient/module combinations"),
-                     ("Invalid assignment records", len(result["invalid_rows"]), "Identity incomplete")])
+                     ("Invalid assignment records", len(result["invalid_rows"]), "Whole capture; identity incomplete")])
     listing = []
     for index, row in enumerate(rows):
         counts = Counter(d["status"] for d in row["recipients"])
@@ -62,12 +63,12 @@ def assignments_view(workspace, query):
                           str(counts["matching_shared"]), str(counts["different_body"]), str(counts["not_visible"]),
                           str(counts["unverified"] + counts["matching_source_unverified"]), control("assignment", index)))
     body += '<section><h2>Assignment worklist</h2>' + table(("Module", "Profile", "Function", "Scope", "Type", "Known recipients", "Unknown membership", "Shared matches", "Different", "Not visible", "Unverified", ""), listing, search=True) + '</section>'
-    body += '<section><h2>Overlapping assignment observations</h2><p>Assignments to overlapping scopes can be intentional. Atomic modules are grouped by module rather than name; overlap does not establish a conflict or prove precedence.</p>'
+    body += '<section><h2>Overlapping assignment observations</h2><p>Complete overlap groups involving the selected assignments are shown, including other profile names outside the current filter. Assignments to overlapping scopes can be intentional. Atomic modules are grouped by module rather than name; overlap does not establish a conflict or prove precedence.</p>'
     body += table(("Function", "Device", "Module", "Identity", "Assignments", ""), [
         tr(e(persona_label(row["persona"])), e(row["device"]), e(module_label(row["module"])), e(row["identity"]),
            str(len(row["assignments"])), control("overlap", index))
         for index, row in enumerate(result["overlaps"])], search=True) + '</section>'
-    body += '<section><h2>Capture limitations</h2><p>Assignment capture: ' + e(pretty(result["capture_status"])) + '. Counts are observed lower bounds. Unknown membership is not non-membership.</p>' + raw(result["invalid_rows"]) + f'<p><a class="button" href="{url(root, "assignments", **common, export="1")}">Export private report JSON</a></p></section>'
+    body += '<section><h2>Capture limitations</h2><p>Assignment capture: ' + e(pretty(result["capture_status"])) + '. Counts are observed lower bounds. Unknown membership is not non-membership. Invalid records are capture-wide because their selectors are incomplete.</p>' + raw(result["invalid_rows"]) + f'<p><a class="button" href="{url(root, "assignments", **common, export="1")}">Export private report JSON</a></p></section>'
     return page("Library assignments", body, workspace.nav(name))
 
 
