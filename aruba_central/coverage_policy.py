@@ -3,7 +3,11 @@ from .nac_service_probe import ENDPOINTS
 from .central_tool import ALPHA, keyed_profile_contracts, observed_profile_candidates
 import re
 
-NAC_CAPTURE = {"cnac-mac-reg": "MAC registration inventory",
+NAC_CAPTURE = {"cnac-dpp-reg": "Bounded DPP registration summary",
+               "cnac-job": "Bounded NAC job summary",
+               "cnac-dpp-reg/:id": "Bounded observed DPP identity checks",
+               "cnac-job/:job-id/status": "Bounded observed job identity checks",
+               "cnac-mac-reg": "MAC registration inventory",
                "cnac-image": "Portal image inventory",
                "cnac-image/:image-id": "Observed image metadata"}
 NAC_HANDLING = {

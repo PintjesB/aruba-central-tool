@@ -50,6 +50,25 @@ def nac_view(workspace, query):
                      ("Observed tag definitions", len(report["tag_definitions"]), pretty(report["tag_definition_status"]))])
     if not report["count_confirmed"]:
         body += '<p class="note">Registration count not confirmed. Missing identities or tags are not evidence of absence.</p>'
+    services = bundle.get("nac_service_inventory")
+    body += '<section id="nac-services"><h2>Additional NAC service inventory</h2>'
+    if not services:
+        body += '<p class="muted">Not collected in this snapshot. Available in new Deep captures.</p>'
+    else:
+        service_rows = []
+        for row in services.get("operations", []):
+            if row.get("operation") in ("cnac-dpp-reg", "cnac-job"):
+                service_rows.append(tr(e(row["operation"]), e(pretty(row["status"])), e(row["rows"]),
+                    e(row["total"] if row["total"] is not None else "Unavailable"),
+                    "Confirmed" if row.get("count_confirmed") is True else "Unverified",
+                    "Yes" if row.get("next_cursor_present") else "No"))
+        body += table(("Collection", "Read state", "Observed rows", "Reported total", "Count", "Next cursor"), service_rows)
+        detail_rows = [tr(e(row["operation"]), str(row["attempted"]),
+                           e(", ".join(f"{pretty(k)}: {v}" for k, v in sorted(row["outcomes"].items())) or "No observed identity queried"))
+                       for row in services.get("operations", []) if row.get("operation") in ("cnac-dpp-reg/:id", "cnac-job/:job-id/status")]
+        body += table(("Individual operation", "Attempts", "Evidence"), detail_rows)
+        body += '<p class="note">Bounded first-page reads and up to two observed identity checks per endpoint. No raw registration credentials, job payloads or downloads are retained. An unverified count does not establish absence. Populated schema and full pagination remain unqualified.</p>'
+    body += '</section>'
     body += '<section id="nac-registrations"><h2>MAC registration worklist</h2>'
     listing = []
     duplicates = {v["mac"] for v in report["duplicate_mac_groups"]}

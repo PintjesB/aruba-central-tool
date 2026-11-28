@@ -14,7 +14,7 @@ class CoveragePolicyTests(unittest.TestCase):
         self.assertEqual(paths, {ALPHA + "/" + name for name in NAC_CAPTURE.keys() | ENDPOINTS.keys()})
         self.assertEqual(set(ENDPOINTS.values()), set(NAC_HANDLING))
         row = {"path": ALPHA + "/cnac-job", "status": "not_attempted"}
-        self.assertEqual(coverage_action(row), {"handling": "Bounded diagnostic available", "read_state": "not_attempted"})
+        self.assertEqual(coverage_action(row), {"handling": "Capture adapter: Bounded NAC job summary", "read_state": "not_attempted"})
         self.assertIn("user principal", operation_handling(ALPHA + "/cnac-certificate"))
         self.assertIn("Excluded", operation_handling(ALPHA + "/cnac-visitor/export"))
         self.assertIn("Path selector required", operation_handling(ALPHA + "/roles/:name"))

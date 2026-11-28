@@ -63,6 +63,11 @@ def list_sample(client, endpoint, limit=10):
         if type(value) is int and value >= 0:
             result[field] = value
     result["next_cursor_present"] = bool(isinstance(raw.get("next"), str) and raw["next"])
+    if (any(field in raw and raw[field] is not None and
+            (type(raw[field]) is not int or raw[field] < 0) for field in ("count", "total"))
+            or (raw.get("next") is not None and not isinstance(raw["next"], str))):
+        result["status"] = "pagination_unqualified"
+        return result, []
     ids = [row.get("id") for row in rows if isinstance(row, dict)]
     if len(rows) > limit or len(ids) != len(rows) or not all(safe_id(v) for v in ids) or len(set(ids)) != len(ids):
         result["status"] = "identity_or_page_unqualified"
@@ -87,3 +92,23 @@ def nac_service_probe(client):
         results.append({"operation": template, "attempted": len(ids), "outcomes": dict(outcomes)})
     return {"schema": 1, "kind": "anonymous_nac_service_probe", "operations": results,
             "endpoint_policy": dict(ENDPOINTS), "complete": False, "safe_to_apply": False}
+
+
+def service_count_confirmed(summary):
+    """A bounded page count alone does not establish total inventory size."""
+    return (summary.get("status") == "list_observed"
+            and type(summary.get("total")) is int
+            and type(summary.get("rows")) is int
+            and summary["total"] == summary["rows"]
+            and summary.get("count") in (None, summary["rows"])
+            and summary.get("next_cursor_present") is False
+            and summary.get("identity_count") == summary["rows"])
+
+
+def capture_service_inventory(client):
+    """Capture bounded service coverage, never raw credential/job payloads."""
+    report = nac_service_probe(client)
+    for row in report["operations"]:
+        if row["operation"] in ("cnac-dpp-reg", "cnac-job"):
+            row["count_confirmed"] = service_count_confirmed(row)
+    return report

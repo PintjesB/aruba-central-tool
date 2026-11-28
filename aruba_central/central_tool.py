@@ -4120,6 +4120,11 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
     print(f"NAC MAC registration coverage: {nac_registrations['status']}; observed={len(nac_registrations['rows'])}", flush=True)
     from .nac_assets import capture_portal_assets
     nac_assets = capture_portal_assets(client, worker_budget("nac_assets"), progress) if deep_catalog else None
+    from .nac_service_probe import capture_service_inventory
+    nac_services = None
+    if deep_catalog:
+        audit_progress(progress, "NAC service inventory", 0, 0, "Reading bounded NAC service inventories")
+        nac_services = capture_service_inventory(client)
     health = capture_configuration_health(client, records, worker_budget("health"), progress)
     keyed_details = capture_keyed_profile_details(client, results, library, worker_budget("keyed_details"), progress, checkpoint=checkpoint, nac_configuration=nac_configuration, unadapted=unadapted, adaptive=not exhaustive_details) if deep_catalog else None
     from .scope_evidence import hierarchy_capture, keyed_assignment_capture
@@ -4137,6 +4142,7 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
             "operational_vlans": operational, "vlan_instance_details": details, "switch_vlan_cli": cli,
             "configuration_health": health, "nac_registrations": nac_registrations, "nac_configuration": nac_configuration,
             "nac_portal_assets": nac_assets,
+            "nac_service_inventory": nac_services,
             "keyed_profile_details": keyed_details,
             "collection_strategy": "targeted" if targeted_catalog else "deep" if deep_catalog else "standard",
             "scope_hierarchy_evidence": hierarchy_evidence, "keyed_assignment_details": assignment_details,
