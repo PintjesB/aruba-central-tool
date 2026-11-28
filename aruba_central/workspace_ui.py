@@ -297,7 +297,8 @@ def page(title, content, nav="", extra_css=""):
             f'<main id="main-content">{content}</main></div>'
             '<dialog class="inspector" id="workspace-inspector" aria-labelledby="workspace-inspector-title"><div class="inspector-head">'
             '<div><small>Configuration review</small><h2 id="workspace-inspector-title"></h2></div>'
-            '<button type="button" class="icon-button" id="workspace-close" autofocus aria-label="Close inspector">' + icon("close") + '</button></div>'
+            '<div class="inspector-actions"><button type="button" class="quiet" id="workspace-inspector-back" hidden>Back</button>'
+            '<button type="button" class="icon-button" id="workspace-close" autofocus aria-label="Close inspector">' + icon("close") + '</button></div></div>'
             '<div id="workspace-inspector-body"></div></dialog>'
             '<dialog id="workspace-palette" class="command-palette" aria-label="Quick navigation"><div class="command-input">' + icon("search")
             + '<input id="command-query" type="search" placeholder="Find a workspace page..." aria-label="Find a workspace page"><kbd>Esc</kbd></div>'
@@ -567,6 +568,7 @@ html:has(.inspector[open]),html:has(.command-palette[open]),html.inspector-open 
 .inspector-head { flex: none; display: flex; justify-content: space-between; align-items: center; gap: 16px; background: var(--surface); padding: 20px 28px; border-bottom: 1px solid var(--line); }
 .inspector-head small { display: block; font-size: 11px; margin-bottom: 3px; }
 .inspector-head h2 { font-size: 24px; line-height: 1.3; margin: 0; overflow-wrap: anywhere; letter-spacing: -.6px; }
+.inspector-actions { display: flex; align-items: center; gap: 8px; }
 #workspace-inspector-body { flex: 1; min-height: 0; min-width: 0; padding: 24px 28px 32px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .inspector h3 { margin: 24px 0 10px; }
 .inspector .table-scroll { max-height: none; overflow-x: auto; overflow-y: hidden; }
@@ -664,7 +666,27 @@ const dialog=document.getElementById('workspace-inspector');
 const body=document.getElementById('workspace-inspector-body');
 const title=document.getElementById('workspace-inspector-title');
 const closeButton=document.getElementById('workspace-close');
+const backButton=document.getElementById('workspace-inspector-back');
+const history=[];
 let opener=null,inspectionRequest=0;
+function rememberInspector(button){
+ if(!dialog.open||!body.contains(button))return;
+ // Move existing nodes, preserving initialized grids, filters and handlers.
+ history.push({nodes:Array.from(body.childNodes),title:title.textContent,scroll:body.scrollTop,focus:button});
+ // Bound memory retained by repeated nested navigation.
+ if(history.length>8)history.shift();
+ backButton.hidden=false;
+}
+backButton.addEventListener('click',()=>{
+ if(!history.length)return;
+ inspectionRequest++;
+ const prior=history.pop();
+ title.textContent=prior.title;
+ body.replaceChildren(...prior.nodes);
+ backButton.hidden=!history.length;
+ body.scrollTop=prior.scroll;
+ if(prior.focus.isConnected)prior.focus.focus({preventScroll:true});
+});
 function openInspector(button){
  if(!dialog.open){
   opener=button;
@@ -690,6 +712,7 @@ document.addEventListener('click',async event=>{
  if(button.dataset.inspectUrl){
   const endpoint=new URL(button.dataset.inspectUrl,location.href);
   if(endpoint.origin!==location.origin)return;
+  rememberInspector(button);
   title.textContent='Configuration review';
   const loading=document.createElement('p');loading.textContent='Loading captured evidence…';loading.setAttribute('role','status');
   body.replaceChildren(loading);openInspector(button);
@@ -711,6 +734,7 @@ document.addEventListener('click',async event=>{
  }
  const template=button.nextElementSibling;
  if(!template||template.tagName!=='TEMPLATE')return;
+ rememberInspector(button);
  renderInspector(template,button);
 });
 closeButton.addEventListener('click',()=>dialog.close());
@@ -718,6 +742,7 @@ dialog.addEventListener('close',()=>{
  inspectionRequest++;
  document.documentElement.classList.remove('inspector-open');
  body.replaceChildren();title.textContent='';
+ history.length=0;backButton.hidden=true;
  if(opener&&opener.isConnected)opener.focus({preventScroll:true});
  opener=null;
 });
