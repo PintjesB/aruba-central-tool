@@ -58,8 +58,12 @@ def assignments_view(workspace, query):
     listing = []
     for index, row in enumerate(rows):
         counts = Counter(d["status"] for d in row["recipients"])
-        listing.append(tr(e(module_label(row["module"])), e(row["identity"]), e(persona_label(row["persona"])),
-                          e(row["scope_name"]), e(pretty(row["scope_kind"])), str(row["known_count"]), str(row["unknown_count"]),
+        profile = e(row["identity"]) + '<small>' + badge("Library observed" if row["library_present"] else "Library unverified",
+                    "neutral" if row["library_present"] else "warn") + '</small>'
+        scope_label = e(row["scope_name"]) + '<small>' + badge("Scope resolved" if row["scope_resolved"] else "Scope unresolved",
+                    "neutral" if row["scope_resolved"] else "warn") + '</small>'
+        listing.append(tr(e(module_label(row["module"])), profile, e(persona_label(row["persona"])),
+                          scope_label, e(pretty(row["scope_kind"])), str(row["known_count"]), str(row["unknown_count"]),
                           str(counts["matching_shared"]), str(counts["different_body"]), str(counts["not_visible"]),
                           str(counts["unverified"] + counts["matching_source_unverified"]), control("assignment", index)))
     body += '<section><h2>Assignment worklist</h2>' + table(("Module", "Profile", "Function", "Scope", "Type", "Known recipients", "Unknown membership", "Shared matches", "Different", "Not visible", "Unverified", ""), listing, search=True) + '</section>'
