@@ -960,10 +960,19 @@ def engineering_view(workspace, query):
                 if variant["differences"]:
                     detail += diff_table(variant["differences"], "Largest variant", "This variant")
                 detail += table(("Device", "Source evidence"), [tr(e(d["name"]), f'<a href="{url(root, "sources", snapshot=name, persona=finding["persona"], device=d["scope"], module=finding["module"], identity=finding["identity"])}">Trace source</a>') for d in variant["devices"]])
+            distributions = finding.get("membership_distribution",{})
+            detail += '<h3>Observed membership distribution</h3><p>Multiple variant numbers in one scope indicate mixed settings within that observed membership; a single variant does not establish approved policy or intentional exceptions.</p>'
+            detail += table(("Membership type","Scope","Observed variants"),[
+                tr(e(pretty(kind)),e(r["name"]),e(", ".join(map(str,r["variant_numbers"]))))
+                for kind,records in distributions.items() for r in records])
+            if finding.get("individual_conflicts"):
+                detail += '<h3>Contradictory individual profile evidence</h3><p>These devices are excluded from qualified variant and absence counts.</p>'
+                detail += table(("Device","Evidence"),[
+                    tr(e(r["name"]),raw(r)) for r in finding["individual_conflicts"]],search=True)
             detail += '<h3>Confirmed absent</h3>' + list_items([d["name"] for d in finding["absent"]])
             detail += '<h3>Unavailable or unqualified presence</h3>' + list_items([d["name"] for d in finding["unknown"]])
             rows.append(tr(e(module_label(finding["module"])), e(finding["identity"]), e(persona_label(finding["persona"])),
-                           str(len(variants)), str(finding["present_count"]), str(len(finding["unknown"])),
+                           str(len(variants)), str(finding["present_count"]), str(len(finding["unknown"])) + (f'<small>{len(finding["individual_conflicts"])} conflicting</small>' if finding.get("individual_conflicts") else ""),
                            badge(pretty(finding["status"])), inspect(finding["identity"], detail, "Compare variants")))
     panel("variants", "Policy variants", "Review same-name effective profiles with different captured settings within the same device function. These may be intentional site or device differences, not necessarily policy conflicts.",
           ("Module", "Profile", "Function", "Variants", "Observed devices", "Unknown presence", "Evidence", ""), rows, counts["variants"])
