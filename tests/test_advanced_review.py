@@ -512,3 +512,26 @@ class AdvancedTests(unittest.TestCase):
         self.assertTrue(all(t is None for _,t,_ in refs({"vlan":{"vlan-alias":"a","vlan-id-ranges":["10"]}})))
         self.assertTrue(all(t is None for _,t,_ in refs({"vlan":{"vlan-id-ranges":["10"]}},"other")))
         self.assertTrue(all(t is None for _,t,_ in refs({"vlan":{"vlan-id-ranges":["10"],"unknown":"x"}})))
+
+    def test_explicit_ap_stp_and_role_vlan_fields_are_module_and_path_specific(self):
+        from aruba_central.advanced_review import profile_reference_observations
+        def refs(module,body):
+            return list(profile_reference_observations(module,"test",body,{}))
+        port={"switchport":{"allowed-vlan-selector":"VLAN_RANGES","trunk-vlan-ranges":["10-11"],"native-vlan":20}}
+        self.assertEqual(set((m,t,tuple(p)) for m,t,p in refs("ap-port-profiles",port)),
+                         {("layer2-vlan","10",("switchport","trunk-vlan-ranges")),
+                          ("layer2-vlan","11",("switchport","trunk-vlan-ranges")),
+                          ("layer2-vlan","20",("switchport","native-vlan"))})
+        wildcard=refs("ap-port-profiles",{"switchport":{"allowed-vlan-selector":"VLAN_RANGES","trunk-vlan-all":True}})
+        self.assertIn(("layer2-vlan",None,["switchport","trunk-vlan-all"]),wildcard)
+        ambiguous=refs("ap-port-profiles",{"switchport":{"allowed-vlan-selector":"VLAN_RANGES","allowed-vlan-name":"x"}})
+        self.assertTrue(all(t is None for _,t,_ in ambiguous))
+        stp=refs("stp",{"rpvst-mstp-interconnect-vlan":10,"mstp":[{"mstp-vlans":"20-21"}],
+                        "rpvst":[{"vlan":30,"vlan-log-state-transitions":True}]})
+        self.assertEqual({t for _,t,_ in stp},{"10","20","21","30"})
+        self.assertIn(("layer2-vlan",None,["rpvst-mstp-interconnect-vlan"]),refs("other",{"rpvst-mstp-interconnect-vlan":10}))
+        role=refs("roles",{"vlan-parameters":{"named-vlan":"pool","trunk-native-vlan":10,
+                   "wired-access-vlan-id":20,"trunk-allowed-vlans":"30-31","private-vlan-port-type":"SECONDARY"}})
+        self.assertEqual({(m,t) for m,t,_ in role},{("named-vlan","pool"),("layer2-vlan","10"),
+                           ("layer2-vlan","20"),("layer2-vlan","30"),("layer2-vlan","31")})
+        self.assertIn(("layer2-vlan",None,["vlan-parameters","named-vlan"]),refs("other",{"vlan-parameters":{"named-vlan":"pool"}}))
