@@ -63,13 +63,17 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
             view = views[view_key].get(device, {})
             actual = view.get("profiles", {}).get(identity) if view.get("status") == "list_parsed" else None
             actual_body = profile_body(actual) if actual is not None else None
+            comparable = expected is not None and actual is not None
+            # The exact canonical comparison already establishes whether
+            # recursive field comparison can return a non-empty result.
+            same_body = comparable and canonical(actual_body) == expected_signature
             if device in unknown_set:
                 state = "membership_unverified"
             elif expected is None or view.get("status") != "list_parsed":
                 state = "unverified"
             elif actual is None:
                 state = "not_visible" if view.get("count_confirmed") is True else "unverified"
-            elif canonical(actual_body) != expected_signature:
+            elif not same_body:
                 state = "different_body"
             elif isinstance(actual.get("@"), dict) and actual["@"].get("aruba-annotation:object_type") == "SHARED":
                 state = "matching_shared"
@@ -77,7 +81,7 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
                 state = "matching_source_unverified"
             recipients.append({"scope": device, "device": scopes[persona][device].get("name") or device,
                                "status": state, "differences": field_differences(expected_body, actual_body)
-                               if expected is not None and actual is not None else []})
+                               if comparable and not same_body else []})
             if device in known_set:
                 overlap_key = (persona, device, module, "*" if module in ATOMIC else identity)
                 overlaps.setdefault(overlap_key, []).append({"scope": sid, "identity": identity})
