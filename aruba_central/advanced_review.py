@@ -274,6 +274,24 @@ def target_reference_evidence(view, identity, *, definition=False):
 def profile_reference_observations(module, identity, body, vlans):
     """Use identical reference extraction for all qualified source reads."""
     handled = set()
+    # Named VLAN is a mapping container, not itself an unresolved scalar.
+    # https://developer.arubanetworks.com/new-central-config/reference/createnamedvlanprofilebyid
+    # The two documented alternatives are mutually exclusive.
+    if module == "named-vlan":
+        mapping = body.get("vlan")
+        if isinstance(mapping, dict) and set(mapping) == {"vlan-id-ranges"}:
+            from .central_tool import parse_reference_ids
+            handled.add("vlan")
+            ids = parse_reference_ids(mapping["vlan-id-ranges"], allow_list=True)
+            if ids:
+                for vid in sorted(ids, key=int):
+                    yield "layer2-vlan", vid, ["vlan", "vlan-id-ranges"]
+            else:
+                yield "layer2-vlan", None, ["vlan", "vlan-id-ranges"]
+        elif isinstance(mapping, dict) and set(mapping) == {"vlan-alias"}:
+            handled.add("vlan")
+            alias = mapping["vlan-alias"]
+            yield "aliases", alias if isinstance(alias, str) and alias.strip() else None, ["vlan", "vlan-alias"]
     # HPE WLAN SSID explicitly distinguishes a named-VLAN profile from
     # literal VLAN-ID ranges; the name is not a layer2-vlan display name.
     # https://developer.arubanetworks.com/new-central-config/reference/updatewlanssidswlanssidbyid

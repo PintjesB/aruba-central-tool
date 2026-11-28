@@ -494,3 +494,21 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(refs("ethernet-interfaces",{"unknown-vlans":"LEARN"}),[])
         self.assertEqual(refs("ethernet-interfaces",{"unknown-vlans":"unsupported"}),[("layer2-vlan",None,["unknown-vlans"])])
         self.assertEqual(refs("other",{"unknown-vlans":"LEARN"}),[("layer2-vlan",None,["unknown-vlans"])])
+
+    def test_named_vlan_mapping_distinguishes_ranges_alias_and_ambiguous_shapes(self):
+        from aruba_central.advanced_review import profile_reference_observations
+        def refs(body, module="named-vlan"):
+            return list(profile_reference_observations(module,"test",body,{}))
+        self.assertEqual(refs({"vlan":{"vlan-id-ranges":["10-11","20"]}}),
+                         [("layer2-vlan","10",["vlan","vlan-id-ranges"]),
+                          ("layer2-vlan","11",["vlan","vlan-id-ranges"]),
+                          ("layer2-vlan","20",["vlan","vlan-id-ranges"])])
+        self.assertEqual(refs({"vlan":{"vlan-alias":"guest-pool"}}),
+                         [("aliases","guest-pool",["vlan","vlan-alias"])])
+        self.assertEqual(refs({"vlan":{"vlan-id-ranges":["invalid"]}}),
+                         [("layer2-vlan",None,["vlan","vlan-id-ranges"])])
+        self.assertEqual(refs({"vlan":{"vlan-alias":None}}),
+                         [("aliases",None,["vlan","vlan-alias"])])
+        self.assertTrue(all(t is None for _,t,_ in refs({"vlan":{"vlan-alias":"a","vlan-id-ranges":["10"]}})))
+        self.assertTrue(all(t is None for _,t,_ in refs({"vlan":{"vlan-id-ranges":["10"]}},"other")))
+        self.assertTrue(all(t is None for _,t,_ in refs({"vlan":{"vlan-id-ranges":["10"],"unknown":"x"}})))
