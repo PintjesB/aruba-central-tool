@@ -354,6 +354,9 @@ def advisor_view(workspace, query):
                 for conflict in blocked["individual_conflicts"]:
                     fallback_html += '<p>' + e(conflict["view"] + " / " + pretty(conflict["collection_presence"])) + '</p>'
                     fallback_html += diff_table(conflict["differences"], "Collection", "Individual read")
+                for conflict in blocked.get("existing_definition_conflicts", []):
+                    fallback_html += '<p>Existing definition must be retained: ' + e(conflict["existing_identity"]) + ' → proposed ' + e(conflict["proposed_identity"]) + '</p>'
+                    fallback_html += diff_table(conflict["differences"], "Existing committed definition", "Proposed definition")
             dep = f["dependency_review"]
             dependency_rows = []
             for key, label in (("consumers", "Consumer"), ("dependencies", "Prerequisite"), ("unresolved_target_observations", "Unresolved target")):
