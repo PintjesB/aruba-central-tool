@@ -139,3 +139,25 @@ class EngineeringQualificationTests(unittest.TestCase):
         self.assertEqual(counts["policy_sequences"]["library_preview_qualified_targets"],1)
         self.assertEqual(counts["policy_sequences"]["library_preview_unqualified_targets"],1)
         self.assertNotIn("private",json.dumps(counts))
+
+    def test_named_reference_gap_qualification_uses_only_fixed_contexts(self):
+        from aruba_central.engineering_qualification import named_reference_gaps
+        from aruba_central.assessment_review import assessment
+        from test_consolidation import fixture
+        ref={"status":"unresolved","target":"private-vlan","source_module":"wlan-ssids","target_module":"layer2-vlan",
+             "target_evidence":"target_view_unqualified","target_alternative_observations":[
+                {"context":"same_site_observation","status":"identity_observed","scope":"private-site"},
+                {"context":"same_site_observation","status":"identity_observed"},
+                {"context":"library_definition","status":"individual_evidence_conflict"},
+                {"context":"private-context","status":"identity_observed"}]}
+        records=[ref,{**ref,"target_alternative_observations":[]}]
+        report=named_reference_gaps(records)
+        self.assertEqual(sum(r["observations"] for r in report),2)
+        self.assertEqual({tuple(r["positive_contexts"]) for r in report},{(),("same_site_observation",)})
+        self.assertNotIn("private",json.dumps(report))
+        engineering={"references":records,"port_groups":[],"library_duplicates":[],"shadowed":[]}
+        counts=assessment(fixture(),engineering=engineering)["engineering"]
+        self.assertEqual(counts["reference_alternative_any"],1)
+        self.assertEqual(counts["reference_alternative_none"],1)
+        self.assertEqual(counts["reference_alternative_same_site_observation"],1)
+        self.assertEqual(counts["reference_alternative_library_definition"],0)
