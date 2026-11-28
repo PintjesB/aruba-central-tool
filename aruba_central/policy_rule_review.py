@@ -68,9 +68,40 @@ def unsupported_security_reason(rule):
     return None
 
 
+# Documented top-level types are not interchangeable:
+# https://developer.arubanetworks.com/new-central-config/reference/replacepoliciespolicybyid
+POLICY_TYPES = {"POLICY_TYPE_SECURITY": "security", "POLICY_NETWORK_ACL": "network_acl",
+                "POLICY_QOS": "qos", "POLICY_PBR": "pbr", "POLICY_MIRROR": "mirror"}
+POLICY_SCHEMA_STATES = ("qualified", "network_acl", "qos", "pbr", "mirror", "policy_type_missing",
+                        "policy_type_unrecognized", "security_body_missing", "security_type_unqualified",
+                        "security_rule_list_unqualified", "acl_rule_list_unqualified")
+
+
+def policy_schema_state(module, body):
+    if module == "role-acls":
+        return "qualified" if isinstance(body.get("rules"), list) else "acl_rule_list_unqualified"
+    kind = body.get("type")
+    if kind is None:
+        return "policy_type_missing"
+    family = POLICY_TYPES.get(kind) if isinstance(kind, str) else None
+    if family is None:
+        return "policy_type_unrecognized"
+    if family != "security":
+        return family
+    security = body.get("security-policy")
+    if not isinstance(security, dict):
+        return "security_body_missing"
+    if security.get("type") != "SECURITY_POLICY_TYPE_DEFAULT":
+        return "security_type_unqualified"
+    if not isinstance(security.get("policy-rule"), list):
+        return "security_rule_list_unqualified"
+    return "qualified"
+
+
 def rule_review(module, body, limit=2000):
     result = {"findings": [], "rules": 0, "qualified_match_rules": 0, "unsupported_rules": 0,
-              "order_verified": False, "truncated": False, "safe_to_apply": False,"unsupported_reasons":{}}
+              "order_verified": False, "truncated": False, "safe_to_apply": False,"unsupported_reasons":{},
+              "schema_state": policy_schema_state(module, body)}
     if module == "role-acls":
         rules = body.get("rules")
         if not isinstance(rules, list):
@@ -102,9 +133,7 @@ def rule_review(module, body, limit=2000):
         result["status"] = "literal_acl_prefix_review" if result["order_verified"] else "structural_acl_review"
         return result
     security = body.get("security-policy")
-    if (body.get("type") != "POLICY_TYPE_SECURITY" or not isinstance(security, dict)
-            or security.get("type") != "SECURITY_POLICY_TYPE_DEFAULT"
-            or not isinstance(security.get("policy-rule"), list)):
+    if result["schema_state"] != "qualified":
         result["status"] = "rule_schema_unqualified"
         return result
     rules = security["policy-rule"]
