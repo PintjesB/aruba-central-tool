@@ -135,6 +135,9 @@ def assignment_review(bundle, module_filter="", persona_filter="", identity_filt
 ASSIGNMENT_FILTERS = {
     "all": "All assignments", "attention": "Requires review",
     "scope_unresolved": "Unresolved assignment scope",
+    "function_not_collected": "Assignment function not collected",
+    "scope_observed_other_function": "Scope observed in another function",
+    "scope_not_observed": "Scope not observed",
     "overlap": "Overlapping assignments",
     "library_unobserved": "Library definition not observed",
     "different_body": "Different effective settings",
@@ -144,7 +147,7 @@ ASSIGNMENT_FILTERS = {
     "unverified": "Unverified effective evidence",
     "matching_source_unverified": "Matching body, source unverified",
     "matching_shared": "Matching shared profile observed",
-    "no_recipients": "No known or uncertain recipients",
+    "no_recipients": "Resolved scope, no observed recipients",
 }
 
 
@@ -169,7 +172,7 @@ def filter_assignment_review(report, module="", persona="", identity="", state="
         states = {r["status"] for r in row["recipients"]}
         unresolved = not row["scope_resolved"]
         overlap = key(row) in overlap_keys
-        no_recipients = not row["recipients"]
+        no_recipients = not unresolved and not row["recipients"]
         if state == "all":
             return True
         conflict = bool(row.get("library_individual_conflict") or any(r.get("individual_conflict") for r in row["recipients"]))
@@ -180,6 +183,8 @@ def filter_assignment_review(report, module="", persona="", identity="", state="
             return conflict
         if state == "scope_unresolved":
             return unresolved
+        if state in ("function_not_collected", "scope_observed_other_function", "scope_not_observed"):
+            return unresolved and row["scope_resolution"] == state
         if state == "overlap":
             return overlap
         if state == "library_unobserved":
