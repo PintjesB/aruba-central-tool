@@ -35,3 +35,21 @@ class CoverageNavigationTests(unittest.TestCase):
             [{"reason": "HTTP 400", "observations": 2}, {"reason": "HTTP 400", "observations": 5}], "HTTP 400")
         self.assertIn('<strong>7</strong><span>HTTP 400</span>', html)
         self.assertIn('aria-current="true"', html)
+
+    def test_overview_previews_and_full_table_search(self):
+        from aruba_central.coverage_navigation import coverage_batch
+        records=[f"row-{i:03}" for i in range(125)]
+        args=("/test/","config-audit-example.json")
+        rows,html=coverage_batch(*args,{},"operations",records,str)
+        self.assertEqual(rows,records[:15])
+        self.assertIn("Open full table",html)
+        self.assertIn("coverage_offset=0",html)
+        rows,html=coverage_batch(*args,{"coverage_table":"operations"},"operations",records,str)
+        self.assertEqual(rows,records[:100])
+        self.assertIn("coverage_offset=100",html)
+        rows,html=coverage_batch(*args,{"coverage_table":"operations","coverage_offset":"100"},"operations",records,str)
+        self.assertEqual(rows,records[100:])
+        self.assertIn("Previous batch",html)
+        rows,html=coverage_batch(*args,{"coverage_table":"operations","coverage_q":"row-124"},"operations",records,str)
+        self.assertEqual(rows,["row-124"])
+        self.assertIn("of 1 matching rows (125 total)",html)
