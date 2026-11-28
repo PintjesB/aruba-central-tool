@@ -1033,6 +1033,9 @@ def policy_rule_detail(finding):
         detail += '<p>Earlier rule</p>' + property_table(item["earlier"]) + '<p>Later rule</p>' + property_table(item["later"])
     if finding["truncated"]:
         detail += '<p class="note">Comparison limit reached; additional relationships may exist.</p>'
+    preview=finding.get("conditional_security_preview")
+    if preview is not None:
+        detail += '<details><summary>Conditional security preview · '+str(len(preview["findings"]))+' candidate relationships</summary><p>The captured default security rule structure can be compared conditionally. The outer policy type is missing and no type is inferred. These are not qualified effective findings.</p>'+policy_rule_detail({**preview,"locations":[]})+'</details>'
     return detail
 
 
@@ -1042,7 +1045,7 @@ def policy_sequence_detail(report):
     detail += table(("Position", "Referenced policy", "Visibility", "Qualified rules", "Unsupported rules"), [
         tr(str(ref["position"]), e(ref["name"]), badge(pretty(ref["status"]))
            + ('<small>'+e(pretty(ref["schema_state"]))+'</small>' if ref.get("schema_state") else ""),
-           str(ref.get("qualified_rule_count", "Unknown")), str(ref.get("unsupported_rule_count", "Unknown")))
+           str(ref.get("qualified_rule_count", "Unknown")) + ('<small>Conditional predicates: '+str(ref["conditional_security_predicate_count"])+'</small>' if "conditional_security_predicate_count" in ref else ""), str(ref.get("unsupported_rule_count", "Unknown")))
         for ref in report["references"]])
     alternatives = [(ref, obs) for ref in report["references"] for obs in ref.get("alternative_observations", [])]
     if alternatives:
