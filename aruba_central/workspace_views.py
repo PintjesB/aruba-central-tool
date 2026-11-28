@@ -251,6 +251,67 @@ def operational_vlan_context(bundle, persona, sources, identity):
             + '<p class="note">This is captured switch monitoring data, not a live CLI check. Reported status is not the same field as configured enable. It does not establish default semantics, multicast behavior or safe removal.</p>')
 
 
+def enrich_advisor_findings(workspace,bundle,findings):
+    from .bulk_review import source_recipient_evidence, source_recipient_index
+    recipient_indexes = {}
+    for finding in findings:
+        persona = finding["persona"]
+        entry = bundle["results"].get(persona)
+        if entry:
+            if persona not in recipient_indexes:
+                recipient_indexes[persona] = source_recipient_index(entry)
+            finding["recipient_evidence"] = source_recipient_evidence(entry, finding["sources"], index=recipient_indexes[persona])
+        else:
+            finding["recipient_evidence"] = {"known": [], "unknown": []}
+    from .optimization_dependencies import attach_dependency_review
+    attach_dependency_review(findings, workspace.advanced_snapshot(bundle)["references"])
+    return findings
+
+
+def advisor_export_evidence(workspace,query):
+    """Return complete private evidence only for one exact selectable finding."""
+    from .review_dispositions import snapshot_binding
+    if set(query)!={"snapshot","group","binding"}:
+        raise ValueError("Invalid advisor export selector")
+    name=query["snapshot"]
+    bundle=workspace.reviewed_snapshot(name)
+    if snapshot_binding(workspace,name,bundle)!=query["binding"]:
+        raise ValueError("Snapshot changed; reopen advisor")
+    findings=[dict(f) for f in workspace.consolidation_snapshot(bundle)
+              if f["id"]==query["group"] and f["action"] in OPPORTUNITIES and f["preview_selectable"]]
+    if len(findings)!=1:
+        raise ValueError("Unknown or blocked advisor finding")
+    enrich_advisor_findings(workspace,bundle,findings)
+    if snapshot_binding(workspace,name,bundle)!=query["binding"]:
+        raise ValueError("Snapshot changed during advisor export")
+    return findings[0]
+
+
+def advisor_preview_payload(finding):
+    """Keep exact gate inputs and summary counts, not repeated raw evidence."""
+    fields=("id","identity","module","persona","action","target","sources","observed_devices",
+            "placement_options","fallbacks","recipient_evidence","steps","blockers")
+    payload={k:finding[k] for k in fields}
+    evidence=finding["dependency_review"]
+    dependencies=[]
+    seen=set()
+    for ref in evidence["dependencies"]:
+        if (ref["status"] not in ("observed","definition_observed") or ref["target"] is None
+                or ref.get("source_view") not in ("effective","library")
+                or ref["source_module"]!=finding["module"] or ref["source"]!=finding["identity"]):
+            continue
+        key=(ref["persona"],ref["target_module"],ref["target"])
+        if key not in seen:
+            seen.add(key)
+            dependencies.append(ref)
+    payload["dependency_review"]={"dependencies":dependencies}
+    payload["dependency_counts"]={
+        "other":sum(len(evidence[k]) for k in ("other_function_consumers","other_function_dependencies","other_function_unresolved_targets")),
+        "gaps":len(evidence["unqualified_edges"])+len(evidence["unresolved_target_observations"]),
+        "nac":sum(r.get("source_evidence")=="nac_enforcement" for r in evidence["other_function_consumers"])}
+    return payload
+
+
 def advisor_view(workspace, query):
     loaded, empty = load(workspace, query, "Consolidation advisor", "advisor")
     if empty:
@@ -258,7 +319,6 @@ def advisor_view(workspace, query):
     root, name, bundle, picker = loaded
     from .review_dispositions import snapshot_binding
     binding = snapshot_binding(workspace, name, bundle)
-    from .bulk_review import source_recipient_evidence, source_recipient_index
     findings = [dict(f) for f in workspace.consolidation_snapshot(bundle)]
     if query.get("group"):
         findings = [f for f in findings if f["id"] == query["group"]]
@@ -272,18 +332,7 @@ def advisor_view(workspace, query):
     if detail_only and (not query.get("group") or len(findings) != 1 or query.get("binding") != binding):
         raise ValueError("Finding or snapshot changed; reopen the worklist")
     render_details = detail_only or bool(query.get("group") or (scope_filter and identity_filter))
-    recipient_indexes = {}
-    for finding in findings:
-        persona = finding["persona"]
-        entry = bundle["results"].get(persona)
-        if entry:
-            if persona not in recipient_indexes:
-                recipient_indexes[persona] = source_recipient_index(entry)
-            finding["recipient_evidence"] = source_recipient_evidence(entry, finding["sources"], index=recipient_indexes[persona])
-        else:
-            finding["recipient_evidence"] = {"known": [], "unknown": []}
-    from .optimization_dependencies import attach_dependency_review
-    attach_dependency_review(findings, workspace.advanced_snapshot(bundle)["references"])
+    enrich_advisor_findings(workspace,bundle,findings)
     short = {key: value[0] for key, value in ACTION_GUIDE.items()}
     counts = Counter(f["action"] for f in findings)
     recommendation_options = [
@@ -411,7 +460,7 @@ def advisor_view(workspace, query):
                           "blocked": "Evidence blocks preview", "review": "Inspection only"}[readiness]
         # Inspection-only findings cannot enter selection() or preview export.
         # Keep only the fields required by the filtered CSV and row identity.
-        plan = f if selectable else {k: f[k] for k in ("id", "identity", "module", "persona", "action")}
+        plan = advisor_preview_payload(f) if selectable else {k: f[k] for k in ("id", "identity", "module", "persona", "action")}
         if not selectable:
             plan["sources"] = [{"name": source["name"]} for source in sources]
             plan["observed_counts"] = {key: len(values) for key, values in observed.items()}
@@ -441,7 +490,7 @@ def advisor_view(workspace, query):
               '<div id="preview"></div><button id="export-plan" type="button" class="primary" disabled>Export private preview JSON</button>'
               '</div></dialog>')
     return page("Consolidation advisor", intro("Consolidation", "Choose a task, inspect the evidence, and prepare a change preview.", picker)
-                + '<section><div id="snapshot-label" hidden data-snapshot="' + e(name) + '" data-binding="' + e(binding) + '"></div>'
+                + '<section><div id="snapshot-label" hidden data-snapshot="' + e(name) + '" data-binding="' + e(binding) + '" data-export-endpoint="' + e(root+"advisor-plan") + '"></div>'
                 + filters + '<div class="table-toolbar"><span id="visible-count" class="muted" aria-live="polite"></span>'
                 '<button id="advisor-export-csv" type="button" title="Export all recommendations matching the current filters, including other pages">Export filtered CSV</button>'
                 '<div><button id="advisor-prev" type="button">Previous</button> <span id="advisor-page" class="muted"></span> '
@@ -465,7 +514,7 @@ ADVISOR_JS = r"""
 const $=id=>document.getElementById(id), rows=Array.from($('advisor-table').querySelectorAll(':scope > .data-grid > .table-scroll > table > tbody > tr'));
 const checks=rows.map(r=>r.querySelector('.choose'));
 const categories={opportunities:['remove_override','promote_local','reuse_library'],review:['conflict','default_review'],optional:['create_library','unassigned_library']};
-let page=0, filtered=[];const size=30;
+let page=0, filtered=[],exporting=false;const size=30;
 function filter(reset=true){
  if(reset)page=0;
  const terms=$('search').value.toLowerCase().trim().split(/\s+/).filter(Boolean);
@@ -616,7 +665,7 @@ function selection(){
  $('clear-selection').disabled=!chosen.length;
  $('open-preview').disabled=!chosen.length;
  const review=bulkReview(chosen);
- $('export-plan').disabled=!chosen.length||review.missing_destinations.length>0||review.collisions.length>0||review.dependency_order.blocked.length>0;
+ $('export-plan').disabled=exporting||!chosen.length||review.missing_destinations.length>0||review.collisions.length>0||review.dependency_order.blocked.length>0;
  return chosen;
 }
 function el(tag,text){const n=document.createElement(tag);n.textContent=text;return n;}
@@ -672,9 +721,7 @@ function preview(){
   const item=document.createElement('div');item.className='plan-item';
   item.append(el('h3',f.module+' / '+f.identity),el('p',({remove_override:'Review matching nearest inheritance',promote_local:'Consolidate repeated local profiles',reuse_library:'Reuse matching Library profile'}[f.action]||f.action)+' · '+f.target));
   const evidence=f.dependency_review||{};
-  const other=(evidence.other_function_consumers||[]).length+(evidence.other_function_dependencies||[]).length+(evidence.other_function_unresolved_targets||[]).length;
-  const gaps=(evidence.unqualified_edges||[]).length+(evidence.unresolved_target_observations||[]).length;
-  const nac=(evidence.other_function_consumers||[]).filter(r=>r.source_evidence==='nac_enforcement').length;
+  const {other=0,gaps=0,nac=0}=f.dependency_counts||{};
   if(gaps||nac||(other&&f.selected_destination?.kind==='library')){
    item.append(el('p',gaps+' unqualified or unresolved dependency observations; '+other+' other-function potential observations. Review the captured evidence before manual changes.'));
   }
@@ -738,13 +785,30 @@ $('advisor-export-csv').addEventListener('click',()=>{
  const u=URL.createObjectURL(new Blob([content],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');
  a.href=u;a.download='central-consolidation-worklist.csv';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);
 });
-$('export-plan').addEventListener('click',()=>{
+$('export-plan').addEventListener('click',async()=>{
  const chosen=selection();if($('export-plan').disabled)return;
  const snapshot=$('snapshot-label').dataset;
  const selection_manifest={schema:1,kind:'consolidation_selection',snapshot:snapshot.snapshot,snapshot_binding:snapshot.binding,
   selections:chosen.map(f=>({id:f.id,destination:f.action==='promote_local'?(f.selected_destination.kind==='library'?'library':f.selected_destination.scope):null}))};
- const content=JSON.stringify({schema:1,kind:'consolidation_preview',safe_to_apply:false,snapshot:snapshot.snapshot,selection_manifest,bulk_review:bulkReview(chosen),recommendations:chosen},null,2);
- const u=URL.createObjectURL(new Blob([content],{type:'application/json'})),a=document.createElement('a');a.href=u;a.download='consolidation-preview.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);
+ exporting=true;selection();
+ try{
+  const full=[];
+  for(const selected of chosen){
+   const params=new URLSearchParams({snapshot:snapshot.snapshot,binding:snapshot.binding,group:selected.id});
+   const response=await fetch(snapshot.exportEndpoint+'?'+params,{cache:'no-store'});
+   if(!response.ok)throw Error('Unavailable evidence');
+   const record=await response.json();
+   if(record.id!==selected.id||record.preview_selectable!==true)throw Error('Changed evidence');
+   full.push({...record,target:selected.target,...(selected.selected_destination?{selected_destination:selected.selected_destination}:{})});
+  }
+  const review=bulkReview(full);
+  if(review.missing_destinations.length||review.collisions.length||review.dependency_order.blocked.length)throw Error('Review gates changed');
+  const content=JSON.stringify({schema:1,kind:'consolidation_preview',safe_to_apply:false,snapshot:snapshot.snapshot,selection_manifest,bulk_review:review,recommendations:full},null,2);
+  const u=URL.createObjectURL(new Blob([content],{type:'application/json'})),a=document.createElement('a');a.href=u;a.download='consolidation-preview.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);
+ }catch(_){
+  const message=el('p','Full review evidence is unavailable or changed. Reopen the advisor and review the selection again.');
+  message.setAttribute('role','alert');$('preview').append(message);
+ }finally{exporting=false;selection();}
 });
 filter();selection();
 })();
