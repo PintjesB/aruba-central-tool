@@ -161,3 +161,19 @@ class PolicyRuleTests(unittest.TestCase):
         report=next(r for r in policy_rule_groups(bundle) if r["persona"]=="CAMPUS_AP")
         self.assertEqual(report["library_body_relation"],"different_body")
         self.assertEqual(report["body_shape"],"identity_only")
+
+    def test_missing_outer_type_has_separate_conditional_preview(self):
+        body=policy([rule(1,source=None),rule(2,action="OTHER_ACTION")])
+        del body["type"]
+        report=rule_review("policies",body)
+        self.assertEqual(report["status"],"rule_schema_unqualified")
+        self.assertFalse(report["findings"])
+        self.assertFalse(report["order_verified"])
+        preview=report["conditional_security_preview"]
+        self.assertEqual(preview["context"],"outer_policy_type_missing")
+        self.assertEqual(len(preview["findings"]),1)
+        self.assertFalse(preview["safe_to_apply"])
+        for other in ({**body,"type":None},{**body,"type":"POLICY_NETWORK_ACL"},{**body,"unknown":{}}):
+            self.assertNotIn("conditional_security_preview",rule_review("policies",other))
+        body["security-policy"]["policy-rule"]=[rule(1),rule(1)]
+        self.assertFalse(rule_review("policies",body)["conditional_security_preview"]["order_verified"])

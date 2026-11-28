@@ -128,6 +128,21 @@ def policy_body_shape(body):
     return "rule_list_present" if rules else "rule_list_empty"
 
 
+def conditional_security_rules(body):
+    """Return observed default security rules only when the outer type is omitted.
+
+    Never supply a missing type, override an explicit type, or use a preview
+    to qualify the effective policy. The outer type determines rule semantics.
+    """
+    if "type" in body or set(body) - {"name","description","association","dsf-enable","security-policy"}:
+        return None
+    sec = body.get("security-policy")
+    if not isinstance(sec, dict) or sec.get("type") != "SECURITY_POLICY_TYPE_DEFAULT":
+        return None
+    rules = sec.get("policy-rule")
+    return rules if isinstance(rules,list) else None
+
+
 def rule_review(module, body, limit=2000):
     result = {"findings": [], "rules": 0, "qualified_match_rules": 0, "unsupported_rules": 0,
               "order_verified": False, "truncated": False, "safe_to_apply": False,"unsupported_reasons":{},
@@ -166,8 +181,17 @@ def rule_review(module, body, limit=2000):
     security = body.get("security-policy")
     if result["schema_state"] != "qualified":
         result["status"] = "rule_schema_unqualified"
+        candidate = conditional_security_rules(body)
+        if candidate is not None:
+            preview = {"findings":[],"rules":0,"qualified_match_rules":0,"unsupported_rules":0,
+                       "order_verified":False,"truncated":False,"safe_to_apply":False,"unsupported_reasons":{}}
+            result["conditional_security_preview"] = {
+                **review_security_rules(candidate,preview,limit), "context":"outer_policy_type_missing"}
         return result
-    rules = security["policy-rule"]
+    return review_security_rules(security["policy-rule"],result,limit)
+
+
+def review_security_rules(rules,result,limit):
     result["rules"] = len(rules)
     positions = [r.get("position") if isinstance(r, dict) else None for r in rules]
     if any(type(p) is not int or p < 0 for p in positions) or len(set(positions)) != len(positions):

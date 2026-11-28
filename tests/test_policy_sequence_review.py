@@ -142,3 +142,15 @@ class PolicySequenceTests(unittest.TestCase):
         self.assertEqual(result["library_preview"]["references"][0]["status"],"individual_evidence_conflict")
         self.assertFalse(result["library_preview"]["findings"])
         self.assertFalse(result["findings"])
+
+    def test_conditional_security_rules_never_enter_effective_sequence_comparison(self):
+        body=policy([rule(1,source=None)])
+        del body["type"]
+        parsed=sequence_entries(capture([{"name":"a","position":1},{"name":"b","position":2}]))
+        result=compare_sequence(parsed,{"status":"list_parsed","profiles":{"a":body,"b":policy([rule(1)])}})
+        self.assertEqual(result["references"][0]["status"],"rule_schema_unqualified")
+        self.assertEqual(result["references"][0]["conditional_security_rule_count"],1)
+        self.assertEqual(result["references"][0]["conditional_security_predicate_count"],1)
+        self.assertEqual(result["references"][1]["status"],"rules_observed")
+        self.assertFalse(result["findings"])
+        self.assertFalse(result["safe_to_apply"])
