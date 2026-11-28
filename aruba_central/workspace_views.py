@@ -886,10 +886,8 @@ def engineering_view(workspace, query):
         key = (rec["persona"], rec["module"], rec["identity"], rec["winning_scope_id"], rec["higher_scope_id"],
                canonical(rec["effective"]), canonical(rec["higher_body"]))
         grouped.setdefault(key, []).append(rec)
-    from .policy_variants import policy_variants
-    from .policy_rule_review import policy_rule_groups
-    variants = policy_variants(bundle)
-    rules = policy_rule_groups(bundle)
+    variants = workspace.policy_snapshot(bundle, 'variants')
+    rules = workspace.policy_snapshot(bundle, 'rules')
     reference_rows = {"references": [], "resolved": []}
     for ref in data["references"]:
         key = "resolved" if ref["status"] in ("observed", "definition_observed") else "references"
@@ -1072,12 +1070,13 @@ def engineering_view(workspace, query):
     panel("rules", "Policy rule review", "Inspect duplicate conditions, differing actions, partial intersections and broader matches within captured ordered policies. Role ACLs also compare literal IPv4 and IPv6 destinations within the same explicit source role and VRF. Unsupported matches and missing order remain unqualified; do not treat these as proven unreachable rules.",
           ("Module", "Policy", "Function", "Locations", "Rules", "Unsupported", "Observations", "Evidence", ""), rows, counts["rules"])
     if selected == "rules":
-        from .policy_sequence_review import policy_sequence_reviews
         sequence_rows = []
-        for report in policy_sequence_reviews(bundle):
+        for report in workspace.policy_snapshot(bundle, "sequences"):
             detail = '<p>Observed policy-group order. Cross-policy matches are candidates only; role applicability and resultant device policy remain unverified.</p>'
-            detail += table(("Position", "Referenced policy", "Visibility"), [
-                tr(str(ref["position"]), e(ref["name"]), badge(pretty(ref["status"]))) for ref in report["references"]])
+            detail += table(("Position", "Referenced policy", "Visibility", "Qualified rules", "Unsupported rules"), [
+                tr(str(ref["position"]), e(ref["name"]), badge(pretty(ref["status"])),
+                   str(ref.get("qualified_rule_count", "Unknown")), str(ref.get("unsupported_rule_count", "Unknown")))
+                for ref in report["references"]])
             for ref in report["references"]:
                 if ref.get("individual_conflict"):
                     detail += '<h3>Contradictory policy target: '+e(ref["name"])+'</h3>'+raw(ref["individual_conflict"])
@@ -1091,8 +1090,9 @@ def engineering_view(workspace, query):
                 detail += raw(report["entries"], "Unqualified entries")
             sequence_rows.append(tr(e(report["name"]), e(persona_label(report["persona"])), badge(pretty(report["status"])),
                                     str(len(report["entries"])), str(sum(v["status"] != "rules_observed" for v in report["references"])),
+                                    str(sum(v.get("unsupported_rule_count", 0) > 0 for v in report["references"])),
                                     str(len(report["findings"])), inspect("Policy sequence", detail, "Review order")))
-        section = '<section><h2>Policy group evaluation order</h2><p>Compare only policy bodies visible in the same captured scope and function. Missing policy definitions or ambiguous order are not interpreted.</p>' + table(("Scope", "Function", "Sequence evidence", "Entries", "Unqualified targets", "Cross-policy candidates", ""), sequence_rows, search=True) + '</section>'
+        section = '<section><h2>Policy group evaluation order</h2><p>Compare only policy bodies visible in the same captured scope and function. Missing policy definitions or ambiguous order are not interpreted.</p>' + table(("Scope", "Function", "Sequence evidence", "Entries", "Unqualified targets", "Targets with unsupported rules", "Cross-policy candidates", ""), sequence_rows, search=True) + '</section>'
         key, label, count, content = panels[-1]
         panels[-1] = (key, label, count, content + section)
     rows = []

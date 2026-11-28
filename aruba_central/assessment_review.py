@@ -8,17 +8,18 @@ from .policy_rule_review import policy_rule_groups
 from .policy_sequence_review import policy_sequence_reviews
 
 
-def assessment(bundle, *, findings=None, engineering=None, assignments=None, collisions=None):
+def assessment(bundle, *, findings=None, engineering=None, assignments=None, collisions=None,
+               variants=None, rules=None, sequences=None):
     devices = {(p, s["id"]) for p, e in bundle["results"].items()
                for s in e["scopes"] if s["kind"] == "device"}
     findings = profile_recommendations(bundle) if findings is None else findings
     engineering = advanced_analysis(bundle) if engineering is None else engineering
     assignments = assignment_review(bundle) if assignments is None else assignments
-    variants = policy_variants(bundle)
+    variants = policy_variants(bundle) if variants is None else variants
     from .identity_review import identity_collisions
     collisions = identity_collisions(bundle) if collisions is None else collisions
-    rules = policy_rule_groups(bundle)
-    sequences = policy_sequence_reviews(bundle)
+    rules = policy_rule_groups(bundle) if rules is None else rules
+    sequences = policy_sequence_reviews(bundle) if sequences is None else sequences
     coverage = Counter()
     for entry in bundle["results"].values():
         for module in entry["modules"].values():
@@ -86,6 +87,9 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "unqualified_order": sum(row["status"] != "order_observed" for row in sequences),
                 "unqualified_targets": sum(ref["status"] != "rules_observed" for row in sequences for ref in row["references"]),
                 "cross_policy_candidates": sum(len(row["findings"]) for row in sequences),
+                "qualified_rule_occurrences": sum(ref.get("qualified_rule_count", 0) for row in sequences for ref in row["references"]),
+                "unsupported_rule_occurrences": sum(ref.get("unsupported_rule_count", 0) for row in sequences for ref in row["references"]),
+                "targets_with_unsupported_rules": sum(ref.get("unsupported_rule_count", 0) > 0 for row in sequences for ref in row["references"]),
                 "partial_overlap_candidates":sum(f.get("condition_relationship")=="partial_overlap" for row in sequences for f in row["findings"]),
                 "conflicting_targets":sum(ref["status"]=="individual_evidence_conflict" for row in sequences for ref in row["references"]),
                 "truncated": sum(row["truncated"] for row in sequences)},
