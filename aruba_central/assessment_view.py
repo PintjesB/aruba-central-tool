@@ -49,7 +49,7 @@ def assessment_view(workspace, query):
         linked("Similar exact profile identities", report["identity_collisions"]["groups"], "Inspect case or whitespace collisions without merging names", "assessment", mode="identities"),
         linked("Unparsed scope views", expected-parsed, "Collect or interpret configuration evidence", "coverage"),
         linked("Parsed views without confirmed count", parsed-confirmed, "Verify missing collection counts", "coverage"),
-        linked("Unresolved reference observations", engineering["unresolved_references"], "Raw observations include individual VLAN set members; review the breakdown below before interpreting missing targets", "advanced", workflow="references"),
+        linked("Unresolved dependency records", engineering["unresolved_references"], "Compact VLAN sets count once; individual membership evidence is retained", "advanced", workflow="references"),
         linked("Conditional NAC enforcement observations", engineering["conditional_nac_observations"], "Review potential role and VLAN consumers separately from device references", "nac"),
         linked("Contradictory policy bodies", rules["individual_conflict_groups"], "Inspect contradictory individual and collection evidence", "advanced", workflow="rules"),
         linked("Assignments with unresolved scope", assignments["unknown_scopes"], "Verify membership and scope identity", "assignments", state="scope_unresolved"),
@@ -59,6 +59,8 @@ def assessment_view(workspace, query):
         linked("Conditional security policy previews", rules.get("conditional_preview_groups",0), "Review captured rule structure without assigning a missing policy type", "advanced", workflow="rules"),
         linked("Distinct Library-only candidate bodies", sequences.get("library_preview_distinct_candidate_bodies",0), "Separate repeated definition comparisons from effective findings", "advanced", workflow="rules")]
     evidence_breakdown = [
+        linked("Unresolved member-equivalent observations", engineering.get("unresolved_member_equivalents",engineering["unresolved_references"]), "Expanded equivalent count; not unique defects or graph records", "advanced", workflow="references"),
+        linked("Compact VLAN membership records", engineering.get("compact_membership_fields",0), "Exact membership intervals, separate from unknown identities", "advanced", workflow="references"),
         linked("Incomplete target collection", engineering["reference_target_collection_incomplete"], "Verify the target collection count or retrieve complete evidence", "advanced", workflow="references", ref_evidence="target_collection_incomplete"),
         linked("Unavailable or unqualified target view", engineering["reference_target_view_unqualified"], "Inspect missing or unsupported target collection views", "advanced", workflow="references", ref_evidence="target_view_unqualified"),
         linked("Count-confirmed target absence", engineering["reference_target_count_confirmed_absence"], "Raw target observations, not a count of missing required definitions", "advanced", workflow="references", ref_evidence="count_confirmed_absence"),
