@@ -7,6 +7,16 @@ from .policy_variants import policy_variants
 from .policy_rule_review import policy_rule_groups
 from .policy_sequence_review import policy_sequence_reviews
 
+SECURITY_REASONS = ("rule_not_object", "additional_rule_fields", "condition_not_object",
+    "unsupported_condition_fields", "unsupported_condition_type", "unsupported_rule_type",
+    "unsupported_address_shape", "action_unqualified", "security_order_unqualified")
+ACL_REASONS = ("rule_not_object", "additional_rule_fields", "source_role_unqualified", "vrf_unqualified",
+    "action_unqualified", "literal_destination_unqualified", "family_unqualified", "order_unqualified")
+SEQUENCE_CONTEXTS = ("unfiltered_function", "function_not_collected", "scope_not_observed",
+    "policy_view_not_collected", "policy_view_unqualified", "policy_view_parsed", "unknown")
+SEQUENCE_TARGET_STATES = ("rules_observed", "rule_schema_unqualified", "not_observed",
+    "target_unverified", "individual_evidence_conflict")
+
 
 def assessment(bundle, *, findings=None, engineering=None, assignments=None, collisions=None,
                variants=None, rules=None, sequences=None):
@@ -20,6 +30,22 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
     collisions = identity_collisions(bundle) if collisions is None else collisions
     rules = policy_rule_groups(bundle) if rules is None else rules
     sequences = policy_sequence_reviews(bundle) if sequences is None else sequences
+    security_reasons, acl_reasons = Counter(), Counter()
+    for row in rules:
+        if row.get("module") == "policies":
+            security_reasons.update(row.get("unsupported_reasons", {}))
+        elif row.get("module") == "role-acls":
+            acl_reasons.update(row.get("acl_unsupported_reasons", {}))
+    sequence_context_gaps = Counter()
+    sequence_target_states = Counter()
+    for row in sequences:
+        context = row.get("target_context", "unknown")
+        if context not in SEQUENCE_CONTEXTS:
+            context = "unknown"
+        for ref in row["references"]:
+            sequence_target_states[ref["status"]] += 1
+            if ref["status"] != "rules_observed":
+                sequence_context_gaps[context] += 1
     coverage = Counter()
     for entry in bundle["results"].values():
         for module in entry["modules"].values():
@@ -82,7 +108,9 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "structural_security_repetitions":sum(f["status"]=="identical_unsupported_security_rule_body" for row in rules for f in row["findings"]),
                 "partial_overlap_candidates":sum(f.get("condition_relationship")=="partial_overlap" for row in rules for f in row["findings"]),
                 "reverse_containment_candidates":sum(f.get("condition_relationship")=="later_contains_earlier" for row in rules for f in row["findings"]),
-                "truncated": sum(row["truncated"] for row in rules)},
+                "truncated": sum(row["truncated"] for row in rules),
+                **{"security_" + key: security_reasons[key] for key in SECURITY_REASONS},
+                **{"acl_" + key: acl_reasons[key] for key in ACL_REASONS}},
             "policy_sequences": {"captures": len(sequences),
                 "unqualified_order": sum(row["status"] != "order_observed" for row in sequences),
                 "unqualified_targets": sum(ref["status"] != "rules_observed" for row in sequences for ref in row["references"]),
@@ -92,6 +120,8 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "targets_with_unsupported_rules": sum(ref.get("unsupported_rule_count", 0) > 0 for row in sequences for ref in row["references"]),
                 "partial_overlap_candidates":sum(f.get("condition_relationship")=="partial_overlap" for row in sequences for f in row["findings"]),
                 "conflicting_targets":sum(ref["status"]=="individual_evidence_conflict" for row in sequences for ref in row["references"]),
-                "truncated": sum(row["truncated"] for row in sequences)},
+                "truncated": sum(row["truncated"] for row in sequences),
+                **{"gap_context_" + key: sequence_context_gaps[key] for key in SEQUENCE_CONTEXTS},
+                **{"target_" + key: sequence_target_states[key] for key in SEQUENCE_TARGET_STATES}},
             "checkpoint": bundle.get("collection_checkpoint", {}), "captured_at": bundle.get("captured_at"),
             "complete": False, "safe_to_apply": False}

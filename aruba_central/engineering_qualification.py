@@ -1,6 +1,6 @@
 """Anonymous qualification of aggregate engineering observations."""
 from .central_tool import refresh_configuration_review
-from .assessment_review import assessment
+from .assessment_review import assessment, SECURITY_REASONS, ACL_REASONS, SEQUENCE_CONTEXTS, SEQUENCE_TARGET_STATES
 
 # Fixed output keys only. Do not serialize action names, checkpoint data,
 # timestamps, names, identities, values or any raw report structures.
@@ -12,9 +12,13 @@ FIELDS={
     "variants":("groups","explicit","groups_with_conflicts","mixed_site_groups"),
     "policy_rules":("groups","groups_with_findings","observations","groups_with_unsupported_rules","unsupported_schema_groups","unsupported_rule_occurrences","unsupported_order_occurrences",
                     "unsupported_condition_occurrences","unsupported_acl_predicate_occurrences","unqualified_order",
-                    "individual_conflict_groups","structural_security_repetitions","partial_overlap_candidates","reverse_containment_candidates","truncated"),
+                    "individual_conflict_groups","structural_security_repetitions","partial_overlap_candidates","reverse_containment_candidates","truncated")
+                    + tuple("security_" + key for key in SECURITY_REASONS)
+                    + tuple("acl_" + key for key in ACL_REASONS),
     "policy_sequences":("captures","unqualified_order","unqualified_targets","cross_policy_candidates","qualified_rule_occurrences","unsupported_rule_occurrences","targets_with_unsupported_rules",
-                        "partial_overlap_candidates","conflicting_targets","truncated"),
+                        "partial_overlap_candidates","conflicting_targets","truncated")
+                    + tuple("gap_context_" + key for key in SEQUENCE_CONTEXTS)
+                    + tuple("target_" + key for key in SEQUENCE_TARGET_STATES),
     "assignments":("observed","overlaps","unknown_scopes","invalid","individual_conflicts",
                    "function_not_collected","scope_observed_other_function","scope_not_observed","unknown"),
     "consolidation":("groups","reviewable","source_definitions")

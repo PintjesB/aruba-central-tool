@@ -1049,6 +1049,9 @@ def engineering_view(workspace, query):
             if finding.get("unsupported_reasons"):
                 detail += '<h3>Unsupported rule observations</h3>'+table(("Reason","Rules"),[
                     tr(e(pretty(reason)),str(count)) for reason,count in sorted(finding["unsupported_reasons"].items())])
+            if finding.get("acl_unsupported_reasons"):
+                detail += '<h3>ACL predicate rejection details</h3>'+table(("Reason","Rules"),[
+                    tr(e(pretty(reason)),str(count)) for reason,count in sorted(finding["acl_unsupported_reasons"].items())])
             detail += '<h3>Rule comparisons</h3>'
             for item in observations:
                 earlier = item.get("earlier_position", item.get("earlier_index"))
@@ -1073,6 +1076,7 @@ def engineering_view(workspace, query):
         sequence_rows = []
         for report in workspace.policy_snapshot(bundle, "sequences"):
             detail = '<p>Observed policy-group order. Cross-policy matches are candidates only; role applicability and resultant device policy remain unverified.</p>'
+            detail += '<p>Target context: '+e(pretty(report.get("target_context","unknown")))+'</p>'
             detail += table(("Position", "Referenced policy", "Visibility", "Qualified rules", "Unsupported rules"), [
                 tr(str(ref["position"]), e(ref["name"]), badge(pretty(ref["status"])),
                    str(ref.get("qualified_rule_count", "Unknown")), str(ref.get("unsupported_rule_count", "Unknown")))
@@ -1089,10 +1093,11 @@ def engineering_view(workspace, query):
             if report["status"] != "order_observed":
                 detail += raw(report["entries"], "Unqualified entries")
             sequence_rows.append(tr(e(report["name"]), e(persona_label(report["persona"])), badge(pretty(report["status"])),
+                                    e(pretty(report.get("target_context","unknown"))),
                                     str(len(report["entries"])), str(sum(v["status"] != "rules_observed" for v in report["references"])),
                                     str(sum(v.get("unsupported_rule_count", 0) > 0 for v in report["references"])),
                                     str(len(report["findings"])), inspect("Policy sequence", detail, "Review order")))
-        section = '<section><h2>Policy group evaluation order</h2><p>Compare only policy bodies visible in the same captured scope and function. Missing policy definitions or ambiguous order are not interpreted.</p>' + table(("Scope", "Function", "Sequence evidence", "Entries", "Unqualified targets", "Targets with unsupported rules", "Cross-policy candidates", ""), sequence_rows, search=True) + '</section>'
+        section = '<section><h2>Policy group evaluation order</h2><p>Compare only policy bodies visible in the same captured scope and function. Missing policy definitions or ambiguous order are not interpreted.</p>' + table(("Scope", "Function", "Sequence evidence", "Target context", "Entries", "Unqualified targets", "Targets with unsupported rules", "Cross-policy candidates", ""), sequence_rows, search=True) + '</section>'
         key, label, count, content = panels[-1]
         panels[-1] = (key, label, count, content + section)
     rows = []
