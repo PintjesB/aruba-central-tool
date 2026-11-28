@@ -674,7 +674,8 @@ function preview(){
   const evidence=f.dependency_review||{};
   const other=(evidence.other_function_consumers||[]).length+(evidence.other_function_dependencies||[]).length+(evidence.other_function_unresolved_targets||[]).length;
   const gaps=(evidence.unqualified_edges||[]).length+(evidence.unresolved_target_observations||[]).length;
-  if(gaps||(other&&f.selected_destination?.kind==='library')){
+  const nac=(evidence.other_function_consumers||[]).filter(r=>r.source_evidence==='nac_enforcement').length;
+  if(gaps||nac||(other&&f.selected_destination?.kind==='library')){
    item.append(el('p',gaps+' unqualified or unresolved dependency observations; '+other+' other-function potential observations. Review the captured evidence before manual changes.'));
   }
   const flow=el('div','');flow.className='preview-transition';
@@ -765,6 +766,7 @@ def usage_detail(usage, *, root=None, snapshot=None, module=None):
                 tr("Distinct configuration objects referencing this name", usage_cells(usage)[2]),
                 tr("Saved definitions referencing this name", str(usage.get("definition_reference_count", 0))),
                 tr("Effective objects referencing this name", str(usage.get("effective_reference_count", 0))),
+                tr("Conditional NAC enforcement observations", str(usage.get("conditional_nac_observations",0))),
                 tr("Conflicting individual reference observations", str(usage.get("conflicting_reference_count", 0))),
                 tr("Individual Library definition conflict", "Yes" if usage.get("library_individual_conflict") else "Not observed"),
                 tr("Device/function pairs with contradictory profile evidence", str(len(usage.get("individual_conflict_devices", [])))),
@@ -775,7 +777,7 @@ def usage_detail(usage, *, root=None, snapshot=None, module=None):
             + visibility_detail_link(usage, root=root, snapshot=snapshot, module=module)
             + '<h3>Configuration references</h3>' + table(("Source scope", "View", "Module", "Object", "Field", "Evidence"), [
                 tr(e(r["device"]), e(pretty(r.get("source_view", "effective"))), e(module_label(r["source_module"])), e(r["source"]), e(".".join(map(str, r.get("path", [])))),
-                   badge("Conflicting observation", "warn") if r.get("collection_conflict") else e("Individual read" if r.get("source_evidence") == "individual" else "Collection")) for r in usage["references"]])
+                   badge("Conflicting observation", "warn") if r.get("collection_conflict") else e("Conditional NAC candidate" if r.get("source_evidence")=="nac_enforcement" else "Individual read" if r.get("source_evidence") == "individual" else "Collection")) for r in usage["references"]])
             + '<p class="note">These are separate observations, not traffic usage. Zero observed references does not prove a profile is unused. Reference coverage is incomplete.</p>')
 
 

@@ -38,7 +38,10 @@ def migration_recipient_review(bundle, usage, keep, assignments, definitions, im
     for assignment in assignments:
         expand(assignment["persona"], assignment["scope"], assignment["from"], "Observed assignment")
     for ref in definitions + impacts:
-        if ref.get("source_view") == "library":
+        if ref.get("source_evidence") == "nac_enforcement":
+            unresolved.append({"persona":ref["persona"],"scope":ref["scope"],"from":ref["from"],
+                               "reason":"NAC enforcement candidate; policy applicability and client location unverified"})
+        elif ref.get("source_view") == "library":
             unresolved.append({"persona": ref["persona"], "scope": ref["scope"], "from": ref["from"],
                                "reason": "Library reference deployment not established"})
         elif ref.get("source_scope_kind", "device") == "device":
