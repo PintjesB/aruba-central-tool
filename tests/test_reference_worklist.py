@@ -116,3 +116,27 @@ class ReferenceWorklistTests(unittest.TestCase):
                 self.assertNotIn("unknown-identity",html)
                 with self.assertRaises(ValueError):
                     w.advanced({**query,"ref_context":"invalid"})
+
+    def test_set_membership_absence_worklist_remains_searchable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            name="config-audit-test.json"
+            (Path(directory)/name).write_text(json.dumps(fixture()))
+            w=Workspace(directory)
+            base={"persona":"ACCESS_SWITCH","scope":"1","device":"Switch","source":"profile",
+                  "source_view":"effective","target_module":"layer2-vlan","status":"not_observed",
+                  "target_evidence":"count_confirmed_absence"}
+            refs=[{**base,"source_module":"stp","path":["mstp",0,"mstp-vlans"],"target":str(i)} for i in range(1,101)]
+            refs.append({**base,"source_module":"ethernet-interfaces","path":["switchport","native-vlan"],"target":"200"})
+            with patch.object(w,"advanced_snapshot",return_value={"references":refs,"shadowed":[],"port_groups":[],"library_duplicates":[]}):
+                query={"snapshot":name,"workflow":"references"}
+                html=w.advanced(query)
+                self.assertIn("1 distinct captured set fields",html)
+                self.assertIn("not a missing definition by itself",html)
+                self.assertIn("of 101 matching observations",html)
+                html=w.advanced({**query,"ref_semantics":"direct_or_unclassified"})
+                self.assertIn("of 1 matching observations",html)
+                self.assertIn("200",html)
+                html=w.advanced({**query,"ref_semantics":"vlan_stp_member","ref_q":"99"})
+                self.assertIn("of 1 matching observations",html)
+                with self.assertRaises(ValueError):
+                    w.advanced({**query,"ref_semantics":"invalid"})
