@@ -16,3 +16,31 @@ class EngineeringQualificationTests(unittest.TestCase):
             report["engineering"]["conditional_nac_observations"]="private-marker"
             with self.assertRaises(ValueError):
                 engineering_qualification({})
+
+
+    def test_gap_reasons_reconcile_without_exporting_exact_scope_or_identity(self):
+        from aruba_central.assessment_review import assessment
+        from test_consolidation import fixture
+        from unittest.mock import patch
+        data=fixture()
+        data["library"]["assignments"]["rows"]=[
+            {"profile-type":"layer2-vlan","profile-instance":"30","device-function":"UNOBSERVED_FUNCTION","scope-id":"private-scope"}]
+        engineering={"library_duplicates":[],"port_groups":[],"shadowed":[],"references":[
+            {"status":"conflicting_observation","target":"private-target","source_body_conflict":True,"target_body_conflict":False},
+            {"status":"conflicting_observation","target":"private-target","source_body_conflict":True,"target_body_conflict":True},
+            {"status":"unresolved","target":None},
+            {"status":"not_observed","target":"private-target"},
+            {"status":"conditional_enforcement_candidate","source_evidence":"nac_enforcement","target":"private-target"}]}
+        report=assessment(data,engineering=engineering)
+        with patch("aruba_central.engineering_qualification.refresh_configuration_review",return_value=data),patch("aruba_central.engineering_qualification.assessment",return_value=report):
+            counts=engineering_qualification(data)["counts"]
+        e=counts["engineering"]
+        self.assertEqual(e["source_only"],1)
+        self.assertEqual(e["both_ends"],1)
+        self.assertEqual(e["unknown_identity"],1)
+        self.assertEqual(e["named_target_not_observed"],1)
+        self.assertEqual(e["unresolved_references"],4)
+        self.assertEqual(e["conditional_nac_observations"],1)
+        self.assertEqual(counts["assignments"]["function_not_collected"],1)
+        self.assertEqual(counts["assignments"]["unknown_scopes"],1)
+        self.assertNotIn("private-",json.dumps(counts))
