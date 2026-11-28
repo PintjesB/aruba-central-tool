@@ -46,6 +46,14 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
         measure("review_cache_hit", lambda: workspace.reviewed_snapshot(snapshot))
         overview = measure("dashboard_summary", lambda: workspace.snapshot_overview(snapshot))
         measure("dashboard_cache_hit", lambda: workspace.snapshot_overview(snapshot))
+        # Independent navigation order: opening the dashboard first must
+        # not require a second full parse when entering the workspace.
+        dashboard_workspace = Workspace(directory)
+        dashboard_first = measure("dashboard_cold_summary", lambda: dashboard_workspace.snapshot_overview(snapshot))
+        measure("dashboard_to_review", lambda: dashboard_workspace.reviewed_snapshot(snapshot))
+        if dashboard_first != overview:
+            raise ValueError("Dashboard summary differs by navigation order")
+        del dashboard_workspace, dashboard_first
         findings = measure("consolidation", lambda: profile_recommendations(bundle))
         cached_findings = measure("consolidation_workspace_lookup", lambda: workspace.consolidation_snapshot(bundle))
         if cached_findings != findings:
@@ -82,6 +90,15 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
             grouped = measure("configuration_search_grouped", lambda: grouped_search(bundle, "vlan"))
             trial_counts.update(optimization_worklist_rows=len(worklist), health_rows=len(health),
                                 search_observations=matches["total"], search_groups=grouped["total_groups"])
+            scope = next(((persona, str(s["id"])) for persona, entry in sorted(bundle["results"].items())
+                          for s in entry["scopes"] if s["kind"] == "device"), None)
+            if scope is not None:
+                persona, sid = scope
+                scoped = measure("configuration_search_cold_scope", lambda: workspace.configuration_search_page(
+                    bundle, "vlan", persona=persona, scope=sid))
+                if scoped != search_configuration(bundle, "vlan", persona=persona, scope=sid):
+                    raise ValueError("Scope search differs from streaming search")
+                del scoped
             index = measure("configuration_search_index_build", lambda: workspace.configuration_search_index(bundle))
             trial_counts["search_index_admitted"] = index is not None
             trial_counts["search_index_diagnostics"] = workspace.configuration_search_diagnostics(bundle)
@@ -104,6 +121,7 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
                 trial_counts[label + "_bytes"] = len(html.encode("utf-8"))
             for label, action in (
                 ("render_inventory", lambda: workspace.scopes({"snapshot": snapshot})),
+                ("render_assignments", lambda: workspace.assignments({"snapshot": snapshot})),
                 ("render_advisor", lambda: workspace.advisor({"snapshot": snapshot})),
                 ("render_advisor_repeat", lambda: workspace.advisor({"snapshot": snapshot})),
                 ("render_engineering_ports", lambda: workspace.advanced({"snapshot": snapshot, "workflow": "ports"})),
