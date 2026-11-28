@@ -72,6 +72,12 @@ def remediation_view(workspace, query):
         if result["workflow"] == "library_migration":
             body += '<section><h2>Remaining migration observations</h2>'
             body += '<p>Retained Library body matches prior capture: ' + e(str(result["retained_library_matches"])) + '</p>'
+            from .remediation_presentation import observation_comparison
+            body += '<h3>Old Library definitions</h3>' + table(("Profile", "Cleanup evidence", ""), [
+                tr(e(row["identity"]), badge(pretty(row["status"]), "good" if row["status"] == "observed_library_removal" else "warn"),
+                   inspect(row["identity"], observation_comparison("Library definition", row["before"], row["after"])))
+                for row in result["library_cleanup"]])
+            body += '<p>Assignment capture: ' + e(pretty(result["assignment_capture_status"])) + '</p>'
             body += table(("Evidence", "Observed count", ""), [
                 tr(e(label), str(len(result[key])), inspect(label, raw(result[key]), "Review"))
                 for key, label in (("remaining_references", "Old-name references"), ("remaining_assignments", "Old-name assignments"), ("unresolved_recipients", "Unresolved prior recipients"))])

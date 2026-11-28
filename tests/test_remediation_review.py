@@ -53,7 +53,16 @@ class RemediationTests(unittest.TestCase):
         self.assertEqual(len(report["remaining_references"]), 1)
         self.assertEqual(len(report["remaining_assignments"]), 1)
         self.assertEqual(report["rollback_review"]["prior_library"]["old"]["body"], old)
+        self.assertEqual(report["library_cleanup"][0]["status"], "observed_library_removal")
+        self.assertEqual(report["assignment_capture_status"], "not_collected")
         self.assertFalse(report["complete"])
+        with patch("aruba_central.remediation_review.duplicate_candidates", return_value=[group]), patch("aruba_central.remediation_review.advanced_analysis", return_value={"references": []}):
+            after["library"]["modules"][module]["count_confirmed"] = False
+            self.assertEqual(verify_library_migration(before, after, module, "keep", confirmed=True)["library_cleanup"][0]["status"],
+                             "library_removal_unverified")
+            after["library"]["modules"][module]["profiles"]["old"] = old
+            self.assertEqual(verify_library_migration(before, after, module, "keep", confirmed=True)["library_cleanup"][0]["status"],
+                             "old_definition_still_present")
 
     def test_page_renders_timestamp_guard_and_candidates(self):
         import json

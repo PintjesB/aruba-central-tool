@@ -129,12 +129,22 @@ def verify_library_migration(before, after, module, keep, *, confirmed=False):
                      "before_effective": previous, "after_effective": current})
     after_analysis = advanced_analysis(after)
     remaining_references = [r for r in after_analysis["references"] if r["target_module"] == module and r["target"] in old_names]
-    assignment_view = after.get("library", {}).get("assignments", {})
+    assignment_view = (after.get("library") or {}).get("assignments") or {}
+    cleanup = []
+    for identity in sorted(old_names):
+        prior, current = observation(old_library, identity), observation(new_library, identity)
+        status = ("prior_definition_unverified" if prior["state"] != "present" else
+                  "observed_library_removal" if current["state"] == "absent" else
+                  "old_definition_still_present" if current["state"] == "present" else
+                  "library_removal_unverified")
+        cleanup.append({"identity": identity, "status": status, "before": prior, "after": current})
     remaining_assignments = [a for a in assignment_view.get("rows", []) if a.get("profile-type") == module
                              and str(a.get("profile-instance")) in old_names]
     return {"workflow": "library_migration", "module": module, "retain": keep, "old_names": sorted(old_names),
             "identity_checks": identity_checks, "rows": rows, "retained_library_matches": library_matches,
             "remaining_references": remaining_references, "remaining_assignments": remaining_assignments,
+            "library_cleanup": cleanup,
+            "assignment_capture_status": assignment_view.get("status", "not_collected"),
             "unresolved_recipients": plan["unresolved_recipient_observations"],
             "rollback_review": {"prior_library": {n: observation(old_library, n) for n in sorted(old_names | {keep})},
                                 "current_library": {n: observation(new_library, n) for n in sorted(old_names | {keep})},
