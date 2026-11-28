@@ -8,7 +8,7 @@ from .policy_rule_review import policy_rule_groups
 from .policy_sequence_review import policy_sequence_reviews
 
 
-def assessment(bundle, *, findings=None, engineering=None, assignments=None):
+def assessment(bundle, *, findings=None, engineering=None, assignments=None, collisions=None):
     devices = {(p, s["id"]) for p, e in bundle["results"].items()
                for s in e["scopes"] if s["kind"] == "device"}
     findings = profile_recommendations(bundle) if findings is None else findings
@@ -16,7 +16,7 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None):
     assignments = assignment_review(bundle) if assignments is None else assignments
     variants = policy_variants(bundle)
     from .identity_review import identity_collisions
-    collisions = identity_collisions(bundle)
+    collisions = identity_collisions(bundle) if collisions is None else collisions
     rules = policy_rule_groups(bundle)
     sequences = policy_sequence_reviews(bundle)
     coverage = Counter()
