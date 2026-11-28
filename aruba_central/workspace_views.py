@@ -1477,8 +1477,11 @@ def coverage_view(workspace, query):
         body += '</section>'
     from .library_visibility import visibility_summary
     visibility = visibility_summary(bundle)
+    visibility_batch, visibility_controls = coverage_batch(root, name, query, "visibility", visibility,
+        lambda v: " ".join((v["module"], module_label(v["module"]), str(v["definitions"]),
+                           str(v["observed_assignments"]))), page_size=50)
     body += '<section id="coverage-visibility"><h2>Library definitions and scope visibility</h2><p>Library objects can be assigned or referenced by other profiles. Empty scope responses do not prove they are unused. Review observed assignments and references before any cleanup.</p>'
-    body += table(("Module", "Library profiles", "Profiles with observed assignments", "Observed assignments",
+    body += visibility_controls + table(("Module", "Library profiles", "Profiles with observed assignments", "Observed assignments",
                    "Positive effective views", "Empty-object views", "Assigned identity observed",
                    "Assigned identity absent (count confirmed)", "Assignment visibility unknown", ""), [
         tr(e(module_label(v["module"])), str(v["definitions"]), str(v["definitions_with_observed_assignments"]),
@@ -1487,7 +1490,7 @@ def coverage_view(workspace, query):
            str(v["assignment_visibility"].get("count_confirmed_absence", 0)),
            str(v["assignment_visibility"].get("unverified", 0) + v["assignment_visibility"].get("library_definition_unobserved", 0)),
            f'<a href="{url(root, "assignments", snapshot=name, module=v["module"])}">Review assignments</a> · <a href="{url(root, "library", snapshot=name, module=v["module"])}">Library and references</a>')
-        for v in visibility], search=True) + '</section>'
+        for v in visibility_batch], search=True) + '</section>'
     from .nac_authorization import nac_collection
     nac_rows = []
     for module in ("auth-profiles", "authz-policies", "identity-stores", "static-tag"):
@@ -1578,39 +1581,55 @@ def coverage_view(workspace, query):
         body += '<p>Other or ambiguous GET paths: ' + str(sum(ledger.get("unmatched_get_outcomes", {}).values())) + ' calls. These are not attributed to a documented path.</p></section>'
     else:
         body += '<section id="coverage-operations"><h2>Documented API operation coverage</h2><p class="muted">Not recorded in this snapshot. Collect a fresh audit.</p></section>'
+    structured_records = sorted(records, key=lambda r: ({"unqualified": 0, "partial": 1, "qualified": 2}[r["status"]], r["persona"], r["module"]))
+    structured_batch, structured_controls = coverage_batch(root, name, query, "structured", structured_records,
+        lambda r: " ".join((r["persona"], persona_label(r["persona"]), r["module"], module_label(r["module"]),
+                           r["status"], str(r["qualified"]), str(r["total"]))), page_size=50)
     rows = [tr(e(persona_label(r["persona"])), e(module_label(r["module"])), f'{r["qualified"]}/{r["total"]}', status(r["status"]),
                f'<a href="{url(root, "report", snapshot=name, persona=r["persona"], module=r["module"], view="diagnostics")}">View evidence</a>')
-            for r in sorted(records, key=lambda r: ({"unqualified": 0, "partial": 1, "qualified": 2}[r["status"]], r["persona"], r["module"]))]
-    body += '<section id="coverage-structured"><h2>Scoped configuration</h2>' + table(("Device function", "Module", "Qualified scopes", "Read status", ""), rows, search=True) + '</section>'
+            for r in structured_batch]
+    body += '<section id="coverage-structured"><h2>Scoped configuration</h2>' + structured_controls + table(("Device function", "Module", "Qualified scopes", "Read status", ""), rows, search=True) + '</section>'
+    structured_library = library.get("modules", {})
+    library_records = [(m, "structured", v) for m, v in sorted(structured_library.items())]
+    library_records += [(m, "raw", additional.get(m, {}).get("library", {}))
+                        for m in sorted((unknown | survey | set(additional)) - set(structured_library))]
+    library_batch, library_controls = coverage_batch(root, name, query, "library", library_records,
+        lambda r: " ".join((r[0], module_label(r[0]), "Adapter available" if r[1] == "structured" else "Raw evidence",
+                           "Observed type" if r[0] in unknown else "Documented survey",
+                           pretty(r[2].get("status", "not_collected")),
+                           "Count confirmed" if r[2].get("count_confirmed" if r[1] == "structured" else "collection_count_verified") else "Count unverified",
+                           str(len(r[2].get("profiles", {}))))), page_size=50)
     rows = []
-    for m, v in sorted(library.get("modules", {}).items()):
-        rows.append(tr(e(module_label(m)), badge("Adapter available"), status(v.get("status", "not_collected")),
-                       str(len(v.get("profiles", {}))) if v.get("status") == "list_parsed" else "Unavailable",
-                       e("Count confirmed" if v.get("count_confirmed") else "Count unverified"),
-                       f'<a href="{url(root, "library", snapshot=name, module=m)}">Open collection</a>'))
-    for m in sorted((unknown | survey | set(additional)) - set(library.get("modules", {}))):
-        v = additional.get(m, {})
-        read = v.get("library", {})
-        source = "Observed type" if m in unknown else "Documented survey"
-        rows.append(tr(e(module_label(m)), badge("Raw evidence", "warn") + f'<small>{e(source)}</small>',
-                       status(read.get("status", "not_collected")), "Unavailable",
-                       e("Count confirmed" if read.get("collection_count_verified") else "Count unverified"),
-                       f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Inspect evidence</a>'))
-    body += '<section id="coverage-library"><h2>Distinct Library profile collections</h2><p>Modules with both structured and supplemental reads appear once. Supplemental evidence remains available from the collection or the scoped evidence table.</p>' + table(
+    for m, kind, v in library_batch:
+        if kind == "structured":
+            rows.append(tr(e(module_label(m)), badge("Adapter available"), status(v.get("status", "not_collected")),
+                           str(len(v.get("profiles", {}))) if v.get("status") == "list_parsed" else "Unavailable",
+                           e("Count confirmed" if v.get("count_confirmed") else "Count unverified"),
+                           f'<a href="{url(root, "library", snapshot=name, module=m)}">Open collection</a>'))
+        else:
+            source = "Observed type" if m in unknown else "Documented survey"
+            rows.append(tr(e(module_label(m)), badge("Raw evidence", "warn") + f'<small>{e(source)}</small>',
+                           status(v.get("status", "not_collected")), "Unavailable",
+                           e("Count confirmed" if v.get("collection_count_verified") else "Count unverified"),
+                           f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Inspect evidence</a>'))
+    body += '<section id="coverage-library"><h2>Distinct Library profile collections</h2><p>Modules with both structured and supplemental reads appear once. Supplemental evidence remains available from the collection or the scoped evidence table.</p>' + library_controls + table(
         ("Profile type", "Interpretation", "Library read", "Parsed profiles", "Collection count", ""), rows, search=True) + '</section>'
     if additional:
-        scoped = []
+        supplemental_records = []
         for m, v in sorted(additional.items()):
             reads = [s[k] for s in v.get("source_views", []) for k in ("committed", "effective")]
             captured = sum(r.get("status") == "response_received" for r in reads)
             counted = sum(r.get("collection_count_verified") is True for r in reads)
             catalog_scope = v.get("catalog_scope_coverage", {})
             gap = catalog_scope.get("unfiltered_scopes_not_surveyed", catalog_scope.get("all_function_scopes_not_surveyed"))
-            scoped.append(tr(e(module_label(m)), str(len(v.get("source_views", []))),
-                             f"{captured}/{len(reads)}", str(counted),
-                             str(gap) if gap is not None else "Unavailable",
-                             f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Inspect settings</a>'))
-        body += '<section id="coverage-supplemental"><h2>Additional scoped configuration</h2><p class="filter-hint">These reads preserve returned data without assuming profile identity or scope applicability. Scopes not surveyed are not verified empty. Fast catalog may miss previously unobserved local-only configuration; use Deep catalog for all supplemental scope surveys. Rejected or incomplete reads remain visible.</p>' + table(
+            supplemental_records.append((m, len(v.get("source_views", [])), captured, len(reads), counted, gap))
+        supplemental_batch, supplemental_controls = coverage_batch(root, name, query, "supplemental", supplemental_records,
+            lambda r: " ".join((r[0], module_label(r[0]), *(str(x) for x in r[1:]))), page_size=50)
+        scoped = [tr(e(module_label(m)), str(attempted), f"{captured}/{total}", str(counted),
+                     str(gap) if gap is not None else "Unavailable",
+                     f'<a href="{url(root, "unadapted", snapshot=name, module=m)}">Inspect settings</a>')
+                  for m, attempted, captured, total, counted, gap in supplemental_batch]
+        body += '<section id="coverage-supplemental"><h2>Additional scoped configuration</h2><p class="filter-hint">These reads preserve returned data without assuming profile identity or scope applicability. Scopes not surveyed are not verified empty. Fast catalog may miss previously unobserved local-only configuration; use Deep catalog for all supplemental scope surveys. Rejected or incomplete reads remain visible.</p>' + supplemental_controls + table(
             ("Profile type", "Scope views attempted", "Responses captured", "Count-confirmed reads", "Unfiltered scopes not surveyed", ""), scoped, search=True) + '</section>'
 
     return page("Module coverage", body, workspace.nav(name), extra_css=COVERAGE_CSS)

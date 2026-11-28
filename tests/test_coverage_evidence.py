@@ -62,3 +62,26 @@ class CoverageEvidenceTests(unittest.TestCase):
         self.assertEqual(coverage_batch(*args, query, "operations", records, lambda row: row[1])[0], records[:100])
         with self.assertRaises(ValueError):
             coverage_batch(*args, {**query, "coverage_offset": "-1"}, "hierarchy", records, lambda row: row[1])
+
+
+    def test_library_and_supplemental_batches_keep_full_search_and_exact_links(self):
+        bundle = fixture()
+        bundle["unadapted_profiles"] = {
+            f"example-module-{i:03}": {"source_views": [], "library": {"status": "response_received"}}
+            for i in range(125)}
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(bundle))
+            workspace = Workspace(directory)
+            def section(html, key):
+                return html.split('id="coverage-' + key + '"', 1)[1].split("</section>", 1)[0]
+            initial = workspace.coverage({"snapshot": name})
+            for key in ("library", "supplemental"):
+                overview = section(initial, key)
+                self.assertIn("Next batch", overview)
+                self.assertNotIn("module=example-module-124", overview)
+                result = section(workspace.coverage({"snapshot": name, "coverage_table": key,
+                    "coverage_q": "example-module-124"}), key)
+                self.assertIn("module=example-module-124", result)
+                self.assertIn("1 matching rows", result)
+                self.assertNotIn("module=example-module-000", result)
