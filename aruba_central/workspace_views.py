@@ -895,7 +895,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
         # Collapse only numeric list positions; preserve exact string keys.
         from .central_tool import canonical
         path = r.get("path", [])
-        return canonical(["[]" if type(p) is int else p for p in path]) if isinstance(path, list) else "[]"
+        return canonical([{"index":"*"} if type(p) is int else p for p in path]) if isinstance(path, list) else "[]"
     source, field_filter = query.get("ref_source", ""), query.get("ref_field", "")
     evidence_reasons = ("identity_unqualified", "target_view_unqualified", "identity_observed", "count_confirmed_absence", "target_collection_incomplete")
     reason = query.get("ref_evidence", "")
