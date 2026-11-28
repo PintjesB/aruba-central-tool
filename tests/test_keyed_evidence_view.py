@@ -27,7 +27,20 @@ class KeyedEvidenceViewTests(unittest.TestCase):
             self.assertIn("example-role", html)
             self.assertIn("List order differs", html)
             self.assertNotIn("sampled-role", html)
-            self.assertIn("No qualified exact comparison available", html)
+            self.assertNotIn("No qualified exact comparison available", html)
+            from aruba_central.review_dispositions import snapshot_binding
+            binding = snapshot_binding(workspace, name, workspace.reviewed_snapshot(name))
+            q = {"snapshot": name, "mode": "keyed", "persona": "Library", "scope": "",
+                 "module": "roles", "identity": "example-role", "view": "library",
+                 "detail": "1", "binding": binding}
+            detail = workspace.assessment(q)
+            self.assertIn("No qualified exact comparison available", detail)
+            self.assertIn("unexpected", detail)
+            self.assertNotIn("unexpected", html)
+            with self.assertRaises(ValueError):
+                workspace.assessment({**q, "identity": "unknown"})
+            with self.assertRaises(ValueError):
+                workspace.assessment({**q, "binding": "stale"})
             html = workspace.assessment({"snapshot": name, "mode": "keyed", "category": "sampled"})
             self.assertIn("sampled-role", html)
             self.assertNotIn("example-group", html)
