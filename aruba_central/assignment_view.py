@@ -73,6 +73,7 @@ def assignments_view(workspace, query):
         counts = Counter(d["status"] for d in row["recipients"])
         profile = e(row["identity"]) + '<small>' + badge("Library observed" if row["library_present"] else "Library unverified",
                     "neutral" if row["library_present"] else "warn") + '</small>'
+        profile += '<small>Individual assignment: '+e(pretty(row.get("assignment_evidence_state", "not_collected")))+'</small>'
         if row.get("library_individual_conflict") or any(d.get("individual_conflict") for d in row["recipients"]):
             profile += '<small>' + badge("Individual evidence conflict", "warn") + '</small>'
         scope_label = e(row["scope_name"]) + '<small>' + badge("Scope resolved" if row["scope_resolved"] else "Scope unresolved",
@@ -97,7 +98,9 @@ def assignments_view(workspace, query):
 
 
 def assignment_detail(row):
-    detail = ""
+    detail = '<h3>Individual assignment evidence</h3><p>'+e(pretty(row.get("assignment_evidence_state", "not_collected")))+'</p><p>Exact assignment identity does not establish device membership. A body difference is a recorded discrepancy, not proof of changed deployment.</p>'
+    if row.get("individual_assignment_observations"):
+        detail += raw(row["individual_assignment_observations"])
     if not row["scope_resolved"]:
         detail += '<p>Scope resolution: '+e(pretty(row["scope_resolution"]))+'</p>'
         if row["other_scope_contexts"]:
