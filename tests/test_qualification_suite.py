@@ -40,3 +40,25 @@ class QualificationSuiteTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     qualification_suite(directory)
                 browser.assert_not_called()
+
+
+    def test_optional_history_uses_exact_pair_and_exports_only_aggregate_evidence(self):
+        from test_configuration_history import snapshot
+        with tempfile.TemporaryDirectory() as directory:
+            before,after="config-audit-private-before.json","config-audit-private-after.json"
+            (Path(directory)/before).write_text(json.dumps(snapshot()))
+            (Path(directory)/after).write_text(json.dumps(snapshot("Changed")))
+            with patch("aruba_central.qualification_suite.benchmark",return_value={}), \
+                 patch("aruba_central.qualification_suite.browser_benchmark",return_value={}) as browser:
+                with self.assertRaises(ValueError):
+                    qualification_suite(directory,after,previous=before)
+                result=qualification_suite(directory,after,previous=before,confirm_history_same_tenant=True,repeat=1)
+                browser.assert_called_once_with(directory,after,repeat=1,executable=None,previous=before)
+            self.assertTrue(result["same_capture_pair_verified"])
+            self.assertEqual(result["history"]["counts"]["structured_records"],3)
+            self.assertIn("warm_comparison",result["history"]["stages"])
+            payload=json.dumps(result)
+            self.assertNotIn("private-before",payload)
+            self.assertNotIn("private-after",payload)
+            self.assertNotIn("Changed",payload)
+            self.assertNotIn("Office",payload)
