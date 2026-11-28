@@ -40,3 +40,11 @@ class ServiceReviewTests(unittest.TestCase):
         self.assertNotIn("literal_service",evidence["2"][0])
         self.assertEqual(evidence["1"][1]["status"],"service_reference_shape_unqualified")
         self.assertFalse(evidence["1"][0]["safe_to_apply"])
+
+    def test_documented_eq_ignores_unused_max_but_retains_schema_boundaries(self):
+        self.assertEqual(literal_service({"protocol":6,"port-range":{"operator":"COMPARISON_EQ","min":443,"max":0}}),
+                         {"protocol":"tcp","port_ranges":[[443,443]]})
+        self.assertIsNone(literal_service({"protocol":6,"port-range":{"operator":"COMPARISON_EQ","min":443,"max":"private"}}))
+        from aruba_central.policy_service_review import service_shape
+        self.assertEqual(service_shape({"protocol":6,"alg-service":"private"}),"alg_configuration")
+        self.assertEqual(service_shape({"protocol":6,"private-field":True}),"additional_fields")
