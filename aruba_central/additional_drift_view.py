@@ -3,8 +3,8 @@ from .workspace_ui import e, metrics, table, tr, badge, pretty, inspect, module_
 from .workspace_views import url, select
 
 
-def additional_drift_panel(report, root, name, previous, query):
-    from .history_view import change_detail
+def additional_drift_panel(report, root, name, previous, query, *, binding):
+    from .history_view import drift_control
     families = {"": "All evidence", "supplemental": "Supplemental responses",
                 "individual": "Individual profile reads", "nac_configuration": "NAC configuration"}
     family = query.get("additional_family","")
@@ -14,7 +14,8 @@ def additional_drift_panel(report, root, name, previous, query):
         offset = int(query.get("additional_offset","0"))
     except (TypeError,ValueError):
         raise ValueError("Invalid additional evidence page") from None
-    records = [r for r in report["records"] if not family or r["family"] == family]
+    records = [(i,r) for i,r in enumerate(report["records"]) if not family or r["family"] == family]
+    common = {"snapshot":name,"previous":previous,"confirmed":"yes","binding":binding}
     if offset < 0 or offset % 50 or (offset and offset >= len(records)):
         raise ValueError("Invalid additional evidence page")
     body = '<section id="additional-drift"><h2>Additional configuration evidence</h2>'
@@ -28,7 +29,7 @@ def additional_drift_panel(report, root, name, previous, query):
              +select("additional_family",list(families.items()),family,"Evidence source")+'<button type="submit">Filter observations</button></form>')
     listing = [tr(e(families[r["family"]]),e(persona_label(r["persona"])),e(r["scope_name"]),e(module_label(r["module"])),
                   e(pretty(r["view"])),e(r["identity"] or "Response"),badge(pretty(r["status"])),
-                  inspect(r["identity"] or r["module"],change_detail(r),"Compare")) for r in records[offset:offset+50]]
+                  drift_control(root,common,"additional",i,"Compare")) for i,r in records[offset:offset+50]]
     body += table(("Evidence","Function","Scope","Module","View","Profile","Observation",""),listing)
     if records:
         body += '<p>Showing '+str(offset+1)+'–'+str(min(offset+50,len(records)))+' of '+str(len(records))+' observations. Complete evidence is in the private drift export.</p>'
