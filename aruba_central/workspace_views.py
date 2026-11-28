@@ -964,7 +964,7 @@ def engineering_view(workspace, query):
         grouped.setdefault(key, []).append(rec)
     variants = workspace.policy_snapshot(bundle, 'variants')
     rules = workspace.policy_snapshot(bundle, 'rules')
-    counts = {"ports": len(data["port_groups"]), "shadow": len(grouped), "variants": len(variants),
+    counts = {"ports": len(data["port_groups"]), "shadow": len(grouped) + len(data.get("precedence_conflicts", [])), "variants": len(variants),
               "rules": len(rules), "duplicates": len(data["library_duplicates"]),
               **{key: len(rows) for key, rows in reference_rows.items()}}
     selected = query.get("workflow", "")
@@ -1001,10 +1001,14 @@ def engineering_view(workspace, query):
             dependencies = port_dependency_rows(record)
             unresolved = sum(r["status"] != "observed" for r in dependencies)
             match_usage = library_usage(bundle, "sw-port-profiles", [m["identity"] for m in matches], data["references"])
-            preferred = preferred_duplicate(match_usage) if len(match_usage) > 1 else next(iter(match_usage), None)
+            contradicted = record.get("conflicting_library_matches", [])
+            evidence_conflict = bool(contradicted or any(v["status"] == "individual_evidence_conflict" for v in record["conversion_review"])
+                                     or any(v["status"] == "individual_evidence_conflict" for m in matches for v in m["visibility"]))
+            preferred = None if evidence_conflict else (preferred_duplicate(match_usage) if len(match_usage) > 1 else next(iter(match_usage), None))
             library_available = record["library_status"] == "list_parsed"
-            target = preferred or ("Choose matching profile" if matches else "New profile candidate" if library_available else "Library unavailable")
-            action = ("Review unsupported settings first" if record["unsupported_fields"] else
+            target = preferred or ("Resolve contradictory evidence" if evidence_conflict else "Choose matching profile" if matches else "New profile candidate" if library_available else "Library unavailable")
+            action = ("Resolve contradictory port or Library evidence" if evidence_conflict else
+                      "Review unsupported settings first" if record["unsupported_fields"] else
                       "Verify saved port configuration" if any(v["status"] != "exact_saved_effective_match" for v in record["conversion_review"]) else
                       "Resolve dependency evidence" if unresolved else
                       "Review existing profile assignment" if matches else
@@ -1015,7 +1019,7 @@ def engineering_view(workspace, query):
                 for match in matches:
                     visibility_counts = Counter(v["status"] for v in match["visibility"])
                     visibility.append(tr(e(match["identity"]), *usage_cells(match_usage[match["identity"]]),
-                                         e(f'{visibility_counts["matching"]}/{len(devices)} matching; {visibility_counts["unknown"]} unknown')))
+                                         e(f'{visibility_counts["matching"]}/{len(devices)} matching; {visibility_counts["unknown"]} unknown; {visibility_counts["individual_evidence_conflict"]} conflicting')))
                 mapping = table(("Device", "Port", "Description", "Proposed profile"), [
                     tr(e(p["device"]), e(p["port"]), e(p.get("description") or "—"),
                        '<span data-port-target>' + e(preferred or "Not selected") + '</span>') for p in ports], search=len(ports) > 30)
@@ -1027,13 +1031,15 @@ def engineering_view(workspace, query):
                               + '<h3>Shared fields to review</h3>' + list_items(item["proposed_shared_fields"])
                               + '<h3>Saved fields to retain locally</h3>' + property_table(item["retained_local_fields"])
                               + '<h3>Saved shared settings versus candidate</h3>' + diff_table(item["saved_vs_shared"], "Saved", "Candidate"))
+                    if item.get("individual_conflicts"):
+                        detail += "<h3>Contradictory individual port evidence</h3>" + raw(item["individual_conflicts"])
                     conversion_rows.append(tr(e(item["device"]), e(item["port"]), badge(pretty(item["status"])),
                                               e(", ".join(item["proposed_shared_fields"]) or "None observed"),
                                               e(", ".join(item["retained_local_fields"]) or "None observed"),
                                               inspect(item["port"], detail, "Compare")))
                 conversion_table = table(("Device", "Port", "Saved evidence", "Shared field candidates", "Retain locally", ""), conversion_rows, search=True)
                 chooser = ""
-                if matches:
+                if matches and not evidence_conflict:
                     chooser = ('<label>Profile to review<select data-port-profile aria-label="Profile to review">'
                                + '<option value="">Choose matching profile</option>' + "".join(
                                    f'<option value="{e(m["identity"])}"{" selected" if m["identity"] == preferred else ""}>{e(m["identity"])}</option>'
@@ -1044,6 +1050,8 @@ def engineering_view(workspace, query):
                            + '<h3>Shared configuration</h3>' + property_table(settings)
                            + ('<h3>Matching Library profiles</h3>' + table(("Profile", "Assignments", "Shared devices", "References", "Unknown reads", "Visibility on affected devices"), visibility) if matches else
                               '<p class="note">' + e("No exact Library match in captured profiles." if library_available else "Library coverage unavailable; an existing profile may be present.") + '</p>')
+                           + ('<h3>Contradictory matching Library definitions</h3>' + raw(contradicted) if contradicted else "")
+                           + ('<p class="note">Resolve contradictory evidence before selecting a target. No profile is selected.</p>' if evidence_conflict else "")
                            + '<div data-port-review><h3>Proposed port mapping</h3>' + chooser + mapping
                            + '<h3>Per-port conversion evidence</h3><p>These fields are candidates for review, not instructions to delete them. Saved/effective differences or unsupported settings require separate validation.</p>'
                            + conversion_table + '</div>'
@@ -1064,7 +1072,7 @@ def engineering_view(workspace, query):
             rows.append(tr(f'<strong>{e(label)}</strong><small>{e(persona_label(record["persona"]))}</small>',
                            f'<strong>{len(ports)} ports</strong><small>{e(device_names)}</small>',
                            f'<strong>{e(target)}</strong>' + (f'<small>{len(matches)} matching Library profiles</small>' if matches else ""),
-                           badge(action, "warn" if record["unsupported_fields"] or unresolved or not library_available else "info"),
+                           badge(action, "warn" if evidence_conflict or record["unsupported_fields"] or unresolved or not library_available else "info"),
                            control))
     panel("ports", "Port consolidation", "Review shared settings, choose a reusable profile and verify port mappings and dependencies.",
           ("Shared configuration", "Affected ports", "Proposed target", "Next step", ""), rows, counts["ports"])
@@ -1084,6 +1092,13 @@ def engineering_view(workspace, query):
                            e("Review lower-scope redundancy" if same else "Retain if intentional"), inspect(r["identity"], details)))
     panel("shadow", "Scope precedence", "Shows which configuration takes precedence over a higher-scope definition. This is normal inheritance, not necessarily a problem. Identical definitions may warrant reviewing the lower-scope copy; do not delete the higher-scope profile.",
           ("Profile", "Applied from", "Higher-scope definition", "Devices", "Settings compared", "Suggested next step", ""), rows, counts["shadow"])
+    if selected == "shadow" and data.get("precedence_conflicts"):
+        conflicts = data["precedence_conflicts"]
+        section = '<section><h2>Contradictory scope evidence</h2><p>' + str(len(conflicts)) + ' observations excluded from qualified precedence comparisons. Review the exact source chain before choosing a remediation.</p>' + table(("Device", "Profile", "Conflicting scope", "Evidence"), [
+            tr(e(r["device"]), e(module_label(r["module"])+" / "+r["identity"]), e(r["conflicting_scope_name"]),
+               f'<a href="{url(root,"sources",snapshot=name,persona=r["persona"],device=r["scope"],module=r["module"],identity=r["identity"])}">Trace source</a>') for r in conflicts], search=True) + "</section>"
+        key, label, count, content = panels[-1]
+        panels[-1] = (key, label, count, content + section)
     rows = []
     if selected == "variants":
         for finding in variants:
