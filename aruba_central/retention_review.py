@@ -21,6 +21,9 @@ def retention_comparison(usage, suggested):
     elif any(u["assignment_status"] != "response_received" for u in usage.values()):
         short = "Assignment evidence unavailable"
         explanation = "No automatic suggestion because assignment evidence is unavailable."
+    elif any(u.get("library_individual_conflict") or u.get("individual_conflict_devices") for u in usage.values()):
+        short = "Conflicting profile evidence"
+        explanation = "No automatic suggestion because individual profile evidence contradicts a Library or effective collection."
     elif any(u.get("conflicting_reference_count", 0) for u in usage.values()):
         short = "Conflicting reference evidence"
         explanation = "No automatic suggestion because individual and collection reference evidence conflicts."
