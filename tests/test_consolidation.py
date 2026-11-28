@@ -393,9 +393,13 @@ class ConsolidationTests(unittest.TestCase):
             html = w.overrides({"snapshot": name, "device": "3", "module": "layer2-vlan", "result": "identical"})
             self.assertIn("Compare with Global", html)
             self.assertIn("Matches Global", html)
-            self.assertIn("Expected fallback after removing device-local copy", html)
+            from aruba_central.review_dispositions import snapshot_binding
+            binding = snapshot_binding(w, name, w.reviewed_snapshot(name))
+            detail = w.overrides({"snapshot": name, "persona": "ACCESS_SWITCH", "device": "3",
+                                  "module": "layer2-vlan", "identity": "10", "detail": "1", "binding": binding})
+            self.assertIn("Expected fallback after removing device-local copy", detail)
             self.assertIn("Verify before removal", html)
-            self.assertIn("Open matching consolidation preview", html)
+            self.assertIn("Open matching consolidation preview", detail)
             self.assertIn("identity=10", html)
             self.assertNotIn("VLAN 40", html)
             html = w.advisor({"snapshot": name, "persona": "ACCESS_SWITCH", "module": "layer2-vlan", "scope": "3", "identity": "10"})
