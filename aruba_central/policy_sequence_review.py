@@ -96,11 +96,27 @@ def policy_sequence_reviews(bundle):
     evidence = bundle.get("unadapted_profiles", {}).get("policy-groups", {})
     output = []
     scopes, views = {}, {}
+    from collections import defaultdict
+    from .central_tool import module_view
+    views_by_scope = defaultdict(dict)
+    unfiltered_reads = defaultdict(list)
+    for capture in (bundle.get("unadapted_profiles") or {}).get("policies", {}).get("source_views", []):
+        if capture.get("persona") in ("ALL_DEVICE_FUNCTIONS", "UNFILTERED_SCOPE"):
+            read = capture.get("effective", {})
+            if read.get("status") == "response_received":
+                raw = read.get("raw")
+                # The policies collection has a documented named identity.
+                # Do not use mixed responses for typed traversal or absence.
+                if isinstance(raw, dict) and isinstance(raw.get("policy"), list):
+                    unfiltered_reads[str(capture["scope"])].append(module_view(raw, "name"))
+    library_view = (bundle.get("library") or {}).get("modules", {}).get("policies", {})
     for persona, entry in bundle["results"].items():
         for source in entry.get("scopes", []):
             scopes.setdefault((persona, str(source["id"])), source)
         for row in entry.get("modules", {}).get("policies", {}).get("scope_results", []):
-            views.setdefault((persona, str(row["scope"])), row.get("effective_view", {}))
+            key = (persona, str(row["scope"]))
+            views.setdefault(key, row.get("effective_view", {}))
+            views_by_scope[key[1]].setdefault(persona, views[key])
     for capture in evidence.get("source_views", []):
         persona, scope = capture["persona"], str(capture["scope"])
         key = (persona, scope)
@@ -116,6 +132,25 @@ def policy_sequence_reviews(bundle):
         # target policy visibility for a specific function.
         report = compare_sequence(sequence_entries(capture.get("effective", {})), view,
                                   conflicts=conflicting_profiles(bundle,persona,"policies",scope,view))
+        for ref in report["references"]:
+            if ref["status"] == "rules_observed":
+                continue
+            name = ref["name"]
+            observations = []
+            for other, other_view in sorted(views_by_scope[scope].items()):
+                if other == persona or other_view.get("status") != "list_parsed" or name not in other_view.get("profiles", {}):
+                    continue
+                conflicts = conflicting_profiles(bundle,other,"policies",scope,other_view,{name})
+                observations.append({"context":"other_function_same_scope","persona":other,
+                    "status":"individual_evidence_conflict" if name in conflicts else "identity_observed"})
+            for mixed in unfiltered_reads[scope]:
+                if mixed.get("status") == "list_parsed" and name in mixed.get("profiles", {}):
+                    observations.append({"context":"unfiltered_same_scope","status":"identity_observed"})
+            if library_view.get("status") == "list_parsed" and name in library_view.get("profiles", {}):
+                conflicts = conflicting_profiles(bundle,"Library","policies","",library_view,{name},side="library")
+                observations.append({"context":"library_definition","status":"individual_evidence_conflict" if name in conflicts else "identity_observed"})
+            if observations:
+                ref["alternative_observations"] = observations
         output.append({"persona": persona, "scope": scope, "name": source.get("name") or scope,
                        "target_context": context, **report})
     if "library" in evidence:
