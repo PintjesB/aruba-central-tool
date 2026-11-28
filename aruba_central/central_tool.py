@@ -129,6 +129,7 @@ class Central:
         self._retry_at = 0.0
         self._next_request_at = 0.0
         self._recent_admissions = deque(maxlen=9)
+        self._pacing_compensation_enabled = True
         self._request_interval = 1 / 9
         self._rate_recover_at = 0.0
         self._custom_api_terminal_500s = 0
@@ -210,7 +211,8 @@ class Central:
                         # Correct only small scheduling overshoot after an
                         # actual wait, never an idle gap or a cooldown. Limit
                         # the correction to 20 ms and enforce the rolling cap.
-                        correction = (min(lateness, .020) if slept and self._request_interval == 1 / 9
+                        correction = (min(lateness, .020) if self._pacing_compensation_enabled
+                                      and slept and self._request_interval == 1 / 9
                                       and deadline == self._next_request_at and deadline > self._retry_at
                                       else 0.0)
                         if self._recent_admissions:
