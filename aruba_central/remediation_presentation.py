@@ -15,7 +15,8 @@ OUTCOMES = {
     "old_identity_still_visible": "Old profile still visible",
 }
 STATES = {"present": "Present", "absent": "Absent (count confirmed)",
-          "absence_unverified": "Absence not verified", "unavailable": "Read unavailable"}
+          "absence_unverified": "Absence not verified", "unavailable": "Read unavailable",
+          "individual_evidence_conflict": "Individual read contradicts collection"}
 
 
 def observation_comparison(label, before, after):
@@ -29,6 +30,14 @@ def observation_comparison(label, before, after):
         for title, obs in (("Before", before), ("After", after)):
             if obs.get("state") == "present":
                 html += '<h4>' + title + ' settings</h4>' + property_table(obs["body"])
+    for title, obs in (("Before", before), ("After", after)):
+        if obs.get("state") == "individual_evidence_conflict":
+            html += '<h4>' + title + ' conflicting individual evidence</h4>'
+            html += '<p>Collection state: ' + e(STATES.get(obs["collection_state"], "Unknown")) + '</p>'
+            if obs["collection_state"] == "present":
+                html += diff_table(field_differences(obs["body"], obs["individual_body"]), "Collection", "Individual")
+            else:
+                html += property_table(obs["individual_body"])
     return html
 
 
