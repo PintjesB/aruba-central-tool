@@ -13,6 +13,7 @@ def plan_form(workspace, root, snapshot):
             f'<input type="hidden" name="snapshot" value="{e(snapshot)}"><input type="hidden" name="csrf" value="{e(workspace.csrf)}">'
             '<input type="hidden" name="manifest"><div class="filter-bar">'
             '<label>Original private plan JSON<input id="verification-file" type="file" accept=".json,application/json" required></label>'
+            '<label>Review purpose<select name="operation"><option value="verify">Verify observed outcome after manual changes</option><option value="revalidate">Revalidate captured plan before manual changes</option></select></label>'
             '<label><span><input type="checkbox" name="confirmed" value="yes" required> Both captures belong to the same tenant</span></label>'
             '<button type="submit">Verify entire plan</button></div><p id="verification-error" role="alert" hidden></p></form>'
             '<noscript><p>Use the offline plan_verification CLI if JavaScript is disabled.</p></noscript>'
@@ -77,5 +78,24 @@ def plan_result(workspace, report):
     body += '<p>Full combined collateral observations are in the private export.</p>'
     body += '<p class="note">Original and newer captures were bound during verification. Reopening a proposal recalculates evidence from the currently saved snapshots.</p>'
     body += private_export("private_plan_verification", report) + '</section>'
+    body += f'<p><a href="{url(root,"remediation",snapshot=name)}">Return to remediation verification</a></p>'
+    return page("Remediation verification",body,workspace.nav(name))
+
+
+def preflight_result(workspace, report):
+    root = "/" + workspace.token + "/"
+    name = report["current_snapshot"]
+    body = intro("Remediation verification", "Captured-plan revalidation before manual changes.", "")
+    body += metrics([("Selected proposals", len(report["rows"]), "Original review manifest"),
+                     ("Exact observed evidence retained", sum(r["status"] == "observed_evidence_unchanged" for r in report["rows"]), "Not deployment qualification"),
+                     ("Combined review evidence", "Unchanged" if report["observed_review_matches"] else "Review required", "No authorization to apply")])
+    body += '<section><h2>Captured plan revalidation results</h2><p>Any changed, missing or contradictory captured evidence requires a new review. Matching evidence does not establish freshness at the live API, complete dependencies, permissions, rollback, or actual deployment behavior.</p>'
+    body += table(("Action","Module","Profile","Function","Outcome","Reasons"),[
+        tr(e(pretty(r["action"])),e(r["module"]),e(r["identity"]),e(r["persona"]),badge(pretty(r["status"])),
+           "<br>".join(e(pretty(reason)) for reason in r["reasons"]) or "No observed differences")
+        for r in report["rows"]],search=True)
+    if report["combined_reasons"]:
+        body += '<h3>Combined review blockers</h3><p>' + e(", ".join(pretty(r) for r in report["combined_reasons"])) + '</p>'
+    body += private_export("private_plan_preflight",report) + '</section>'
     body += f'<p><a href="{url(root,"remediation",snapshot=name)}">Return to remediation verification</a></p>'
     return page("Remediation verification",body,workspace.nav(name))
