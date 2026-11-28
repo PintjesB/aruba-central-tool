@@ -142,8 +142,11 @@ def configuration_drift(before, after, *, confirmed=False):
                         "status": "assignment_observation_changed",
                         "before": (sid, persona, module, profile) in aa,
                         "after": (sid, persona, module, profile) in bb})
+    from .additional_drift import additional_evidence_drift
     return {"identity_checks": identity_checks, "records": records,
-            "counts": dict(Counter(r["status"] for r in records)), "complete": False, "safe_to_apply": False}
+            "counts": dict(Counter(r["status"] for r in records)),
+            "additional_evidence": additional_evidence_drift(before, after),
+            "complete": False, "safe_to_apply": False}
 
 
 def reference_compliance(bundle, persona, module, reference, target_scope, *, baseline=None, confirmed=False, selected_modules=None, include_reference=False, field_rules=None):

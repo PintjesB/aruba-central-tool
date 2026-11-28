@@ -91,6 +91,8 @@ def drift_view(workspace, query):
         body += '<section><div class="section-head"><h2>Change worklist</h2>' + private_export(
             "configuration-drift", {"previous_snapshot": previous, "current_snapshot": name, "report": result}) + '</div>' + (table(("Function", "Scope", "Module", "View", "Profile", "Change", ""), rows, search=True) if rows else "<p>No differences in the compared views.</p>")
         body += '<p class="note">Missing fields are not explicit defaults. A changed observation is not proof of who changed it or that the configuration was deployed. Captures are not atomic; coverage remains incomplete.</p></section>'
+        from .additional_drift_view import additional_drift_panel
+        body += additional_drift_panel(result["additional_evidence"], root, name, previous, query)
     return page("Configuration drift", body, workspace.nav(name))
 
 
