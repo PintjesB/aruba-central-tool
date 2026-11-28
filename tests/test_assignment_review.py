@@ -84,3 +84,28 @@ class AssignmentReviewTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     workspace.assignments(query)
                 self.assertEqual(analyze.call_count, 2)
+
+
+    def test_filters_retain_complete_atomic_overlap_and_do_not_mutate_report(self):
+        from aruba_central.assignment_review import filter_assignment_review
+        from copy import deepcopy
+        def row(identity, scope, **kw):
+            return {"persona": "ACCESS_SWITCH", "module": "dns", "identity": identity, "scope": scope,
+                    "scope_resolved": True, "library_present": True,
+                    "recipients": [{"status": "matching_shared"}], **kw}
+        first, second = row("first", "1"), row("second", "2")
+        missing = {**row("missing", "999"), "scope_resolved": False, "recipients": []}
+        collision = {"persona": "ACCESS_SWITCH", "module": "dns", "device": "3", "identity": "*",
+                     "assignments": [{"identity": "first", "scope": "1"}, {"identity": "second", "scope": "2"}]}
+        report = {"rows": [first, second, missing], "overlaps": [collision], "invalid_rows": [{}]}
+        original = deepcopy(report)
+        filtered = filter_assignment_review(report, identity="first")
+        self.assertEqual(filtered["rows"], [first])
+        self.assertEqual(filtered["overlaps"], [collision])
+        self.assertEqual(filter_assignment_review(report, state="overlap")["rows"], [first, second])
+        self.assertEqual(filter_assignment_review(report, state="scope_unresolved")["rows"], [missing])
+        self.assertEqual(filter_assignment_review(report, state="attention")["rows"], [first, second, missing])
+        self.assertEqual(filter_assignment_review(report, state="no_recipients")["rows"], [missing])
+        self.assertEqual(report, original)
+        with self.assertRaises(ValueError):
+            filter_assignment_review(report, state="unknown")
