@@ -938,6 +938,108 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     return controls + table(("Source scope", "Function", "Source", "Target", "State", "Suggested next step", ""), rows)
 
 
+
+
+def policy_variant_detail(finding, root, name):
+    variants = finding["variants"]
+    detail = '<p>The largest observed variant is a comparison reference only; it is not automatically an approved standard.</p>'
+    for i, variant in enumerate(variants, 1):
+        detail += '<h3>Variant ' + str(i) + ' · ' + str(len(variant["devices"])) + ' devices</h3>' + property_table(variant["body"])
+        if variant["differences"]:
+            detail += diff_table(variant["differences"], "Largest variant", "This variant")
+        detail += table(("Device", "Source evidence"), [tr(e(d["name"]), f'<a href="{url(root, "sources", snapshot=name, persona=finding["persona"], device=d["scope"], module=finding["module"], identity=finding["identity"])}">Trace source</a>') for d in variant["devices"]])
+    distributions = finding.get("membership_distribution",{})
+    detail += '<h3>Observed membership distribution</h3><p>Multiple variant numbers in one scope indicate mixed settings within that observed membership; a single variant does not establish approved policy or intentional exceptions.</p>'
+    detail += table(("Membership type","Scope","Observed variants"),[
+        tr(e(pretty(kind)),e(r["name"]),e(", ".join(map(str,r["variant_numbers"]))))
+        for kind,records in distributions.items() for r in records])
+    if finding.get("individual_conflicts"):
+        detail += '<h3>Contradictory individual profile evidence</h3><p>These devices are excluded from qualified variant and absence counts.</p>'
+        detail += table(("Device","Evidence"),[
+            tr(e(r["name"]),raw(r)) for r in finding["individual_conflicts"]],search=True)
+    detail += '<h3>Confirmed absent</h3>' + list_items([d["name"] for d in finding["absent"]])
+    detail += '<h3>Unavailable or unqualified presence</h3>' + list_items([d["name"] for d in finding["unknown"]])
+    return detail
+
+
+def policy_rule_detail(finding):
+    observations = finding["findings"]
+    detail = '<p>Captured rule comparisons only. Actual resultant policy order, service and address expansion, device applicability and traffic behavior remain unverified.</p>'
+    detail += '<h3>Captured locations</h3>' + list_items([v["name"] for v in finding["locations"]])
+    if finding.get("individual_conflict"):
+        detail += '<h3>Contradictory individual policy evidence</h3>' + raw(finding["individual_conflict"])
+    if finding.get("unsupported_reasons"):
+        detail += '<h3>Unsupported rule observations</h3>'+table(("Reason","Rules"),[
+            tr(e(pretty(reason)),str(count)) for reason,count in sorted(finding["unsupported_reasons"].items())])
+    if finding.get("acl_unsupported_reasons"):
+        detail += '<h3>ACL predicate rejection details</h3>'+table(("Reason","Rules"),[
+            tr(e(pretty(reason)),str(count)) for reason,count in sorted(finding["acl_unsupported_reasons"].items())])
+    detail += '<h3>Rule comparisons</h3>'
+    for item in observations:
+        earlier = item.get("earlier_position", item.get("earlier_index"))
+        later = item.get("later_position", item.get("later_index"))
+        detail += '<h4>' + e(pretty(item["status"])) + ' · ' + e(str(earlier)) + ' / ' + e(str(later)) + '</h4>'
+        if item["status"] == "identical_unsupported_security_rule_body":
+            detail += '<p>Identical captured rule fields except position. Predicate semantics are unsupported; this is not a shadowing or removal recommendation.</p>'
+        if "condition_relationship" in item:
+            detail += '<p>Match relationship: '+e(pretty(item["condition_relationship"]))+'. Partial overlaps are not full shadowing.</p>'
+        if "coverage" in item:
+            detail += '<p>' + e(pretty(item["coverage"])) + ' · ' + e(item["earlier_network"]) + ' / ' + e(item["later_network"]) + ' · counter setting: ' + e(pretty(item["counter_setting"])) + '</p>'
+        detail += '<p>Earlier rule</p>' + property_table(item["earlier"]) + '<p>Later rule</p>' + property_table(item["later"])
+    if finding["truncated"]:
+        detail += '<p class="note">Comparison limit reached; additional relationships may exist.</p>'
+    return detail
+
+
+def policy_sequence_detail(report):
+    detail = '<p>Observed policy-group order. Cross-policy matches are candidates only; role applicability and resultant device policy remain unverified.</p>'
+    detail += '<p>Target context: '+e(pretty(report.get("target_context","unknown")))+'</p>'
+    detail += table(("Position", "Referenced policy", "Visibility", "Qualified rules", "Unsupported rules"), [
+        tr(str(ref["position"]), e(ref["name"]), badge(pretty(ref["status"])),
+           str(ref.get("qualified_rule_count", "Unknown")), str(ref.get("unsupported_rule_count", "Unknown")))
+        for ref in report["references"]])
+    for ref in report["references"]:
+        if ref.get("individual_conflict"):
+            detail += '<h3>Contradictory policy target: '+e(ref["name"])+'</h3>'+raw(ref["individual_conflict"])
+    for finding in report["findings"]:
+        detail += '<p>Match relationship: '+e(pretty(finding.get("condition_relationship","unverified")))+'</p>'
+        detail += '<h4>' + e(finding["earlier_policy"]) + ' → ' + e(finding["later_policy"]) + '</h4><p>' + e("Same action body" if finding["same_action"] else "Different action bodies") + '</p>'
+        detail += '<p>Earlier rule</p>' + property_table(finding["earlier_rule"]) + '<p>Later rule</p>' + property_table(finding["later_rule"])
+    if report["truncated"]:
+        detail += '<p class="note">Comparison limit reached; more relationships may exist.</p>'
+    if report["status"] != "order_observed":
+        detail += raw(report["entries"], "Unqualified entries")
+    return detail
+
+
+
+def policy_evidence_view(workspace, root, name, bundle, query):
+    from .review_dispositions import snapshot_binding, digest
+    kind = query.get("policy_detail") or query.get("policy_evidence")
+    expected = {"variants": "variants", "rules": "rules", "sequences": "rules"}
+    if kind not in expected or query.get("workflow") != expected[kind]:
+        raise ValueError("Invalid policy evidence workflow")
+    if query.get("binding") != digest([snapshot_binding(workspace, name, bundle), kind]):
+        raise ValueError("Policy evidence changed; reopen the worklist")
+    records = workspace.policy_snapshot(bundle, kind)
+    try:
+        index = int(query["index"])
+    except (ValueError, TypeError, KeyError):
+        raise ValueError("Invalid policy evidence selector") from None
+    if not 0 <= index < len(records):
+        raise ValueError("Unknown policy evidence")
+    record = records[index]
+    if kind == "variants":
+        label, content = record["identity"], policy_variant_detail(record, root, name)
+    elif kind == "rules":
+        label, content = record["identity"], policy_rule_detail(record)
+    else:
+        label, content = "Policy sequence", policy_sequence_detail(record)
+    if query.get("policy_evidence"):
+        return page("Policy evidence", intro("Policy evidence", label) + content, workspace.nav(name))
+    return '<template data-advisor-evidence><div class="inspector-title"><h2>' + e(label) + '</h2></div>' + content + '</template>'
+
+
 def engineering_view(workspace, query):
     from .advanced_review import library_usage, preferred_duplicate
     from .central_tool import field_differences
@@ -945,6 +1047,8 @@ def engineering_view(workspace, query):
     if empty:
         return empty
     root, name, bundle, picker = loaded
+    if "policy_detail" in query or "policy_evidence" in query:
+        return policy_evidence_view(workspace, root, name, bundle, query)
     data = workspace.advanced_snapshot(bundle)
     reference_rows = {"references": [], "resolved": []}
     for ref in data["references"]:
@@ -977,6 +1081,14 @@ def engineering_view(workspace, query):
     detail_only = query.get("detail") == "1"
     if detail_only and (selected not in ("duplicates", "ports") or not selected_group or query.get("binding") != binding):
         raise ValueError("Finding or snapshot changed; reopen the worklist")
+    def policy_control(kind, index, label):
+        from .review_dispositions import digest
+        params = {"snapshot":name, "workflow":"variants" if kind=="variants" else "rules",
+                  "index":index, "binding":digest([binding,kind])}
+        endpoint = url(root,"advanced",**params,policy_detail=kind)
+        href = url(root,"advanced",**params,policy_evidence=kind)
+        return (f'<button type="button" class="quiet inspect-trigger" data-inspect data-inspect-url="{endpoint}">{e(label)}</button>'
+                f'<noscript><a href="{href}">{e(label)}</a></noscript>')
     def review_button(workflow, record, label, action):
         group = engineering_group_id(workflow, record)
         href = url(root, "advanced", snapshot=name, workflow=workflow, group=group)
@@ -1101,89 +1213,30 @@ def engineering_view(workspace, query):
         panels[-1] = (key, label, count, content + section)
     rows = []
     if selected == "variants":
-        for finding in variants:
-            variants = finding["variants"]
-            detail = '<p>The largest observed variant is a comparison reference only; it is not automatically an approved standard.</p>'
-            for i, variant in enumerate(variants, 1):
-                detail += '<h3>Variant ' + str(i) + ' · ' + str(len(variant["devices"])) + ' devices</h3>' + property_table(variant["body"])
-                if variant["differences"]:
-                    detail += diff_table(variant["differences"], "Largest variant", "This variant")
-                detail += table(("Device", "Source evidence"), [tr(e(d["name"]), f'<a href="{url(root, "sources", snapshot=name, persona=finding["persona"], device=d["scope"], module=finding["module"], identity=finding["identity"])}">Trace source</a>') for d in variant["devices"]])
-            distributions = finding.get("membership_distribution",{})
-            detail += '<h3>Observed membership distribution</h3><p>Multiple variant numbers in one scope indicate mixed settings within that observed membership; a single variant does not establish approved policy or intentional exceptions.</p>'
-            detail += table(("Membership type","Scope","Observed variants"),[
-                tr(e(pretty(kind)),e(r["name"]),e(", ".join(map(str,r["variant_numbers"]))))
-                for kind,records in distributions.items() for r in records])
-            if finding.get("individual_conflicts"):
-                detail += '<h3>Contradictory individual profile evidence</h3><p>These devices are excluded from qualified variant and absence counts.</p>'
-                detail += table(("Device","Evidence"),[
-                    tr(e(r["name"]),raw(r)) for r in finding["individual_conflicts"]],search=True)
-            detail += '<h3>Confirmed absent</h3>' + list_items([d["name"] for d in finding["absent"]])
-            detail += '<h3>Unavailable or unqualified presence</h3>' + list_items([d["name"] for d in finding["unknown"]])
+        for index, finding in enumerate(variants):
             rows.append(tr(e(module_label(finding["module"])), e(finding["identity"]), e(persona_label(finding["persona"])),
-                           str(len(variants)), str(finding["present_count"]), str(len(finding["unknown"])) + (f'<small>{len(finding["individual_conflicts"])} conflicting</small>' if finding.get("individual_conflicts") else ""),
-                           badge(pretty(finding["status"])), inspect(finding["identity"], detail, "Compare variants")))
+                           str(len(finding["variants"])), str(finding["present_count"]), str(len(finding["unknown"])) + (f'<small>{len(finding["individual_conflicts"])} conflicting</small>' if finding.get("individual_conflicts") else ""),
+                           badge(pretty(finding["status"])), policy_control("variants", index, "Compare variants")))
     panel("variants", "Policy variants", "Review same-name effective profiles with different captured settings within the same device function. These may be intentional site or device differences, not necessarily policy conflicts.",
           ("Module", "Profile", "Function", "Variants", "Observed devices", "Unknown presence", "Evidence", ""), rows, counts["variants"])
     rows = []
     if selected == "rules":
-        for finding in rules:
+        for index, finding in enumerate(rules):
             observations = finding["findings"]
-            detail = '<p>Captured rule comparisons only. Actual resultant policy order, service and address expansion, device applicability and traffic behavior remain unverified.</p>'
-            detail += '<h3>Captured locations</h3>' + list_items([v["name"] for v in finding["locations"]])
-            if finding.get("individual_conflict"):
-                detail += '<h3>Contradictory individual policy evidence</h3>' + raw(finding["individual_conflict"])
-            if finding.get("unsupported_reasons"):
-                detail += '<h3>Unsupported rule observations</h3>'+table(("Reason","Rules"),[
-                    tr(e(pretty(reason)),str(count)) for reason,count in sorted(finding["unsupported_reasons"].items())])
-            if finding.get("acl_unsupported_reasons"):
-                detail += '<h3>ACL predicate rejection details</h3>'+table(("Reason","Rules"),[
-                    tr(e(pretty(reason)),str(count)) for reason,count in sorted(finding["acl_unsupported_reasons"].items())])
-            detail += '<h3>Rule comparisons</h3>'
-            for item in observations:
-                earlier = item.get("earlier_position", item.get("earlier_index"))
-                later = item.get("later_position", item.get("later_index"))
-                detail += '<h4>' + e(pretty(item["status"])) + ' · ' + e(str(earlier)) + ' / ' + e(str(later)) + '</h4>'
-                if item["status"] == "identical_unsupported_security_rule_body":
-                    detail += '<p>Identical captured rule fields except position. Predicate semantics are unsupported; this is not a shadowing or removal recommendation.</p>'
-                if "condition_relationship" in item:
-                    detail += '<p>Match relationship: '+e(pretty(item["condition_relationship"]))+'. Partial overlaps are not full shadowing.</p>'
-                if "coverage" in item:
-                    detail += '<p>' + e(pretty(item["coverage"])) + ' · ' + e(item["earlier_network"]) + ' / ' + e(item["later_network"]) + ' · counter setting: ' + e(pretty(item["counter_setting"])) + '</p>'
-                detail += '<p>Earlier rule</p>' + property_table(item["earlier"]) + '<p>Later rule</p>' + property_table(item["later"])
-            if finding["truncated"]:
-                detail += '<p class="note">Comparison limit reached; additional relationships may exist.</p>'
             rows.append(tr(e(module_label(finding["module"])), e(finding["identity"]), e(persona_label(finding["persona"])),
                            str(len(finding["locations"])), str(finding["rules"]), str(finding["unsupported_rules"]),
                            str(len(observations)), badge(pretty(finding["status"])),
-                           inspect(finding["identity"], detail, "Review rules")))
+                           policy_control("rules", index, "Review rules")))
     panel("rules", "Policy rule review", "Inspect duplicate conditions, differing actions, partial intersections and broader matches within captured ordered policies. Role ACLs also compare literal IPv4 and IPv6 destinations within the same explicit source role and VRF. Unsupported matches and missing order remain unqualified; do not treat these as proven unreachable rules.",
           ("Module", "Policy", "Function", "Locations", "Rules", "Unsupported", "Observations", "Evidence", ""), rows, counts["rules"])
     if selected == "rules":
         sequence_rows = []
-        for report in workspace.policy_snapshot(bundle, "sequences"):
-            detail = '<p>Observed policy-group order. Cross-policy matches are candidates only; role applicability and resultant device policy remain unverified.</p>'
-            detail += '<p>Target context: '+e(pretty(report.get("target_context","unknown")))+'</p>'
-            detail += table(("Position", "Referenced policy", "Visibility", "Qualified rules", "Unsupported rules"), [
-                tr(str(ref["position"]), e(ref["name"]), badge(pretty(ref["status"])),
-                   str(ref.get("qualified_rule_count", "Unknown")), str(ref.get("unsupported_rule_count", "Unknown")))
-                for ref in report["references"]])
-            for ref in report["references"]:
-                if ref.get("individual_conflict"):
-                    detail += '<h3>Contradictory policy target: '+e(ref["name"])+'</h3>'+raw(ref["individual_conflict"])
-            for finding in report["findings"]:
-                detail += '<p>Match relationship: '+e(pretty(finding.get("condition_relationship","unverified")))+'</p>'
-                detail += '<h4>' + e(finding["earlier_policy"]) + ' → ' + e(finding["later_policy"]) + '</h4><p>' + e("Same action body" if finding["same_action"] else "Different action bodies") + '</p>'
-                detail += '<p>Earlier rule</p>' + property_table(finding["earlier_rule"]) + '<p>Later rule</p>' + property_table(finding["later_rule"])
-            if report["truncated"]:
-                detail += '<p class="note">Comparison limit reached; more relationships may exist.</p>'
-            if report["status"] != "order_observed":
-                detail += raw(report["entries"], "Unqualified entries")
+        for index, report in enumerate(workspace.policy_snapshot(bundle, "sequences")):
             sequence_rows.append(tr(e(report["name"]), e(persona_label(report["persona"])), badge(pretty(report["status"])),
                                     e(pretty(report.get("target_context","unknown"))),
                                     str(len(report["entries"])), str(sum(v["status"] != "rules_observed" for v in report["references"])),
                                     str(sum(v.get("unsupported_rule_count", 0) > 0 for v in report["references"])),
-                                    str(len(report["findings"])), inspect("Policy sequence", detail, "Review order")))
+                                    str(len(report["findings"])), policy_control("sequences", index, "Review order")))
         section = '<section><h2>Policy group evaluation order</h2><p>Compare only policy bodies visible in the same captured scope and function. Missing policy definitions or ambiguous order are not interpreted.</p>' + table(("Scope", "Function", "Sequence evidence", "Target context", "Entries", "Unqualified targets", "Targets with unsupported rules", "Cross-policy candidates", ""), sequence_rows, search=True) + '</section>'
         key, label, count, content = panels[-1]
         panels[-1] = (key, label, count, content + section)
