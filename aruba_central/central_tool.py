@@ -128,6 +128,7 @@ class Central:
         self._pacing_gate = threading.Lock()
         self._retry_at = 0.0
         self._next_request_at = 0.0
+        self._recent_admissions = deque(maxlen=9)
         self._request_interval = 1 / 9
         self._rate_recover_at = 0.0
         self._custom_api_terminal_500s = 0
@@ -188,18 +189,47 @@ class Central:
         # Keep the rate-state lock separate so a 429 can extend cooldown
         # even while the admission worker is sleeping.
         with self._pacing_gate:
+            slept = False
             while True:
                 with self._rate_lock:
                     now = time.monotonic()
-                    delay = max(self._retry_at, self._next_request_at) - now
+                    # Bound the actual admission timestamps in any rolling
+                    # second, not just the average over the full audit.
+                    while self._recent_admissions and now - self._recent_admissions[0] >= 1.0:
+                        self._recent_admissions.popleft()
+                    window_deadline = (self._recent_admissions[0] + 1.0
+                                       if len(self._recent_admissions) == 9 else 0.0)
+                    deadline = max(self._retry_at, self._next_request_at, window_deadline)
+                    delay = deadline - now
                     if delay <= 0:
                         if self._request_interval > 1 / 9 and now >= self._rate_recover_at:
                             rate = min(9, 1 / self._request_interval + 0.5)
                             self._request_interval = 1 / rate
                             self._rate_recover_at = now + 30
-                        self._next_request_at = now + self._request_interval
+                        lateness = max(0.0, now - deadline) if slept else 0.0
+                        # Correct only small scheduling overshoot after an
+                        # actual wait, never an idle gap or a cooldown. Limit
+                        # the correction to 20 ms and enforce the rolling cap.
+                        correction = (min(lateness, .020) if slept and self._request_interval == 1 / 9
+                                      and deadline == self._next_request_at and deadline > self._retry_at
+                                      else 0.0)
+                        if self._recent_admissions:
+                            gap = max(0.0, now - self._recent_admissions[-1])
+                        else:
+                            gap = None
+                        self._recent_admissions.append(now)
+                        self._next_request_at = now + self._request_interval - correction
+                        with self._get_metrics_lock:
+                            self._network_metrics["pacing_admissions"] += 1
+                            self._network_metrics["pacing_waited_admissions"] += int(slept)
+                            self._network_metrics["pacing_lateness_us"] += round(lateness * 1_000_000)
+                            self._network_metrics["pacing_compensation_us"] += round(correction * 1_000_000)
+                            if gap is not None:
+                                self._network_metrics["pacing_gap_samples"] += 1
+                                self._network_metrics["pacing_gap_us"] += round(gap * 1_000_000)
                         return
                 time.sleep(delay)
+                slept = True
 
     @staticmethod
     def _retry_delay(hint, attempt):
@@ -220,6 +250,9 @@ class Central:
             self._retry_at = max(self._retry_at, now + seconds)
             # Repeated throttling may indicate other active API consumers.
             self._request_interval = 1 / max(6, min(8, 1 / self._request_interval - 1))
+            # Discard any pending normal-rate compensation immediately.
+            if self._recent_admissions:
+                self._next_request_at = max(self._next_request_at, self._recent_admissions[-1] + self._request_interval)
             self._rate_recover_at = max(self._rate_recover_at, self._retry_at + 60)
 
     @staticmethod
@@ -4159,7 +4192,9 @@ def configuration_audit(client, selected_persona=None, *, workers=AUDIT_WORKERS,
         network_after = transport.get_network_metrics()
         bundle["http_get_performance"] = {
             key: network_after.get(key, 0) - network_before.get(key, 0)
-            for key in ("rate_wait_ms", "successful_get_ms", "successful_gets")}
+            for key in ("rate_wait_ms", "successful_get_ms", "successful_gets",
+                        "pacing_admissions", "pacing_waited_admissions", "pacing_lateness_us",
+                        "pacing_compensation_us", "pacing_gap_samples", "pacing_gap_us")}
         bundle["http_get_performance"]["phase_worker_budgets"] = worker_plan
         validators_after = transport.get_validator_metrics()
         bundle["http_config_validators"] = {

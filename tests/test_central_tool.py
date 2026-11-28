@@ -2176,3 +2176,47 @@ class Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PacingDeadlineTests(unittest.TestCase):
+    def test_timer_overshoot_compensation_stays_inside_rolling_cap(self):
+        from unittest.mock import patch
+        client = Central(EU_REGIONS[0], token="test")
+        clock = [100.0]
+        admissions = []
+        def sleep(delay):
+            clock[0] += delay + .014
+        with patch("aruba_central.central_tool.time.monotonic", side_effect=lambda: clock[0]), patch(
+            "aruba_central.central_tool.time.sleep", side_effect=sleep
+        ):
+            for _ in range(300):
+                client._wait_rate_limit()
+                admissions.append(clock[0])
+            self.assertGreater(299 / (admissions[-1] - admissions[0]), 8.6)
+            for index, stamp in enumerate(admissions):
+                self.assertLessEqual(sum(stamp - 1 < x <= stamp for x in admissions[:index + 1]), 9)
+            self.assertGreaterEqual(min(b-a for a,b in zip(admissions, admissions[1:])), 1/9-.020-1e-9)
+            clock[0] += 10
+            client._wait_rate_limit()
+            self.assertAlmostEqual(client._next_request_at - clock[0], 1/9)
+        metrics = client.get_network_metrics()
+        self.assertEqual(metrics["pacing_admissions"], 301)
+        self.assertGreater(metrics["pacing_compensation_us"], 0)
+        self.assertGreater(metrics["pacing_lateness_us"], 0)
+
+    def test_throttle_discards_pending_compensation(self):
+        from unittest.mock import patch
+        client = Central(EU_REGIONS[0], token="test")
+        clock = [100.0]
+        def sleep(delay):
+            clock[0] += delay + .014
+        with patch("aruba_central.central_tool.time.monotonic", side_effect=lambda: clock[0]), patch(
+            "aruba_central.central_tool.time.sleep", side_effect=sleep
+        ):
+            client._wait_rate_limit()
+            client._wait_rate_limit()
+            client._rate_limit_response(2)
+            before = client.get_network_metrics()["pacing_compensation_us"]
+            client._wait_rate_limit()
+            self.assertAlmostEqual(client._next_request_at - clock[0], 1/8)
+            self.assertEqual(client.get_network_metrics()["pacing_compensation_us"], before)
