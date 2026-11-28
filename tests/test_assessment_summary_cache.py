@@ -32,3 +32,29 @@ class AssessmentSummaryCacheTests(unittest.TestCase):
                 workspace.assessment_snapshot(bundle)
                 self.assertIs(workspace.assessment_snapshot(new_bundle), new_report)
                 self.assertEqual(compute.call_count, 3)
+
+    def test_policy_evidence_shared_across_views_and_replaced_with_capture(self):
+        from aruba_central.policy_variants import policy_variants
+        from aruba_central.policy_rule_review import policy_rule_groups
+        from aruba_central.policy_sequence_review import policy_sequence_reviews
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            path = Path(directory) / name
+            path.write_text(json.dumps(fixture()))
+            w = Workspace(directory)
+            bundle = w.reviewed_snapshot(name)
+            with patch("aruba_central.policy_variants.policy_variants", wraps=policy_variants) as v, \
+                 patch("aruba_central.policy_rule_review.policy_rule_groups", wraps=policy_rule_groups) as r, \
+                 patch("aruba_central.policy_sequence_review.policy_sequence_reviews", wraps=policy_sequence_reviews) as s:
+                w.assessment_snapshot(bundle)
+                first = w.policy_snapshot(bundle, "rules")
+                w.advanced({"snapshot": name, "workflow": "variants"})
+                w.advanced({"snapshot": name, "workflow": "rules"})
+                self.assertEqual((v.call_count, r.call_count, s.call_count), (1, 1, 1))
+                path.write_text(path.read_text() + " ")
+                new_bundle = w.reviewed_snapshot(name)
+                new_rules = w.policy_snapshot(new_bundle, "rules")
+                self.assertIsNot(first, new_rules)
+                w.policy_snapshot(bundle, "rules")
+                self.assertIs(w.policy_snapshot(new_bundle, "rules"), new_rules)
+                self.assertEqual(r.call_count, 3)
