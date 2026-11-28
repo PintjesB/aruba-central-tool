@@ -101,7 +101,7 @@ class PolicySequenceTests(unittest.TestCase):
     def test_alternative_policy_identity_observations_never_qualify_sequence_targets(self):
         raw=capture([{"name":"broad","position":1},{"name":"specific","position":2}])
         bodies={"broad":policy([rule(1)]),"specific":policy([rule(1)])}
-        mixed=[{"name":name,**body} for name,body in bodies.items()]
+        mixed=[{**body,"name":name} for name,body in bodies.items()]
         data={"results":{"CAMPUS_AP":{"scopes":[{"id":"1","kind":"global"}],"modules":{
             "policies":{"scope_results":[{"scope":"1","effective_view":{"status":"list_parsed","profiles":bodies}}]}}}},
             "library":{"modules":{"policies":{"status":"list_parsed","profiles":{"broad":bodies["broad"]}}}},
