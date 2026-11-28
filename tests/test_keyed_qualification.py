@@ -32,3 +32,22 @@ class KeyedQualificationTests(unittest.TestCase):
         self.assertEqual(sum(r["reads"] for r in report["profile_differences"]), 2)
         self.assertFalse(report["order_equivalence_qualified"])
         self.assertNotIn("private", json.dumps(report))
+
+
+    def test_anonymous_relationships_and_path_locations_do_not_reveal_values(self):
+        from aruba_central.keyed_qualification import identity_relationship
+        for returned, expected in (("PRIVATE", "case_only"), (" private ", "surrounding_whitespace_only"),
+                                   (" PRIVATE ", "case_and_whitespace"), ("pr%69vate", "percent_decoding_only"),
+                                   ("unrelated", "different_identity")):
+            self.assertEqual(identity_relationship({"name": returned}, "name", "private"), expected)
+        d = field_differences({"private-key": 2, "second-private": {"private-inner": 1}}, {"second-private": {}})
+        bundle = {"keyed_profile_details": {"profiles": {"Library": {"": {
+            "server-groups": {"private-profile": {"library": {"status": "identity_observed", "differences": d}}},
+            "roles": {"private-role": {"library": {"status": "schema_unresolved", "raw": {"name": "PRIVATE-ROLE"}}}}
+        }}}}}
+        report = keyed_qualification(bundle)
+        self.assertEqual(report["identity_relationships"][0]["relationship"], "case_only")
+        self.assertEqual({v["path_shape"] for v in report["difference_locations"]}, {"field", "field/field"})
+        self.assertEqual(len({v["anonymous_path_number"] for v in report["difference_locations"]}), 2)
+        self.assertNotIn("private", json.dumps(report).lower())
+        self.assertFalse(report["safe_to_apply"])
