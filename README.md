@@ -239,3 +239,19 @@ When sharing the local performance, keyed qualification and browser benchmarks t
 ```powershell
 python -m aruba_central.qualification_suite --directory "$env:USERPROFILE\.aruba-central-tool" --repeat 3 --browser "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe" --output "$env:USERPROFILE\Downloads\aruba-qualification-suite-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
 ```
+
+
+### Verify an exported review plan against a newer saved capture
+
+After independently reviewed manual changes, use the original preview or reconstructed
+review artifact and an exact newer snapshot filename:
+
+```sh
+python -m aruba_central.plan_verification --directory /private/workspace --preview /private/preview.json --after config-audit-newer.json --confirm-same-tenant --output /private/plan-verification.json
+```
+
+Only the original selection manifest is trusted; the prior plan is independently
+reconstructed from its unchanged snapshot. Each proposal is compared against the
+newer capture. Keep the output private. Collateral observations may include other
+selected proposals; this is not a deployment replay, causal attribution, or approval.
+No Central requests or writes are performed.
