@@ -239,7 +239,17 @@ def overrides_view(workspace, query):
         raise ValueError("Unknown removal readiness")
     if (device and device not in dict(devices)) or (module and module not in modules) or (result not in RESULTS and result not in ("cleanup", "all")):
         raise ValueError("Unknown comparison filter")
+    from .review_dispositions import snapshot_binding
+    binding = snapshot_binding(workspace, name, bundle)
+    detail_only = query.get("detail") == "1"
+    if detail_only and (not device or not module or not query.get("identity") or query.get("binding") != binding):
+        raise ValueError("Override or snapshot changed; reopen the worklist")
     scoped, missing = device_override_rows(bundle, persona, device=device, module_filter=module)
+    if detail_only:
+        scoped = [f for f in scoped if f["identity"] == query["identity"]]
+        if len(scoped) != 1:
+            raise ValueError("Unknown exact override")
+
     counts = Counter(f["result"] for f in scoped)
     filters = scope_filter_form(root, "overrides", name, bundle, persona, (
         ("device", "Device", device, device_options),
@@ -272,7 +282,7 @@ def overrides_view(workspace, query):
         raise ValueError("Invalid override batch offset") from None
     if offset < 0:
         raise ValueError("Invalid override batch offset")
-    selected = override_batch(scoped, result=result, readiness=readiness, query=search, offset=offset)
+    selected = override_batch(scoped, result="all" if detail_only else result, readiness="" if detail_only else readiness, query="" if detail_only else search, offset=0 if detail_only else offset)
     for f in selected["rows"]:
         p = f["profile"]
         label = title_profile(f["identity"], p["local"])
@@ -287,42 +297,49 @@ def overrides_view(workspace, query):
                 next_step += ". Removal still requires source, field and inheritance verification"
             else:
                 next_step = "Review removal preview; confirm the inherited source and dependencies before changing Central"
-        comparison = diff_table(p["global_differences"], "Device local", "Global")
-        if f["module"] == "layer2-vlan" and p["global_reference"] is not None:
-            comparison = vlan_explanation(p["local"], p["global_reference"], p["effective"], f["evidence"]) or comparison
-        extra = ('<h3>Saved device settings</h3>' + property_table(p["local"])
-                 + '<h3>Effective device settings in Central</h3>' + property_table(p["effective"])
-                 + '<h3>Global settings</h3>' + property_table(p["global_reference"]))
-        if f["module"] == "layer2-vlan":
-            sources = [{"kind": "device", "scope": f["device"], "name": f["device_name"]}]
-            extra += vlan_instance_context(bundle, persona, sources, f["identity"]) + operational_vlan_context(bundle, persona, sources, f["identity"])
-        higher_differences = [v["name"] for v in f["chain"] if v["state"].startswith("Observed differences") and v.get("kind") != "global"]
-        inheritance_warning = ('<p class="note"><strong>Higher-scope exception:</strong> observed differences at '
-                               + e(", ".join(higher_differences)) + '. A Global match alone is not enough to remove this override.</p>') if higher_differences and f["fallback"]["status"] != "matching_fallback" else ""
-        fallback = f["fallback"]
-        fallback_html = '<h3>Expected fallback after removing device-local copy</h3>'
-        if fallback["source"]:
-            source = fallback["source"]
-            fallback_html += '<p><strong>' + e(source["kind"].title() + " / " + source["name"]) + '</strong> · ' + e(fallback["status"].replace("_", " ")) + '</p>'
-            fallback_html += diff_table(fallback["differences"], "Saved device", "Nearest higher scope") + property_table(source["body"])
-        else:
-            fallback_html += '<p>Cannot identify a direct higher-scope definition.</p>'
-        fallback_html += table(("Precedence", "Scope", "Evidence"), [tr(e(v["kind"]), e(v.get("name") or "Unknown"), e(v["status"].replace("_", " "))) for v in fallback["chain"]])
-        if fallback["blockers"]:
-            fallback_html += "<ul>" + "".join("<li>" + e(v) + "</li>" for v in fallback["blockers"]) + "</ul>"
-        fallback_html += '<p class="note">Observed candidate only. Verify assignment restoration, full field coverage and dependencies before any removal.</p>'
-        detail = ('<div class="review-decision"><div>' + badge(RESULTS[state], "warn" if state in ("different", "omitted", "source_uncertain") else "info" if state in ("partial_match", "effective_match") else "neutral")
-                  + '<p><strong>Next step:</strong> ' + e(next_step) + '.</p></div><div class="review-context"><small>Device</small><strong>'
-                  + e(f["device_name"]) + '</strong></div></div>'
-                  + inheritance_warning + fallback_html + comparison
-                  + '<details><summary>Inheritance and higher scopes</summary>'
-                  + table(("Scope", "Observed device vs scope settings"), [tr(e(v["name"]), e(v["state"])) for v in f["chain"]])
-                  + '<p class="note">Scope membership does not establish inheritance precedence. Compare the actual inherited source and dependencies before removal.</p></details>'
-                  + '<details><summary>Source evidence</summary>' + extra + raw(p) + '</details>')
-        detail += f'<p><a href="{url(root, "sources", snapshot=name, module=f["module"], identity=f["identity"], persona=persona, device=f["device"])}">Trace configuration source</a></p>'
-        detail += f'<p><a href="{url(root, "impact", snapshot=name, module=f["module"], identity=f["identity"], persona=persona, scope=f["device"])}">Trace dependencies on this device</a></p>'
-        if f["candidate"]:
-            detail += f'<p><a href="{url(root, "advisor", snapshot=name, finding="remove_override", module=f["module"], persona=persona, scope=f["device"], identity=f["identity"])}">Open matching consolidation preview</a></p>'
+        if detail_only:
+            comparison = diff_table(p["global_differences"], "Device local", "Global")
+            if f["module"] == "layer2-vlan" and p["global_reference"] is not None:
+                comparison = vlan_explanation(p["local"], p["global_reference"], p["effective"], f["evidence"]) or comparison
+            extra = ('<h3>Saved device settings</h3>' + property_table(p["local"])
+                     + '<h3>Effective device settings in Central</h3>' + property_table(p["effective"])
+                     + '<h3>Global settings</h3>' + property_table(p["global_reference"]))
+            if f["module"] == "layer2-vlan":
+                sources = [{"kind": "device", "scope": f["device"], "name": f["device_name"]}]
+                extra += vlan_instance_context(bundle, persona, sources, f["identity"]) + operational_vlan_context(bundle, persona, sources, f["identity"])
+            higher_differences = [v["name"] for v in f["chain"] if v["state"].startswith("Observed differences") and v.get("kind") != "global"]
+            inheritance_warning = ('<p class="note"><strong>Higher-scope exception:</strong> observed differences at '
+                                   + e(", ".join(higher_differences)) + '. A Global match alone is not enough to remove this override.</p>') if higher_differences and f["fallback"]["status"] != "matching_fallback" else ""
+            fallback = f["fallback"]
+            fallback_html = '<h3>Expected fallback after removing device-local copy</h3>'
+            if fallback["source"]:
+                source = fallback["source"]
+                fallback_html += '<p><strong>' + e(source["kind"].title() + " / " + source["name"]) + '</strong> · ' + e(fallback["status"].replace("_", " ")) + '</p>'
+                fallback_html += diff_table(fallback["differences"], "Saved device", "Nearest higher scope") + property_table(source["body"])
+            else:
+                fallback_html += '<p>Cannot identify a direct higher-scope definition.</p>'
+            fallback_html += table(("Precedence", "Scope", "Evidence"), [tr(e(v["kind"]), e(v.get("name") or "Unknown"), e(v["status"].replace("_", " "))) for v in fallback["chain"]])
+            if fallback["blockers"]:
+                fallback_html += "<ul>" + "".join("<li>" + e(v) + "</li>" for v in fallback["blockers"]) + "</ul>"
+            fallback_html += '<p class="note">Observed candidate only. Verify assignment restoration, full field coverage and dependencies before any removal.</p>'
+            detail = ('<div class="review-decision"><div>' + badge(RESULTS[state], "warn" if state in ("different", "omitted", "source_uncertain") else "info" if state in ("partial_match", "effective_match") else "neutral")
+                      + '<p><strong>Next step:</strong> ' + e(next_step) + '.</p></div><div class="review-context"><small>Device</small><strong>'
+                      + e(f["device_name"]) + '</strong></div></div>'
+                      + inheritance_warning + fallback_html + comparison
+                      + '<details><summary>Inheritance and higher scopes</summary>'
+                      + table(("Scope", "Observed device vs scope settings"), [tr(e(v["name"]), e(v["state"])) for v in f["chain"]])
+                      + '<p class="note">Scope membership does not establish inheritance precedence. Compare the actual inherited source and dependencies before removal.</p></details>'
+                      + '<details><summary>Source evidence</summary>' + extra + raw(p) + '</details>')
+            detail += f'<p><a href="{url(root, "sources", snapshot=name, module=f["module"], identity=f["identity"], persona=persona, device=f["device"])}">Trace configuration source</a></p>'
+            detail += f'<p><a href="{url(root, "impact", snapshot=name, module=f["module"], identity=f["identity"], persona=persona, scope=f["device"])}">Trace dependencies on this device</a></p>'
+            if f["candidate"]:
+                detail += f'<p><a href="{url(root, "advisor", snapshot=name, finding="remove_override", module=f["module"], persona=persona, scope=f["device"], identity=f["identity"])}">Open matching consolidation preview</a></p>'
+            return '<template data-advisor-evidence><div class="inspector-title"><h2>' + e(label) + '</h2></div>' + detail + '</template>'
+        endpoint = url(root, "overrides", snapshot=name, persona=persona, device=f["device"], module=f["module"],
+                       identity=f["identity"], detail="1", binding=binding)
+        href = url(root, "report", snapshot=name, persona=persona, scope=f["device"], module=f["module"], identity=f["identity"], view="all")
+        control = (f'<button type="button" class="quiet inspect-trigger" data-inspect data-inspect-url="{endpoint}">Compare settings</button>'
+                   f'<noscript><a href="{href}">Captured settings</a></noscript>')
         action_label = short_action[state]
         if f["review_candidate"]:
             action_label = {"higher_scope_differs": "Keep: higher scope differs",
@@ -342,7 +359,7 @@ def overrides_view(workspace, query):
                        badge(RESULTS[state], "good" if state == "identical" else "warn" if state == "different" else "info" if state in ("partial_match", "effective_match") else "neutral")
                        + evidence_line, fallback_summary,
                        f'<strong title="{e(next_step)}">{e(action_label)}</strong>',
-                       inspect(label, detail, "Compare settings")))
+                       control))
     result_summary = '<div class="result-summary" aria-label="Comparison results">' + "".join(
         f'<span><strong>{counts[key]}</strong> {e(label)}</span>' for key, label in (
             ("identical", "Global matches"), ("nearest_match", "nearest-scope matches"), ("nearest_settings_match", "identity changes"), ("effective_match", "effective matches"),
