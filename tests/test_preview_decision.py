@@ -7,7 +7,8 @@ class PreviewDecisionTests(unittest.TestCase):
         # These labels are rendered with textContent, never HTML from captures.
         for label in ("Resolve export blockers", "Review export available",
                       "Captured configuration", "Proposed configuration source",
-                      "Not a simulated or verified outcome", "Observed recipient pairs"):
+                      "Not a simulated or verified outcome", "Observed recipient pairs",
+                      "Destination impact requires review", "Exact observed recipient set"):
             self.assertIn(label, ADVISOR_JS)
         self.assertIn("review.missing_destinations.length", ADVISOR_JS)
         self.assertIn("review.collisions.length", ADVISOR_JS)
@@ -44,6 +45,8 @@ class PreviewDecisionTests(unittest.TestCase):
                     self.assertTrue(tab.locator("#export-plan").is_disabled())
                     self.assertIn("Captured configuration", tab.locator(".preview-transition").inner_text())
                     tab.locator("#close-preview").click()
+                    options = row.locator(".destination option").all_text_contents()
+                    self.assertTrue(any("not confirmed matching" in option for option in options))
                     row.locator(".destination").select_option("library")
                     tab.locator("#open-preview").click()
                     self.assertIn("Review export available", tab.locator(".preview-decision").inner_text())
