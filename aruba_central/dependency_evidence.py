@@ -2,6 +2,34 @@
 from .central_tool import canonical, profile_body
 
 
+def reference_semantics(ref):
+    """Classify documented set membership separately from direct references.
+
+    Keep each exact member edge for reverse lookup and removal safety. A
+    member absent from a captured view is not by itself a broken dependency.
+    Do not treat VLAN selection pools as permission lists.
+    """
+    if ref.get("target_module") != "layer2-vlan":
+        return "direct_or_unclassified"
+    module = ref.get("source_module")
+    path = tuple(ref.get("path", []))
+    if module == "named-vlan" and path == ("vlan", "vlan-id-ranges"):
+        return "vlan_selection_member"
+    if module == "wlan-ssids" and path == ("vlan-id-range",):
+        return "vlan_selection_member"
+    if module == "stp" and len(path) == 3 and path[0] == "mstp" and type(path[1]) is int and path[2] in ("mstp-vlans", "vlans"):
+        return "vlan_stp_member"
+    if module in ("ap-port-profiles","sw-port-profiles","ethernet-interfaces","portchannels") and path in (
+        ("switchport","trunk-vlan-ranges"), ("switchport","trunk-vlans"), ("switchport","allowed-vlans"), ("allowed-vlans",)):
+        return "vlan_allowed_member"
+    if module == "roles" and path == ("vlan-parameters","trunk-allowed-vlans"):
+        return "vlan_allowed_member"
+    return "direct_or_unclassified"
+
+
+REFERENCE_SEMANTICS = ("direct_or_unclassified", "vlan_selection_member", "vlan_stp_member", "vlan_allowed_member")
+
+
 def qualify_reference_edges(bundle, references, effective):
     direct = (bundle.get("keyed_profile_details") or {}).get("profiles", {})
     library = (bundle.get("library") or {}).get("modules", {})
@@ -104,6 +132,7 @@ def qualify_reference_edges(bundle, references, effective):
         return observations
 
     for ref in references:
+        ref["reference_semantics"] = reference_semantics(ref)
         persona, sid = ref["persona"], ref["scope"]
         side = {"saved": "local", "effective": "effective", "library": "library"}.get(ref.get("source_view"))
         if side is None:
