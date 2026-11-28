@@ -92,7 +92,8 @@ def preflight_result(workspace, report):
     body += '<section><h2>Captured plan revalidation results</h2><p>Any changed, missing or contradictory captured evidence requires a new review. Matching evidence does not establish freshness at the live API, complete dependencies, permissions, rollback, or actual deployment behavior.</p>'
     body += table(("Action","Module","Profile","Function","Outcome","Reasons"),[
         tr(e(pretty(r["action"])),e(r["module"]),e(r["identity"]),e(r["persona"]),badge(pretty(r["status"])),
-           "<br>".join(e(pretty(reason)) for reason in r["reasons"]) or "No observed differences")
+           ("<br>".join(e(pretty(reason)) for reason in r["reasons"]) or "No observed differences")
+           + (f'<small>{len(r.get("profile_evidence_changes", []))} exact scope/view observations changed; see private export.</small>' if r.get("profile_evidence_changes") else ""))
         for r in report["rows"]],search=True)
     if report["combined_reasons"]:
         body += '<h3>Combined review blockers</h3><p>' + e(", ".join(pretty(r) for r in report["combined_reasons"])) + '</p>'

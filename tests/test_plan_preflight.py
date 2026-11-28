@@ -46,3 +46,36 @@ class PlanPreflightTests(unittest.TestCase):
             self.assertIn("proposal_evidence_changed_or_missing",report["rows"][0]["reasons"])
             with self.assertRaises(ValueError):
                 revalidate_plan(workspace,manifest,after_name)
+
+
+    def test_different_outside_body_changes_even_when_recommendation_category_is_unchanged(self):
+        from copy import deepcopy
+        with tempfile.TemporaryDirectory() as directory:
+            names=["config-audit-before.json","config-audit-after.json"]
+            before=fixture()
+            before.update(captured_at="2026-01-01T00:00:00+00:00",region="https://de1.example",inventory=[{"inventory":{"serial":"A"}}])
+            entry=before["results"]["ACCESS_SWITCH"]
+            for scope in entry["scopes"]:
+                if scope["kind"]=="device":
+                    scope["metadata"]={"serial":scope["id"]}
+            outside=entry["modules"]["layer2-vlan"]["scope_results"][-1]
+            outside["effective_view"]={"status":"list_parsed","count_confirmed":True,
+                                      "profiles":{"20":{"vlan":20,"name":"Different A"}}}
+            after=deepcopy(before)
+            after["captured_at"]="2026-01-02T00:00:00+00:00"
+            after["results"]["ACCESS_SWITCH"]["modules"]["layer2-vlan"]["scope_results"][-1]["effective_view"]["profiles"]["20"]["name"]="Different B"
+            for name,data in zip(names,[before,after]):
+                (Path(directory)/name).write_text(json.dumps(data))
+            w=Workspace(directory)
+            bundle=w.reviewed_snapshot(names[0])
+            f=next(f for f in w.consolidation_snapshot(bundle) if f["action"]=="promote_local")
+            manifest={"schema":1,"kind":"consolidation_selection","snapshot":names[0],
+                      "snapshot_binding":snapshot_binding(w,names[0],bundle),"selections":[{"id":f["id"],"destination":"library"}]}
+            report=revalidate_plan(w,manifest,names[1],confirmed=True)
+            self.assertFalse(report["observed_review_matches"])
+            row=report["rows"][0]
+            self.assertNotIn("proposal_evidence_changed_or_missing",row["reasons"])
+            self.assertIn("exact_profile_evidence_changed",row["reasons"])
+            self.assertEqual(len(row["profile_evidence_changes"]),1)
+            self.assertEqual(row["profile_evidence_changes"][0]["scope"],"5")
+            self.assertFalse(report["safe_to_apply"])
