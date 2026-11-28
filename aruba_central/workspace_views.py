@@ -984,6 +984,9 @@ def engineering_view(workspace, query):
             detail += '<h3>Captured locations</h3>' + list_items([v["name"] for v in finding["locations"]])
             if finding.get("individual_conflict"):
                 detail += '<h3>Contradictory individual policy evidence</h3>' + raw(finding["individual_conflict"])
+            if finding.get("unsupported_reasons"):
+                detail += '<h3>Unsupported rule observations</h3>'+table(("Reason","Rules"),[
+                    tr(e(pretty(reason)),str(count)) for reason,count in sorted(finding["unsupported_reasons"].items())])
             detail += '<h3>Rule comparisons</h3>'
             for item in observations:
                 earlier = item.get("earlier_position", item.get("earlier_index"))
