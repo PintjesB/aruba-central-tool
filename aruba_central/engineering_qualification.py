@@ -76,6 +76,8 @@ def engineering_qualification(bundle, *, include_reference_patterns=False):
         result["reference_absence_patterns"] = reference_absence_patterns(engineering["references"])
         result["role_vlan_name_evidence"] = role_vlan_name_evidence(engineering["references"])
         result["reference_conflict_patterns"] = reference_conflict_patterns(engineering["references"])
+        from .policy_rule_review import policy_rule_groups
+        result["policy_clause_gaps"] = policy_clause_gaps(policy_rule_groups(bundle))
     return result
 
 
@@ -231,6 +233,27 @@ def reference_conflict_patterns(references):
             endpoints[key].add((row.get("persona"),row.get("scope"),view,row.get(side+"_module"),row.get(side)))
     return [{"side":s,"module":m,"kind":k,"observations":n,"distinct_endpoints":len(endpoints[s,m,k])}
             for (s,m,k),n in sorted(counts.items(),key=lambda item:(-item[1],item[0]))]
+
+
+def policy_clause_gaps(groups):
+    from collections import Counter
+    from .policy_service_review import SERVICE_SHAPES
+    from .policy_transport_review import PORT_CLAUSE_SHAPES
+    service, transport=Counter(),Counter()
+    for group in groups:
+        for loc in group.get("service_definition_evidence",[]):
+            for ref in loc["references"]:
+                if ref.get("status")=="service_schema_unqualified":
+                    shape=ref.get("definition_shape")
+                    service[shape if shape in SERVICE_SHAPES else "unknown"]+=1
+        for row in group.get("transport_evidence",[]):
+            for side in ("source_port","destination_port"):
+                clause=row[side]
+                if clause["state"]=="unqualified":
+                    shape=clause.get("shape")
+                    transport[side,shape if shape in PORT_CLAUSE_SHAPES else "unknown"]+=1
+    return {"service":[{"shape":s,"observations":n} for s,n in sorted(service.items())],
+            "transport":[{"side":side,"shape":s,"observations":n} for (side,s),n in sorted(transport.items())]}
 
 
 def main():
