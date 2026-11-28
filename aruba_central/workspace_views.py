@@ -1651,6 +1651,23 @@ def explorer_view(workspace, query):
     identity_filter = query.get("identity")
     if identity_filter is not None and (not module or not scope or mode == "diagnostics"):
         raise ValueError("An exact profile filter requires a scope and module")
+    from .review_dispositions import snapshot_binding
+    binding = snapshot_binding(workspace, name, bundle)
+    detail_only = query.get("detail") == "1"
+    if detail_only and (not module or not scope or query.get("binding") != binding
+                        or (mode != "diagnostics" and identity_filter is None)):
+        raise ValueError("Profile or snapshot changed; reopen the configuration explorer")
+    render_details = detail_only or identity_filter is not None or (mode == "diagnostics" and bool(scope and module))
+    def control(mod, view, title, identity=None):
+        params = dict(snapshot=name, persona=persona, module=mod, scope=view["scope"], view=mode)
+        if identity is not None:
+            params["identity"] = identity
+        href = url(root, "report", **params)
+        endpoint = url(root, "report", **params, detail="1", binding=binding)
+        return (f'<button type="button" class="quiet inspect-trigger" data-inspect data-inspect-url="{endpoint}">Inspect</button>'
+                f'<noscript><a href="{href}">Inspect {e(title)}</a></noscript>')
+    def detail_template(title, content):
+        return '<template data-advisor-evidence><div class="inspector-title"><h2>' + e(title) + '</h2></div>' + content + '</template>'
     controls = scope_filter_form(root, "report", name, bundle, persona, (
         ("module", "Module", module, module_options),
         ("scope", "Scope", scope, lambda entry: [("", "All scopes")] + sorted(
@@ -1664,7 +1681,15 @@ def explorer_view(workspace, query):
         review = view["review"]
         if not review["qualified"]:
             if mode == "diagnostics":
-                rows.append(tr(e(scope_name), e(module_label(mod)), "—", badge("Not qualified"), inspect(scope_name, raw({"local": configuration_view_shape(view["local_view"]), "effective": configuration_view_shape(view["effective_view"]), "review": review}))))
+                if render_details:
+                    content = raw({"local": configuration_view_shape(view["local_view"]),
+                                   "effective": configuration_view_shape(view["effective_view"]), "review": review})
+                    if detail_only:
+                        return detail_template(scope_name, content)
+                    action = inspect(scope_name, content)
+                else:
+                    action = control(mod, view, scope_name)
+                rows.append(tr(e(scope_name), e(module_label(mod)), "—", badge("Not qualified"), action))
             elif mode == "all":
                 # Show independently parsed bodies even if the other read failed.
                 # Do not feed these incomplete views into consolidation.
@@ -1678,14 +1703,20 @@ def explorer_view(workspace, query):
                     saved = available.get("local", {}).get(identity)
                     effective = available.get("effective", {}).get(identity)
                     title = title_profile(identity, saved or effective)
-                    detail = '<p class="note">Only independently retrieved settings are shown. Source and comparison are not verified.</p>'
-                    if saved is not None:
-                        detail += '<h3>Saved settings</h3>' + property_table(profile_body(saved))
-                    if effective is not None:
-                        detail += '<h3>Effective settings</h3>' + property_table(profile_body(effective))
-                    detail += keyed_profile_evidence(bundle, persona, view["scope"], mod, identity)
+                    if render_details:
+                        detail = '<p class="note">Only independently retrieved settings are shown. Source and comparison are not verified.</p>'
+                        if saved is not None:
+                            detail += '<h3>Saved settings</h3>' + property_table(profile_body(saved))
+                        if effective is not None:
+                            detail += '<h3>Effective settings</h3>' + property_table(profile_body(effective))
+                        detail += keyed_profile_evidence(bundle, persona, view["scope"], mod, identity)
+                        if detail_only:
+                            return detail_template(title, detail)
+                        action = inspect(title, detail)
+                    else:
+                        action = control(mod, view, title, identity)
                     rows.append(tr(e(scope_name), e(module_label(mod)), e(title),
-                                   badge("Partial evidence", "warn"), inspect(title, detail)))
+                                   badge("Partial evidence", "warn") + '<small>Source and comparison are not verified.</small>', action))
             continue
         if mode == "diagnostics":
             continue
@@ -1695,10 +1726,18 @@ def explorer_view(workspace, query):
             if mode == "local" and (r["local"] is None or r["status"] == "default_profile"):
                 continue
             title = title_profile(r["identity"], r["local"] or r["effective"])
-            detail = '<h3>Global comparison</h3>' + diff_table(r["global_differences"], "Local", "Global") + '<h3>Effective settings</h3>' + property_table(r["effective"]) + raw(r)
-            detail += keyed_profile_evidence(bundle, persona, view["scope"], mod, r["identity"])
+            if render_details:
+                detail = '<h3>Global comparison</h3>' + diff_table(r["global_differences"], "Local", "Global") + '<h3>Effective settings</h3>' + property_table(r["effective"]) + raw(r)
+                detail += keyed_profile_evidence(bundle, persona, view["scope"], mod, r["identity"])
+                if detail_only:
+                    return detail_template(title, detail)
+                action = inspect(title, detail)
+            else:
+                action = control(mod, view, title, r["identity"])
             rows.append(tr(f'<strong>{e(scope_name)}</strong><small>{e(pretty(view["scope_kind"]))}</small>', e(module_label(mod)), e(title),
-                           badge(profile_state_label(r["status"]), "good" if r["status"] in ("inherited", "shared", "local_matches_global") else "warn" if r["status"] in ("source_conflict", "local_differs_from_global", "local_effective_mismatch") else "neutral"), inspect(title, detail)))
+                           badge(profile_state_label(r["status"]), "good" if r["status"] in ("inherited", "shared", "local_matches_global") else "warn" if r["status"] in ("source_conflict", "local_differs_from_global", "local_effective_mismatch") else "neutral"), action))
+    if detail_only:
+        raise ValueError("Profile evidence no longer available; reopen the configuration explorer")
     q = sum(v["review"]["qualified"] for _, _, _, v in records)
     body = intro("Configuration", "Inspect captured profiles at a selected scope or module.", picker) + '<section class="filter-section">' + controls + '</section>'
     body += f'<p><a class="button" href="{url(root, "report", snapshot=name, mode="search")}">Search all captured configuration</a></p>'
