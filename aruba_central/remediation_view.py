@@ -32,19 +32,32 @@ def remediation_view(workspace, query):
         return page("Remediation verification", body + '<section>' + e(str(exc)) + '</section>', workspace.nav(name))
     overrides = override_candidates(before)
     duplicates = duplicate_candidates(before)
+    from .promotion_verification import promotion_candidates, verify_promotion
+    promotions = promotion_candidates(before)
     import json
     options = [("", "Choose a prior candidate")]
     options += [(json.dumps(["override", f["id"]]), "Remove override / " + f["module"] + " / " + f["identity"] + " / " + f["persona"] + " / " + ", ".join(s["name"] for s in f["sources"])) for f in overrides]
     options += [(json.dumps(["library", d["module"], identity]), "Library migration / " + d["module"] + " / retain " + identity) for d in duplicates for identity in d["identities"]]
+    for f in promotions:
+        label = "Promote local / " + f["module"] + " / " + f["identity"] + " / " + f["persona"]
+        options.append((json.dumps(["promotion", f["id"], "library"]), label + " / Library"))
+        options.extend((json.dumps(["promotion", f["id"], p["scope"]]), label + " / " + p["kind"] + " / " + p["name"])
+                       for p in f["placement_options"])
     chosen = query.get("candidate", "")
     body += (f'<section><form class="filter-bar" method="get" action="{e(root + "remediation")}">'
              f'<input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="previous" value="{e(previous)}"><input type="hidden" name="confirmed" value="yes">'
              + select("candidate", options, chosen, "Prior opportunity") + '<button type="submit">Verify observed outcome</button></form>'
-             + '<p class="note">Only prior qualified device override candidates and observed duplicate Library groups are supported. This is not a replay of an executed plan.</p></section>')
+             + '<p class="note">Prior device override candidates, duplicate Library groups and local-profile promotions are supported. This is not a replay of an executed plan.</p></section>')
     if chosen:
         if chosen not in dict(options):
             raise ValueError("Unknown prior candidate")
         args = json.loads(chosen)
+        if args[0] == "promotion":
+            result = verify_promotion(before, current, args[1], args[2], confirmed=True)
+            from .promotion_verification_view import promotion_outcome
+            body += promotion_outcome(result)
+            body += private_export("remediation-verification", {"previous_snapshot": previous, "current_snapshot": name, "report": result})
+            return page("Remediation verification", body, workspace.nav(name))
         result = (verify_override(before, current, args[1], confirmed=True) if args[0] == "override"
                   else verify_library_migration(before, current, args[1], args[2], confirmed=True))
         rows = result["rows"]
