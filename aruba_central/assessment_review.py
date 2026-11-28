@@ -35,7 +35,8 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
     rules = policy_rule_groups(bundle) if rules is None else rules
     sequences = policy_sequence_reviews(bundle) if sequences is None else sequences
     security_reasons, acl_reasons = Counter(), Counter()
-    schema_reasons = Counter(row.get("schema_state", "unknown") for row in rules if row["status"] == "rule_schema_unqualified")
+    schema_reasons = Counter(row.get("schema_state") if row.get("schema_state") in POLICY_SCHEMA_STATES else "unknown"
+                             for row in rules if row["status"] == "rule_schema_unqualified")
     sequence_schema_reasons, alternative_targets = Counter(), Counter()
     for row in rules:
         if row.get("module") == "policies":
@@ -53,8 +54,8 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
             if ref["status"] != "rules_observed":
                 sequence_context_gaps[context] += 1
                 if ref["status"] == "rule_schema_unqualified":
-                    sequence_schema_reasons[ref.get("schema_state", "unknown")] += 1
-                alternatives = {v.get("context") for v in ref.get("alternative_observations", []) if v.get("status") == "identity_observed"}
+                    sequence_schema_reasons[ref.get("schema_state") if ref.get("schema_state") in POLICY_SCHEMA_STATES else "unknown"] += 1
+                alternatives = {v.get("context") for v in ref.get("alternative_observations", []) if v.get("status") == "identity_observed" and v.get("context") in ALTERNATIVE_POLICY_CONTEXTS}
                 alternative_targets.update(alternatives)
                 if alternatives:
                     alternative_targets["any"] += 1
@@ -82,7 +83,8 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
             continue
         reference_reasons[reason]+=1
     scope_reasons=Counter(row.get("scope_resolution","unknown") for row in assignments["rows"] if not row["scope_resolved"])
-    function_contexts = Counter(row.get("function_context", "unknown") for row in assignments["rows"] if not row["scope_resolved"])
+    function_contexts = Counter(row.get("function_context") if row.get("function_context") in ASSIGNMENT_FUNCTION_CONTEXTS else "unknown"
+                                for row in assignments["rows"] if not row["scope_resolved"])
     unresolved_assignment_reads=Counter(row.get("assignment_evidence_state","not_collected") for row in assignments["rows"] if not row["scope_resolved"])
     actions = Counter(f["action"] for f in findings)
     review = [f for f in findings if f["action"] in ("remove_override", "promote_local", "reuse_library")]
