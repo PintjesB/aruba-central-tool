@@ -12,7 +12,7 @@ def leaves(value, path=()):
             yield from leaves(item, (*path, str(key)))
     elif isinstance(value, list) and value:
         for index, item in enumerate(value):
-            yield from leaves(item, (*path, str(index)))
+            yield from leaves(item, (*path, index))
     else:
         yield path, value
 
@@ -110,7 +110,7 @@ def matching_fields(bundle, query, *, module="", persona="", scope=None):
     # Bound caches to this search, never persist tenant values across captures.
     @lru_cache(maxsize=4096)
     def missing_at_path(path, missing):
-        path_text = ".".join(path).casefold()
+        path_text = ".".join(map(str, path)).casefold()
         return tuple(term for term in missing if term not in path_text)
 
     @lru_cache(maxsize=4096, typed=True)
@@ -137,6 +137,21 @@ def matching_fields(bundle, query, *, module="", persona="", scope=None):
                 if all(term in value_text for term in remaining):
                     yield path, value
         yield record, matches(record["body"], tuple(term for term in terms if term not in context))
+
+
+def display_path(path):
+    # Distinguish an array position from a literal numeric object key.
+    # Bracketed JSON strings also preserve dots and brackets in field names.
+    import json
+    text = ""
+    for part in path:
+        if type(part) is int:
+            text += f"[{part}]"
+        elif not part or part.isdecimal() or any(c in part for c in '.[]'):
+            text += "[" + json.dumps(part, ensure_ascii=False) + "]"
+        else:
+            text += ("." if text else "") + part
+    return text or "(root)"
 
 
 def field_group(record, path, value):
@@ -253,7 +268,7 @@ def search_view(workspace, query):
             for row in result["groups"]:
                 function, mod, view, source, path, value = row["selector"]
                 link = url(root, "report", **common, group=row["id"])
-                rows.append(tr(e(function), e(mod), e(view), e(source.replace("_", " ")), e(".".join(path) or "(root)"),
+                rows.append(tr(e(function), e(mod), e(view), e(source.replace("_", " ")), e(display_path(path)),
                                setting_value(value), str(row["devices"]), str(row["scopes"]), str(row["observations"]),
                                f'<a href="{link}">Inspect matching observations</a>'))
             body += f'<section><h2>{result["total_groups"]} distinct field/value groups</h2><p>{result["total"]} matching observations. Counts are observed device/function pairs, not an inferred deployment impact. Higher-scope observations are not expanded into recipients.</p>'
@@ -271,7 +286,7 @@ def search_view(workspace, query):
             link = url(root, "report", snapshot=name, mode="evidence", persona=row["persona"],
                        module=row["module"], scope=row["scope"], evidence=row["evidence_id"])
             rows.append(tr(e(row["name"] or "Library"), e(row["persona"]), e(row["module"]), e(row["identity"] or "Raw response"),
-                           e(row["view"]), e(".".join(row["path"]) or "(root)"), setting_value(row["value"]),
+                           e(row["view"]), e(display_path(row["path"])), setting_value(row["value"]),
                            badge(row["source"].replace("_", " ")), f'<a href="{link}">Inspect source</a>'))
         first = offset + 1 if rows else 0
         last = offset + len(rows) if rows else 0
