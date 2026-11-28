@@ -65,6 +65,9 @@ class PlanVerificationTests(unittest.TestCase):
             for name,time in ((before_name,"2026-01-01T00:00:00+00:00"),(after_name,"2026-01-02T00:00:00+00:00")):
                 data=fixture()
                 data.update(captured_at=time,region="https://de1.example",inventory=[{"inventory":{"serial":"A"}}])
+                for scope in data["results"]["ACCESS_SWITCH"]["scopes"]:
+                    if scope["kind"]=="device":
+                        scope["metadata"]={"serial":scope["id"]}
                 (Path(directory)/name).write_text(json.dumps(data))
             workspace=Workspace(directory)
             before=workspace.reviewed_snapshot(before_name)
@@ -91,6 +94,14 @@ class PlanVerificationTests(unittest.TestCase):
                         tab.get_by_role("heading",name="Plan verification results").wait_for()
                         self.assertIn("Reopen individual verification",tab.locator("body").inner_text())
                         self.assertNotIn("untrusted-private-marker",tab.locator("body").inner_text())
+                        tab.goto(url)
+                        form=tab.locator("#verify-exported-plan")
+                        form.locator("input[type=file]").set_input_files({"name":"preview.json","mimeType":"application/json","buffer":json.dumps({"selection_manifest":manifest}).encode()})
+                        form.locator("select[name=operation]").select_option("revalidate")
+                        form.locator("input[name=confirmed]").check()
+                        form.get_by_role("button",name="Verify entire plan").click()
+                        tab.get_by_role("heading",name="Captured plan revalidation results").wait_for()
+                        self.assertIn("Observed evidence unchanged",tab.locator("body").inner_text())
                     finally:
                         browser.close()
             finally:

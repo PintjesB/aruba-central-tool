@@ -255,3 +255,30 @@ reconstructed from its unchanged snapshot. Each proposal is compared against the
 newer capture. Keep the output private. Collateral observations may include other
 selected proposals; this is not a deployment replay, causal attribution, or approval.
 No Central requests or writes are performed.
+
+
+### Revalidate before manual changes
+
+In **Remediation verification**, choose the original private preview file and
+select **Revalidate captured plan before manual changes**. The workspace
+reconstructs the original selection and compares its exact proposals, dependency,
+recipient, destination and Library assignment evidence against a newer saved
+capture. Changed evidence or unverified device identity requires a new review.
+
+The offline CLI is also available:
+
+```sh
+python -m aruba_central.plan_preflight --directory /private/workspace --preview /private/preview.json --current config-audit-newer.json --confirm-same-tenant --output /private/revalidation.json
+```
+
+Neither this nor post-change verification establishes live preflight, deployment,
+permissions, recovery or execution authorization.
+
+### Historical offline qualification
+
+To add history timings and evidence counts to the existing anonymous qualification
+suite, pass `--confirm-history-same-tenant` and optionally `--previous` with the
+exact other saved snapshot filename. Without `--previous`, the next older file in
+the existing modification-time ordering is selected. Use this option only for
+captures of the same tenant. Both selected files must remain unchanged throughout
+the suite. No Central requests are made.
