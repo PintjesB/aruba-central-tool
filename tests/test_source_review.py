@@ -40,3 +40,28 @@ class SourceTests(unittest.TestCase):
         html = inheritance_path(result, "/test/", "capture.json", "ACCESS_SWITCH")
         self.assertNotIn('class="source-winner"', html)
         self.assertIn("No unique source is established", html)
+
+    def test_individual_conflicts_block_unqualified_source_claims(self):
+        from aruba_central.source_view import inheritance_path
+        entry = fixture(group="Office", global_="Different")
+        entry["modules"]["layer2-vlan"]["scope_results"].append({"scope":"5","effective_view":{
+            "status":"list_parsed","count_confirmed":True,"profiles":{"20":{"vlan":20,"name":"Office",
+                "@":{"aruba-annotation:inherited":True}}}}})
+        bundle={"results":{"ACCESS_SWITCH":entry},"library":None}
+        self.assertEqual(source_trace(bundle,"ACCESS_SWITCH","5","layer2-vlan","20")["observed_source_scope"],"4")
+        def read(name):
+            return {"status":"identity_observed","profile":{"vlan":20,"name":name}}
+        bundle["keyed_profile_details"]={"profiles":{"ACCESS_SWITCH":{
+            "4":{"layer2-vlan":{"20":{"effective":read("Different")}}}}}}
+        result=source_trace(bundle,"ACCESS_SWITCH","5","layer2-vlan","20")
+        self.assertIsNone(result["observed_source_scope"])
+        row=next(r for r in result["chain"] if r["scope"]=="4")
+        self.assertEqual(row["status"],"individual_evidence_conflict")
+        self.assertIn("individual_conflict",row["effective"])
+        self.assertNotIn("4",result["matching_direct_scopes"])
+        self.assertIn("Contradictory individual evidence",inheritance_path(result,"/test/","capture.json","ACCESS_SWITCH"))
+        bundle["keyed_profile_details"]["profiles"]["ACCESS_SWITCH"]={"5":{"layer2-vlan":{"20":{"effective":read("Other")}}}}
+        result=source_trace(bundle,"ACCESS_SWITCH","5","layer2-vlan","20")
+        self.assertEqual(result["effective"]["state"],"individual_evidence_conflict")
+        self.assertIsNone(result["observed_source_scope"])
+        self.assertFalse(result["safe_to_apply"])
