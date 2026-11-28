@@ -41,7 +41,8 @@ def remediation_view(workspace, query):
     for f in promotions:
         reuse = f["action"] == "reuse_library"
         label = ("Reuse Library / " if reuse else "Promote local / ") + f["module"] + " / " + f["identity"] + " / " + f["persona"]
-        options.append((json.dumps(["promotion", f["id"], "library"]), label + " / Library"))
+        if not any(d["destination"] == "library" for d in f.get("blocked_destinations", [])):
+            options.append((json.dumps(["promotion", f["id"], "library"]), label + " / Library"))
         if not reuse:
             options.extend((json.dumps(["promotion", f["id"], p["scope"]]), label + " / " + p["kind"] + " / " + p["name"])
                            for p in f["placement_options"])
