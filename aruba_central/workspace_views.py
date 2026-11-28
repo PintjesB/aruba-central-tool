@@ -361,11 +361,22 @@ def advisor_view(workspace, query):
                     dependency_rows.append(tr(e(label), e(ref["device"]), e(ref["source_module"] + " / " + str(ref["source"])),
                                               e(ref["target_module"] + " / " + str(ref["target"] or "Unknown")),
                                               badge(pretty(ref["status"]))))
+            other_rows = []
+            for key, label in (("other_function_consumers", "Same-name consumer"), ("other_function_dependencies", "Same-name prerequisite"),
+                               ("other_function_unresolved_targets", "Unresolved target")):
+                for ref in dep.get(key, []):
+                    other_rows.append(tr(e(label), e(persona_label(ref["persona"])), e(ref["device"]),
+                                         e(ref["source_module"] + " / " + str(ref["source"])),
+                                         e(ref["target_module"] + " / " + str(ref["target"] or "Unknown")), badge(pretty(ref["status"]))))
+            cross_context = ('<details><summary>Other device functions: ' + str(len(other_rows)) +
+                             ' potential dependency observations</summary><p>Especially relevant for Library destinations. These are same-name or unresolved references, not proven consumers of this definition. They do not determine dependency order.</p>'
+                             + table(("Relationship", "Function", "Scope", "Source", "Target", "Evidence"), other_rows, search=True) + '</details>') if other_rows else ""
             dependency_html = ('<h3>Observed dependencies</h3><p>' + str(dep["observed_consumer_devices"])
                                + ' effective consumer device/function pairs; ' + str(len(dep["unqualified_edges"]))
                                + ' unqualified edges; ' + str(len(dep["unresolved_target_observations"]))
                                + ' unresolved target observations. Same-name references may belong to another scope; no complete dependency claim.</p>'
                                + table(("Relationship", "Scope", "Source", "Target", "Evidence"), dependency_rows, search=True)
+                               + cross_context
                                + f'<p><a href="{url(root, "impact", snapshot=name, module=f["module"], identity=f["identity"])}">Trace direct and transitive impact</a></p>')
             details = (
                 f'<div class="review-decision"><div><strong>{e(f["target"] if action == "remove_override" else ACTION_GUIDE[action][2])}</strong><p>{e(ACTION_GUIDE[action][1])}</p></div></div>'
@@ -657,6 +668,12 @@ function preview(){
  for(const f of chosen){
   const item=document.createElement('div');item.className='plan-item';
   item.append(el('h3',f.module+' / '+f.identity),el('p',({remove_override:'Review matching nearest inheritance',promote_local:'Consolidate repeated local profiles',reuse_library:'Reuse matching Library profile'}[f.action]||f.action)+' · '+f.target));
+  const evidence=f.dependency_review||{};
+  const other=(evidence.other_function_consumers||[]).length+(evidence.other_function_dependencies||[]).length+(evidence.other_function_unresolved_targets||[]).length;
+  const gaps=(evidence.unqualified_edges||[]).length+(evidence.unresolved_target_observations||[]).length;
+  if(gaps||(other&&f.selected_destination?.kind==='library')){
+   item.append(el('p',gaps+' unqualified or unresolved dependency observations; '+other+' other-function potential observations. Review the captured evidence before manual changes.'));
+  }
   const flow=el('div','');flow.className='preview-transition';
   const before=el('div','');before.append(el('small','Captured configuration'),el('strong',f.sources.length+' local definition(s)'));
   const sourceNames=el('ul','');for(const source of f.sources)sourceNames.append(el('li',source.name+' ('+source.kind+')'));before.append(sourceNames);
