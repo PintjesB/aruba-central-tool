@@ -509,6 +509,12 @@ def advanced_analysis(bundle):
                             "collection_conflict": conflict})
                         existing[key].add(target_id)
 
+    # Qualify references against exact positive direct observations at
+    # both ends. A collection-derived reference must not retain a positive
+    # status when the individual source or target body contradicts it.
+    from .dependency_evidence import qualify_reference_edges
+    qualify_reference_edges(bundle, result["references"], persona_views)
+
     for module, view in sorted(library.get("modules", {}).items()):
         # Identity is semantic for numeric VLAN IDs and SSIDs. Report equivalent
         # named bodies only; never assume interchangeability.
