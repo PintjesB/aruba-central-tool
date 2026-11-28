@@ -98,14 +98,14 @@ def nac_view(workspace, query):
         tr(e(p["name"]), e(p["type"]), property_table(p["networks"]),
            inspect("Authentication evidence", refs(p["identity_stores"]), "Review stores"))
         for p in policies["authentication"]], search=True) + '</section>'
-    body += '<section><h2>Authorization policies</h2><p>Capture: ' + e(pretty(policies["policy_capture_status"])) + ' · Observed policy order: ' + e(str(policies["policy_order_verified"])) + '. Policy and rule applicability are not evaluated against live clients.</p>'
+    body += '<section><h2>Authorization policies</h2><p>Capture: ' + e(pretty(policies["policy_capture_status"])) + ' · Observed policy order: ' + e(str(policies["policy_order_verified"])) + ' · Count-confirmed policy order: ' + e(str(policies.get("complete_policy_order_observed",False))) + '. Policy and rule applicability are not evaluated against live clients.</p>'
     policy_rows = []
     for p in policies["policies"]:
         detail = '<h3>Policy preconditions</h3>' + property_table(p["conditions"]) + '<h3>Identity stores</h3>' + refs(p["identity_stores"])
         detail += '<h3>Default enforcement attributes</h3>' + attrs(p["default_attributes"]) + list_items(p["default_gaps"])
         detail += '<h3>Rule evaluation order</h3><p>Order observed: ' + e(str(p["rule_order_verified"])) + '</p>'
         for rule in p["rules"]:
-            detail += '<h4>Rule position ' + e(rule["position"]) + '</h4><p>Enabled: ' + e(str(rule["enabled"])) + ' · ' + e(pretty(rule["status"])) + '</p>'
+            detail += '<h4>Rule position ' + e(rule["position"]) + ' (captured #' + str(rule["captured_index"]+1) + ')</h4><p>Enabled: ' + e(str(rule["enabled"])) + ' · ' + e(pretty(rule["status"])) + '</p>'
             detail += property_table(rule["conditions"]) + '<h4>Explicit rule attributes</h4>' + attrs(rule["attributes"])
             detail += '<h4>Conditional default + rule attributes</h4>' + attrs(rule["combined_candidate_attributes"]) + list_items(rule["gaps"])
         policy_rows.append(tr(e(p["position"]), e(p["name"]), e(p["type"]), e(str(p["enabled"])),
@@ -127,9 +127,9 @@ def nac_view(workspace, query):
             tr(e(v["persona"]), e(v["device"]), e(v["name"] or ""), badge(pretty(v["status"]))) for v in visibility], search=True)
         vlan_rows.append(tr(e(target["policy"]), e(context_label(target, "Default")),
                             e(target["value"]), badge(pretty(target["status"])), str(counts["observed"]),
-                            str(counts["count_confirmed_absence"]), str(counts["unverified"]),
+                            str(counts["count_confirmed_absence"]), str(counts["unverified"]+counts["individual_evidence_conflict"]),
                             inspect("Switch VLAN evidence", details, "Review")))
-    body += table(("Policy", "Rule position", "VLAN attribute", "Evidence", "Observed", "Confirmed absent", "Unknown", ""), vlan_rows, search=True) + '</section>'
+    body += table(("Policy", "Rule position", "VLAN attribute", "Evidence", "Observed", "Confirmed absent", "Unknown or conflicting", ""), vlan_rows, search=True) + '</section>'
     role_review=bindings["role_enforcement"]
     body+='<section><h2>Role enforcement evidence</h2><p>Explicit Aruba-User-Role custom attributes and exact role-name value candidates are shown separately. Similar names are not aliases. Captured visibility is not a client authorization result or proof of role applicability.</p>'
     role_rows=[]
