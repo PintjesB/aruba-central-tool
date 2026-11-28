@@ -312,8 +312,14 @@ class AdvancedTests(unittest.TestCase):
         refs = result["references"]
         self.assertEqual(len(refs), 3)
         self.assertEqual(sum(r.get("source_evidence") == "individual" for r in refs), 2)
-        self.assertEqual(sum(bool(r.get("collection_conflict")) for r in refs), 1)
+        # Both collection and individual edges remain visible. None is
+        # qualified when the source profile bodies themselves contradict.
+        self.assertEqual(sum(bool(r.get("collection_conflict")) for r in refs), 3)
+        self.assertTrue(all(r["source_body_conflict"] and not r["target_body_conflict"] for r in refs))
+        self.assertEqual({r["status"] for r in refs}, {"conflicting_observation"})
+        self.assertEqual({r["previous_status"] for r in refs}, {"definition_observed","conflicting_observation"})
         usage = library_usage(bundle, "auth-servers", ["a", "b"], refs)
+        self.assertEqual(usage["a"]["conflicting_reference_count"], 1)
         self.assertEqual(usage["a"]["reference_count"], 1)
         self.assertEqual(usage["b"]["conflicting_reference_count"], 1)
         self.assertIsNone(preferred_duplicate(usage))
