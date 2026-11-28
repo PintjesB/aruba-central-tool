@@ -137,10 +137,33 @@ def server_count_relationship(read, diff):
     return "equals_observed_server_count" if value == len(servers) else "differs_from_observed_server_count"
 
 
+def server_count_contract(read, diff):
+    """Classify a missing integer field without treating its spelling as equivalent.
+
+    HPE documents count-servers as the number of servers:
+    https://developer.arubanetworks.com/new-central-config/reference/replaceservergroupsservergroupbyid
+    A namespace-qualified local name is a diagnostic only, not a documented alias.
+    """
+    relationship=server_count_relationship(read,diff)
+    if relationship is None:
+        return None
+    field=diff["path"][0]
+    if field=="count-servers":
+        spelling="documented_exact"
+    elif isinstance(field,str) and ":" in field and field.rsplit(":",1)[1]=="count-servers":
+        spelling="documented_local_name_only"
+    else:
+        spelling="other"
+    differences=read.get("differences",[])
+    other_differences="sole_difference" if len(differences)==1 else "additional_differences"
+    return spelling,relationship,other_differences
+
+
 def keyed_qualification(bundle):
     schemas, differences, profiles, structures = Counter(), Counter(), Counter(), Counter()
     relationships, locations = Counter(), Counter()
     case_candidates, integer_relationships = Counter(), Counter()
+    count_contracts=Counter()
     private_paths = {}
     for persona, scopes in (bundle.get("keyed_profile_details") or {}).get("profiles", {}).items():
         for scope, modules in scopes.items():
@@ -174,6 +197,7 @@ def keyed_qualification(bundle):
                                 relationship = server_count_relationship(read, diff)
                                 if relationship is not None:
                                     integer_relationships[(module, side, relationship)] += 1
+                                    count_contracts[(side,*server_count_contract(read,diff))]+=1
                             path = diff.get("path")
                             field = path[0] if isinstance(path, list) and path and path[0] in PUBLIC_FIELDS else "other"
                             if isinstance(path, list):
@@ -211,5 +235,8 @@ def keyed_qualification(bundle):
                                               for (m, v, k), n in sorted(case_candidates.items())],
             "server_group_integer_relationships": [{"module": m, "view": v, "relationship": k, "occurrences": n}
                                                    for (m, v, k), n in sorted(integer_relationships.items())],
+            "server_group_count_contracts":[{"view":side,"field_spelling":spelling,"count_relationship":relation,
+                                             "difference_scope":scope,"occurrences":n}
+                                            for (side,spelling,relation,scope),n in sorted(count_contracts.items())],
             "applicability": applicability_evidence(bundle),
             "safe_to_apply": False, "order_equivalence_qualified": False}

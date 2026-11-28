@@ -77,3 +77,28 @@ class KeyedQualificationTests(unittest.TestCase):
                          "equals_observed_server_count")
         self.assertFalse(report["safe_to_apply"])
         self.assertNotIn("private", json.dumps(report))
+
+    def test_count_contract_shape_does_not_disclose_namespace_or_assume_equivalence(self):
+        def read(field, count, extra=False):
+            profile={"name":"private-group","servers":[{"server-name":"private-server"}]}
+            left={**profile,field:count}
+            if extra:
+                left["private-extra"]=True
+            return {"status":"identity_observed","profile":profile,
+                    "differences":field_differences(left,profile)}
+        bundle={"keyed_profile_details":{"profiles":{"Library":{"":{"server-groups":{
+            "private-a":{"library":read("count-servers",1)},
+            "private-b":{"library":read("private-namespace:count-servers",1)},
+            "private-c":{"library":read("private-field",1)},
+            "private-d":{"library":read("count-servers",2,True)},
+        }}}}}}
+        report=keyed_qualification(bundle)
+        actual={(r["field_spelling"],r["count_relationship"],r["difference_scope"]):r["occurrences"]
+                for r in report["server_group_count_contracts"]}
+        self.assertEqual(actual,{
+            ("documented_exact","equals_observed_server_count","sole_difference"):1,
+            ("documented_local_name_only","equals_observed_server_count","sole_difference"):1,
+            ("other","equals_observed_server_count","sole_difference"):1,
+            ("documented_exact","differs_from_observed_server_count","additional_differences"):1})
+        self.assertNotIn("private",json.dumps(report))
+        self.assertFalse(report["safe_to_apply"])
