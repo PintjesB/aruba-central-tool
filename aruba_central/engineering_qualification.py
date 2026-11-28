@@ -66,6 +66,7 @@ def engineering_qualification(bundle, *, include_reference_patterns=False):
         result["reference_identity_patterns"] = reference_identity_patterns(engineering["references"])
         result["named_reference_gaps"] = named_reference_gaps(engineering["references"])
         result["reference_absence_patterns"] = reference_absence_patterns(engineering["references"])
+        result["role_vlan_name_evidence"] = role_vlan_name_evidence(engineering["references"])
     return result
 
 
@@ -143,6 +144,26 @@ def reference_absence_patterns(references):
         counts[source,target,reference_semantics(row)] += 1
     return [{"source_module":s,"target_module":t,"semantics":kind,"observations":n}
             for (s,t,kind),n in sorted(counts.items(),key=lambda item:(-item[1],item[0]))]
+
+
+def role_vlan_name_evidence(references):
+    """Fixed state/context counts, never configured VLAN names or IDs."""
+    from collections import Counter
+    states={"single_candidate_id","multiple_candidate_ids","no_observed_candidate","conflicting_evidence"}
+    fields={"gateway_access_vlan_name","nested_access_vlan_name"}
+    contexts={"library_vlan_name","same_site_vlan_name"}
+    counts=Counter()
+    for row in references:
+        review=row.get("role_vlan_name_review")
+        if not isinstance(review,dict) or row.get("status")!="unresolved":
+            continue
+        state=review.get("status") if review.get("status") in states else "unknown"
+        field=review.get("field_context") if review.get("field_context") in fields else "unknown"
+        positive=tuple(sorted({obs.get("context") for obs in review.get("observations",[])
+                               if obs.get("status")=="identity_observed" and obs.get("context") in contexts}))
+        counts[field,state,positive]+=1
+    return [{"field_context":f,"status":s,"positive_contexts":list(p),"observations":n}
+            for (f,s,p),n in sorted(counts.items(),key=lambda item:(-item[1],item[0]))]
 
 
 def main():
