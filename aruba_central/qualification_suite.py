@@ -45,7 +45,7 @@ def qualification_suite(directory, snapshot=None, *, repeat=3, executable=None, 
     from .engineering_qualification import engineering_qualification
     capture=read_audit(Path(directory),selected)
     qualification = keyed_qualification(capture)
-    engineering=engineering_qualification(capture)
+    engineering=engineering_qualification(capture,include_reference_patterns=True)
     del capture
     unchanged()
     planner = planner_qualification(directory, selected)

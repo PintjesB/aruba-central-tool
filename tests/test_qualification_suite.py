@@ -29,6 +29,10 @@ class QualificationSuiteTests(unittest.TestCase):
             self.assertEqual(report["engineering"]["central_api_requests"],0)
             self.assertFalse(report["engineering"]["safe_to_apply"])
             self.assertIn("conditional_nac_observations",report["engineering"]["counts"]["engineering"])
+            for key in ("reference_identity_patterns","named_reference_gaps","named_reference_field_gaps",
+                        "reference_absence_patterns","role_vlan_name_evidence","reference_conflict_patterns",
+                        "policy_predicate_patterns"):
+                self.assertIn(key,report["engineering"])
 
     def test_changed_capture_aborts_before_remaining_stages(self):
         with tempfile.TemporaryDirectory() as directory:
