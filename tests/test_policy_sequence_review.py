@@ -97,3 +97,23 @@ class PolicySequenceTests(unittest.TestCase):
         self.assertEqual(reports[5]["references"][0]["status"],"not_observed")
         self.assertTrue(all(not r["findings"] and not r["safe_to_apply"] for r in reports))
         self.assertTrue(all(r["references"][0]["status"]=="target_unverified" for r in reports[:5]))
+
+    def test_alternative_policy_identity_observations_never_qualify_sequence_targets(self):
+        raw=capture([{"name":"broad","position":1},{"name":"specific","position":2}])
+        bodies={"broad":policy([rule(1)]),"specific":policy([rule(1)])}
+        mixed=[{**body,"name":name} for name,body in bodies.items()]
+        data={"results":{"CAMPUS_AP":{"scopes":[{"id":"1","kind":"global"}],"modules":{
+            "policies":{"scope_results":[{"scope":"1","effective_view":{"status":"list_parsed","profiles":bodies}}]}}}},
+            "library":{"modules":{"policies":{"status":"list_parsed","profiles":{"broad":bodies["broad"]}}}},
+            "unadapted_profiles":{"policy-groups":{"source_views":[{"persona":"ALL_DEVICE_FUNCTIONS","scope":"1","effective":raw},
+                {"persona":"ALL_DEVICE_FUNCTIONS","scope":"2","effective":raw}]},
+                "policies":{"source_views":[{"persona":"UNFILTERED_SCOPE","scope":"1","effective":{
+                    "status":"response_received","raw":{"policy":mixed}}}]}}}
+        reports=policy_sequence_reviews(data)
+        first=reports[0]["references"][0]
+        self.assertEqual(first["status"],"target_unverified")
+        self.assertEqual({r["context"] for r in first["alternative_observations"]},
+                         {"other_function_same_scope","unfiltered_same_scope","library_definition"})
+        self.assertEqual({r["context"] for r in reports[1]["references"][0]["alternative_observations"]},{"library_definition"})
+        self.assertTrue(all(not r["findings"] and not r["safe_to_apply"] for r in reports))
+        self.assertNotIn("alternative_observations",reports[1]["references"][1])
