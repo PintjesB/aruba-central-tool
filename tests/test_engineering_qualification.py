@@ -200,3 +200,36 @@ class EngineeringQualificationTests(unittest.TestCase):
         self.assertEqual(report["policy_sequences"]["conditional_effective_targets"],2)
         self.assertEqual(report["policy_sequences"]["conditional_library_predicates"],4)
         self.assertEqual(report["policy_sequences"]["cross_policy_candidates"],0)
+
+    def test_predicate_patterns_and_library_candidate_groups_are_separate_and_anonymous(self):
+        from aruba_central.policy_rule_review import predicate_pattern_summary
+        from aruba_central.policy_sequence_review import library_candidate_groups
+        from aruba_central.assessment_review import assessment
+        from test_consolidation import fixture
+        shape={"reason":"unsupported_condition_fields","condition_shape":"CONDITION_DEFAULT",
+               "rule_kind":"RULE_TCP","source_kind":"ADDRESS_ANY","destination_kind":"private-name",
+               "transport_fields":True,"rules":3,"private":"private-value"}
+        preview={"findings":[],"rules":3,"qualified_match_rules":0,"order_verified":True,"truncated":False,
+                 "unsupported_predicate_shapes":[shape],"structural_condition_pairs":[{"private":"rule-body"}]}
+        rule={"status":"rule_schema_unqualified","findings":[],"unsupported_rules":0,"order_verified":False,
+              "module":"policies","truncated":False,"conditional_security_preview":preview}
+        patterns=predicate_pattern_summary([rule])
+        self.assertEqual(patterns[0]["context"],"conditional")
+        self.assertEqual(patterns[0]["rules"],3)
+        self.assertEqual(patterns[0]["destination_kind"],"unknown")
+        self.assertNotIn("private",json.dumps(patterns))
+        f={"earlier_policy":"a","later_policy":"b","same_action":False,"condition_relationship":"same_condition"}
+        sequences=[{"status":"order_observed","references":[],"findings":[],"truncated":False,
+                    "library_preview":{"references":[],"findings":[f,f],"truncated":False}},
+                   {"status":"order_observed","references":[],"findings":[],"truncated":False,
+                    "library_preview":{"references":[],"findings":[f],"truncated":False}}]
+        groups=library_candidate_groups(sequences)
+        self.assertEqual(len(groups),1)
+        self.assertEqual(groups[0]["occurrences"],3)
+        self.assertEqual(groups[0]["captures"],2)
+        self.assertEqual(groups[0]["representative_index"],0)
+        result=assessment(fixture(),rules=[rule],sequences=sequences)
+        self.assertEqual(result["policy_rules"]["conditional_structural_condition_pairs"],1)
+        self.assertEqual(result["policy_rules"]["observations"],0)
+        self.assertEqual(result["policy_predicate_patterns"],patterns)
+        self.assertEqual(result["policy_sequences"]["library_preview_distinct_candidate_bodies"],1)
