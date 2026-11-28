@@ -78,6 +78,7 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "unsupported_acl_predicate_occurrences":sum(row.get("unsupported_reasons",{}).get("acl_predicate_unqualified",0) for row in rules),
                 "unqualified_order": sum(not row["order_verified"] for row in rules),
                 "individual_conflict_groups":sum(row["status"]=="individual_evidence_conflict" for row in rules),
+                "structural_security_repetitions":sum(f["status"]=="identical_unsupported_security_rule_body" for row in rules for f in row["findings"]),
                 "partial_overlap_candidates":sum(f.get("condition_relationship")=="partial_overlap" for row in rules for f in row["findings"]),
                 "reverse_containment_candidates":sum(f.get("condition_relationship")=="later_contains_earlier" for row in rules for f in row["findings"]),
                 "truncated": sum(row["truncated"] for row in rules)},
