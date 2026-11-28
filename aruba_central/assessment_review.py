@@ -79,6 +79,7 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                         if view.get("count_confirmed") is True:
                             coverage["count_confirmed"] += 1
     reference_reasons=Counter()
+    from .vlan_membership import member_count
     absent_semantics = Counter()
     compact_fields=Counter()
     absent_fields = set()
@@ -89,9 +90,9 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
             compact_fields["fields"]+=1
             compact_fields["members"]+=ref["target_member_count"]
             compact_fields[ref["status"]]+=1
-        if ref["status"] == "not_observed" and ref.get("target_evidence") == "count_confirmed_absence":
+        if ref["status"] == "not_observed" and ref.get("target_evidence") in ("count_confirmed_absence","set_count_confirmed_absence"):
             semantics = reference_semantics(ref)
-            absent_semantics[semantics] += 1
+            absent_semantics[semantics] += member_count(ref)
             if semantics != "direct_or_unclassified":
                 absent_fields.add((ref.get("persona"),ref.get("scope"),ref.get("source_view"),ref.get("source_module"),ref.get("source"),tuple(ref.get("path",[]))))
         if ref["status"]=="conflicting_observation":
@@ -137,10 +138,12 @@ def assessment(bundle, *, findings=None, engineering=None, assignments=None, col
                 "compact_membership_members":compact_fields["members"],
                 "compact_membership_unresolved_fields":compact_fields["unresolved"],
                 "compact_membership_absent_fields":compact_fields["not_observed"],
-                "reference_target_count_confirmed_absence": sum(r.get("target_evidence") == "count_confirmed_absence" for r in engineering["references"]),
+                "reference_target_count_confirmed_absence": sum(member_count(r) for r in engineering["references"] if r.get("target_evidence") in ("count_confirmed_absence","set_count_confirmed_absence")),
                 "unresolved_reference_target_individual_identity": sum(r.get("status") == "unresolved" and r.get("target_individual_status") == "identity_observed" for r in engineering["references"]),
                 **{"reference_alternative_"+key:reference_alternatives[key] for key in reference_contexts+("any","none")},
                 "unresolved_references": sum(ref["status"] not in ("observed", "definition_observed") and ref.get("source_evidence")!="nac_enforcement" for ref in engineering["references"]),
+                "unresolved_member_equivalents":sum(member_count(ref) for ref in engineering["references"] if ref["status"] not in ("observed","definition_observed") and ref.get("source_evidence")!="nac_enforcement"),
+                "compact_membership_conflicting_fields":compact_fields["conflicting_observation"],
                 "conditional_nac_observations":sum(ref.get("source_evidence")=="nac_enforcement" for ref in engineering["references"]),
                 "conflicting_reference_observations":sum(ref.get("status")=="conflicting_observation" for ref in engineering["references"]),
                 **{key:reference_reasons[key] for key in ("both_ends","source_only","target_only","other_conflict","unknown_identity","named_target_not_observed","named_target_unqualified","compact_membership")}},

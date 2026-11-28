@@ -876,7 +876,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     from .review_dispositions import snapshot_binding, digest
     from .history_view import private_export
     from .dependency_evidence import reference_semantics, REFERENCE_SEMANTICS
-    from .vlan_membership import target_matches
+    from .vlan_membership import target_matches, member_count
     binding = digest([snapshot_binding(workspace, name, bundle), workflow])
     params = {"snapshot": name, "workflow": workflow}
     if query.get("reference_detail") is not None:
@@ -910,7 +910,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     def set_key(r):
         return (r["persona"],r["scope"],r.get("source_view"),r["source_module"],r["source"],tuple(r.get("path",[])))
     def set_member(r):
-        return r["status"] == "not_observed" and r.get("target_evidence") == "count_confirmed_absence" and reference_semantics(r)!="direct_or_unclassified"
+        return r["status"] == "not_observed" and r.get("target_evidence") in ("count_confirmed_absence","set_count_confirmed_absence") and reference_semantics(r)!="direct_or_unclassified"
     def set_id(r):
         return digest([binding,set_key(r)])
     def positive_contexts(row):
@@ -925,7 +925,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     selected = [(i, r) for i, r in enumerate(records)
                 if (not state or r["status"] == state) and (not persona or r["persona"] == persona)
                 and (not module or r["target_module"] == module)
-                and (not reason or r.get("target_evidence") == reason)
+                and (not reason or r.get("target_evidence") == reason or (reason=="count_confirmed_absence" and r.get("target_evidence")=="set_count_confirmed_absence"))
                 and (not source or r["source_module"] == source)
                 and (not field_filter or field(r) == field_filter)
                 and (not semantics or reference_semantics(r) == semantics)
@@ -969,14 +969,14 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     absence_groups = Counter()
     absence_fields = {}
     for _, r in selected:
-        if r["status"] != "not_observed" or r.get("target_evidence") != "count_confirmed_absence":
+        if r["status"] != "not_observed" or r.get("target_evidence") not in ("count_confirmed_absence","set_count_confirmed_absence"):
             continue
         kind = reference_semantics(r)
-        absence_groups[kind] += 1
+        absence_groups[kind] += member_count(r)
         if kind != "direct_or_unclassified":
             key = set_key(r)
             group = absence_fields.setdefault(key,{"sample":r,"count":0})
-            group["count"] += 1
+            group["count"] += member_count(r)
     if absence_groups:
         controls += '<section><h3>Absence from captured target views</h3><p>Set members can represent allowed VLANs, selection pools or spanning-tree membership. Their absence is not by itself a missing required definition. All member observations remain available for dependency tracing.</p>'+table(("Reference kind","Member observations",""),[
             tr(e(pretty(kind)),str(count),f'<a href="{url(root,"advanced",**{**filters,"ref_semantics":kind,"ref_state":"not_observed","ref_evidence":"count_confirmed_absence"})}">Review</a>')
