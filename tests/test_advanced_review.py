@@ -535,3 +535,14 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual({(m,t) for m,t,_ in role},{("named-vlan","pool"),("layer2-vlan","10"),
                            ("layer2-vlan","20"),("layer2-vlan","30"),("layer2-vlan","31")})
         self.assertIn(("layer2-vlan",None,["vlan-parameters","named-vlan"]),refs("other",{"vlan-parameters":{"named-vlan":"pool"}}))
+
+    def test_reference_value_shape_never_exports_the_field_value(self):
+        from aruba_central.advanced_review import reference_value_shape
+        for value,shape in ((None,"null"),("","empty_string"),(" ALL ","wildcard_string"),
+                            ("private-vlan-name","nonempty_string"),(True,"boolean"),(42,"integer"),
+                            ([],"empty_list"),(["all"],"wildcard_list"),(["1-20",30],"literal_list"),
+                            ([{"private-key":"private-value"}],"object_list"),([None,30],"mixed_list"),
+                            ({"private":"value"},"object")):
+            self.assertEqual(reference_value_shape({"vlan":[{"value":value}]},["vlan",0,"value"]),shape)
+        self.assertEqual(reference_value_shape({"vlan":[]},"vlan"),"missing_path")
+        self.assertEqual(reference_value_shape({"vlan":[]},["vlan",0]),"missing_path")
