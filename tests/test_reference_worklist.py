@@ -189,3 +189,26 @@ class ReferenceWorklistTests(unittest.TestCase):
                 self.assertIn("of 1 matching observations",w.advanced({**query,"ref_target":"11","ref_target_kind":"set"}))
                 self.assertIn("of 0 matching observations",w.advanced({**query,"ref_target":"10","ref_target_kind":"set"}))
                 self.assertIn("of 1 matching observations",w.advanced({**query,"ref_target_kind":"unknown"}))
+
+    def test_named_target_group_preserves_repeated_scope_and_reason_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            name="config-audit-test.json"
+            (Path(directory)/name).write_text(json.dumps(fixture()))
+            w=Workspace(directory)
+            base={"persona":"CAMPUS_AP","device":"AP","source_view":"effective","source_module":"ap-port-profiles",
+                  "source":"port","path":["switchport","access-vlan"],"target_module":"layer2-vlan",
+                  "status":"unresolved","target_evidence":"target_view_unqualified"}
+            refs=[{**base,"scope":str(i),"target":"10"} for i in range(57)]
+            refs.append({**base,"scope":"Library","persona":"Library","source_view":"library","target":"10",
+                         "target_evidence":"target_collection_incomplete"})
+            refs.append({**base,"scope":"0","target":"110"})
+            refs.append({**base,"scope":"0","target":"10","target_alternative_observations":[
+                {"context":"library_definition","status":"identity_observed"}]})
+            with patch.object(w,"advanced_snapshot",return_value={"references":refs,"shadowed":[],"port_groups":[],"library_duplicates":[]}):
+                query={"snapshot":name,"workflow":"references"}
+                html=w.advanced(query)
+                self.assertIn("Distinct named targets without positive alternative evidence (2)",html)
+                self.assertIn("ref_target=10",html)
+                html=w.advanced({**query,"ref_target":"10","ref_context":"no_positive_context","ref_target_kind":"scalar"})
+                self.assertIn("of 58 matching observations",html)
+                self.assertNotIn("Distinct named targets without positive alternative evidence",html)
