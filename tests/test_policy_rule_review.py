@@ -127,3 +127,37 @@ class PolicyRuleTests(unittest.TestCase):
             self.assertEqual(policy_schema_state("policies",body),state)
         self.assertEqual(policy_schema_state("role-acls",{}),"acl_rule_list_unqualified")
         self.assertEqual(policy_schema_state("role-acls",{"rules":[]}),"qualified")
+
+    def test_policy_body_shape_distinguishes_empty_and_missing_rule_list(self):
+        from aruba_central.policy_rule_review import policy_body_shape
+        self.assertEqual(policy_body_shape({"name":"a"}),"identity_only")
+        self.assertEqual(policy_body_shape({"name":"a","description":"x"}),"metadata_only")
+        self.assertEqual(policy_body_shape({"name":"a","unknown":True}),"security_wrapper_missing")
+        self.assertEqual(policy_body_shape({"security-policy":None}),"security_wrapper_invalid")
+        self.assertEqual(policy_body_shape({"security-policy":{}}),"security_subtype_missing")
+        self.assertEqual(policy_body_shape({"security-policy":{"type":"other"}}),"security_subtype_other")
+        for state,rules in (("rule_list_null",None),("rule_list_invalid",{}),("rule_list_empty",[]),("rule_list_present",[rule(1)])):
+            self.assertEqual(policy_body_shape({"security-policy":{"type":"SECURITY_POLICY_TYPE_DEFAULT","policy-rule":rules}}),state)
+        self.assertEqual(policy_body_shape({"security-policy":{"type":"SECURITY_POLICY_TYPE_DEFAULT"}}),"rule_list_missing")
+        body=policy([rule(1)])
+        del body["type"]
+        result=rule_review("policies",body)
+        self.assertEqual(result["body_shape"],"rule_list_present")
+        self.assertEqual(result["status"],"rule_schema_unqualified")
+        self.assertFalse(result["order_verified"])
+
+    def test_policy_library_body_relation_never_completes_missing_type(self):
+        body=policy([rule(1)])
+        partial={k:v for k,v in body.items() if k!="type"}
+        view={"status":"list_parsed","profiles":{"test":partial}}
+        bundle={"results":{"CAMPUS_AP":{"scopes":[{"id":"1","kind":"device"}],"modules":{
+                    "policies":{"scope_results":[{"scope":"1","effective_view":view}]}}}},
+                "library":{"modules":{"policies":{"status":"list_parsed","profiles":{"test":body}}}}}
+        report=next(r for r in policy_rule_groups(bundle) if r["persona"]=="CAMPUS_AP")
+        self.assertEqual(report["library_body_relation"],"only_missing_policy_type")
+        self.assertEqual(report["status"],"rule_schema_unqualified")
+        self.assertFalse(report["safe_to_apply"])
+        view["profiles"]["test"]={"name":"test"}
+        report=next(r for r in policy_rule_groups(bundle) if r["persona"]=="CAMPUS_AP")
+        self.assertEqual(report["library_body_relation"],"different_body")
+        self.assertEqual(report["body_shape"],"identity_only")
