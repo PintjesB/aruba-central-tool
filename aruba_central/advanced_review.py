@@ -258,6 +258,33 @@ def duplicate_migration_preview(module, usage, keep, bundle=None):
             "safe_to_apply": False, "complete": False}
 
 
+def target_reference_evidence(view, identity, *, definition=False):
+    """Distinguish a missing identity from an incomplete or unavailable read."""
+    if identity is None:
+        return "unresolved", "identity_unqualified"
+    if view.get("status") != "list_parsed":
+        return "unresolved", "target_view_unqualified"
+    if identity in view.get("profiles", {}):
+        return ("definition_observed" if definition else "observed"), "identity_observed"
+    if view.get("count_confirmed") is True:
+        return "not_observed", "count_confirmed_absence"
+    return "unresolved", "target_collection_incomplete"
+
+
+def profile_reference_observations(module, identity, body, vlans):
+    """Use identical reference extraction for all qualified source reads."""
+    if module != "layer2-vlan":
+        vlan_refs = reference_candidates(body, vlans)
+        for ref in vlan_refs["references"]:
+            for vid in ref["vlan_ids"]:
+                yield "layer2-vlan", vid, ref["path"]
+        for path in vlan_refs["unresolved_paths"]:
+            yield "layer2-vlan", None, path
+        if module == "vlan-interfaces" and identity.isdigit():
+            yield "layer2-vlan", identity, ["identity"]
+    yield from explicit_references(body, module=module)
+
+
 def advanced_analysis(bundle):
     result = {"port_groups": [], "shadowed": [], "library_duplicates": [],
               "references": [], "coverage": [], "reference_graph_complete": False,
@@ -283,11 +310,10 @@ def advanced_analysis(bundle):
                 return views.get(module, {}).get(sid, {})
             def emit(source_module, source, target, identity, path):
                 target_view = get(target)
-                status = ("unresolved" if identity is None or target_view.get("status") != "list_parsed"
-                          else "observed" if identity in target_view["profiles"] else "not_observed")
+                status, reason = target_reference_evidence(target_view, identity)
                 result["references"].append({"persona": persona, "device": names[sid], "scope": sid,
                     "source_module": source_module, "source": source, "source_view": "effective", "source_scope_kind": "device", "target_module": target,
-                    "target": identity, "path": list(path), "status": status})
+                    "target": identity, "path": list(path), "status": status, "target_evidence": reason})
             for module in sorted(views):
                 view = get(module)
                 result["coverage"].append({"persona": persona, "scope": sid, "module": module,
@@ -298,17 +324,7 @@ def advanced_analysis(bundle):
                 vlans = vlan_view.get("profiles", {}) if vlan_view.get("status") == "list_parsed" else {}
                 for identity, raw in view["profiles"].items():
                     body = profile_body(raw)
-                    if module != "layer2-vlan":
-                        vlan_refs = reference_candidates(body, vlans)
-                        for ref in vlan_refs["references"]:
-                            # A VLAN interface's own identity is a dependency, not a dangling reference.
-                            for vid in ref["vlan_ids"]:
-                                emit(module, identity, "layer2-vlan", vid, ref["path"])
-                        for path in vlan_refs["unresolved_paths"]:
-                            emit(module, identity, "layer2-vlan", None, path)
-                        if module == "vlan-interfaces" and identity.isdigit():
-                            emit(module, identity, "layer2-vlan", identity, ["identity"])
-                    for target, ref, path in explicit_references(body, module=module):
+                    for target, ref, path in profile_reference_observations(module, identity, body, vlans):
                         emit(module, identity, target, ref, path)
                     if module == "ethernet-interfaces" and persona.endswith("_SWITCH"):
                         if body.get("routing") is True or PORT_TOPOLOGY & body.keys():
@@ -429,19 +445,13 @@ def advanced_analysis(bundle):
         vlans = vlan_view.get("profiles", {}) if vlan_view.get("status") == "list_parsed" else {}
         for identity, raw in profiles.items():
             body = profile_body(raw)
-            refs = list(explicit_references(body, module=module))
-            if module != "layer2-vlan":
-                vlan = reference_candidates(body, vlans)
-                refs.extend(("layer2-vlan", vid, ref["path"]) for ref in vlan["references"] for vid in ref["vlan_ids"])
-                refs.extend(("layer2-vlan", None, path) for path in vlan["unresolved_paths"])
-            for target, target_id, path in refs:
+            for target, target_id, path in profile_reference_observations(module, identity, body, vlans):
                 view = target_views.get(target, {})
                 # Existence in Library is not proof of device applicability.
-                state = ("unresolved" if target_id is None or view.get("status") != "list_parsed"
-                         else "definition_observed" if target_id in view["profiles"] else "not_observed")
+                state, reason = target_reference_evidence(view, target_id, definition=True)
                 result["references"].append({"persona": persona, "scope": sid, "device": name,
                     "source_scope_kind": kind, "source_view": "library" if kind == "library" else "saved", "source_module": module, "source": identity,
-                    "target_module": target, "target": target_id, "path": list(path), "status": state})
+                    "target_module": target, "target": target_id, "path": list(path), "status": state, "target_evidence": reason})
     for persona, entry in sorted(bundle["results"].items()):
         views = persona_views[persona]
         scopes = {s["id"]: s for s in entry["scopes"]}
@@ -494,20 +504,21 @@ def advanced_analysis(bundle):
                     body = evidence.get("profile")
                     if evidence.get("status") != "identity_observed" or not isinstance(body, dict):
                         continue
-                    for target, target_id, path in explicit_references(body, module=module):
+                    vlan_view = targets.get("layer2-vlan", {})
+                    vlans = vlan_view.get("profiles", {}) if vlan_view.get("status") == "list_parsed" else {}
+                    for target, target_id, path in profile_reference_observations(module, identity, profile_body(body), vlans):
                         key = (persona, scope_id, module, identity, source_view, tuple(path), target)
                         if target_id in existing[key]:
                             continue
                         conflict = bool(existing[key])
                         view = targets.get(target, {})
-                        state = ("conflicting_observation" if conflict else
-                                 "unresolved" if target_id is None or view.get("status") != "list_parsed" else
-                                 ("definition_observed" if kind == "library" else "observed")
-                                 if target_id in view["profiles"] else "not_observed")
+                        state, reason = target_reference_evidence(view, target_id, definition=kind == "library")
+                        if conflict:
+                            state = "conflicting_observation"
                         result["references"].append({"persona": persona, "scope": scope_id, "device": label,
                             "source_scope_kind": kind, "source_view": source_view, "source_module": module,
                             "source": identity, "target_module": target, "target": target_id,
-                            "path": list(path), "status": state, "source_evidence": "individual",
+                            "path": list(path), "status": state, "target_evidence": reason, "source_evidence": "individual",
                             "collection_conflict": conflict})
                         existing[key].add(target_id)
 

@@ -382,3 +382,38 @@ class AdvancedTests(unittest.TestCase):
         refs=advanced_analysis(data)["references"]
         self.assertEqual(next(r for r in refs if r["source_view"]=="effective")["status"],"observed")
         self.assertEqual(next(r for r in refs if r["source_view"]=="saved")["status"],"conflicting_observation")
+
+    def test_target_absence_requires_count_confirmation_and_keyed_vlan_dependencies_are_retained(self):
+        from aruba_central.advanced_review import target_reference_evidence
+        self.assertEqual(target_reference_evidence(view({}),"missing"),("unresolved","target_collection_incomplete"))
+        self.assertEqual(target_reference_evidence({**view({}),"count_confirmed":True},"missing"),("not_observed","count_confirmed_absence"))
+        self.assertEqual(target_reference_evidence({},"missing"),("unresolved","target_view_unqualified"))
+        self.assertEqual(target_reference_evidence(view({"missing":{}}),"missing"),("observed","identity_observed"))
+        self.assertEqual(target_reference_evidence(view({}),None),("unresolved","identity_unqualified"))
+        p="ACCESS_SWITCH"
+        port={"name":"1","switchport":{"access-vlan":10}}
+        data={"results":{p:{"scopes":[{"id":"1","kind":"device"}],"modules":{
+            "ethernet-interfaces":{"scope_results":[{"scope":"1","effective_view":view({"1":port})}]},
+            "layer2-vlan":{"scope_results":[{"scope":"1","effective_view":view({"10":{"vlan":10}})}]}}}},
+            "keyed_profile_details":{"profiles":{p:{"1":{"ethernet-interfaces":{"1":{"effective":{
+                "status":"identity_observed","profile":{"name":"1","switchport":{"access-vlan":20}}}}}}}}}}
+        refs=advanced_analysis(data)["references"]
+        self.assertEqual({r["target"] for r in refs},{"10","20"})
+        self.assertTrue(all(r["status"]=="conflicting_observation" for r in refs))
+        direct=next(r for r in refs if r["target"]=="20")
+        self.assertEqual(direct["source_evidence"],"individual")
+        self.assertEqual(direct["target_evidence"],"target_collection_incomplete")
+        self.assertEqual(next(r for r in refs if r["target"]=="10")["target_evidence"],"identity_observed")
+
+    def test_saved_and_individual_vlan_interface_identity_dependencies_match(self):
+        vlan={"vlan":10}
+        interface={"vlan":10}
+        data={"results":{},"library":{"modules":{"layer2-vlan":view({"10":vlan}),
+            "vlan-interfaces":view({"10":interface})}},
+            "keyed_profile_details":{"profiles":{"Library":{"":{"vlan-interfaces":{
+                "10":{"library":{"status":"identity_observed","profile":interface}}}}}}}}
+        refs=advanced_analysis(data)["references"]
+        identity_refs=[r for r in refs if r["path"]==["identity"]]
+        self.assertEqual(len(identity_refs),1)
+        self.assertEqual(identity_refs[0]["target"],"10")
+        self.assertEqual(identity_refs[0]["status"],"definition_observed")
