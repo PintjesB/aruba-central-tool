@@ -74,7 +74,9 @@ def coverage_batch(root, snapshot, query, section, records, search_text, *, page
     terms = keyword.casefold().split()
     filtered = [row for row in records if all(term in search_text(row).casefold() for term in terms)] if terms else records
     total = len(filtered)
-    batch = filtered[offset:offset + page_size]
+    # Overview shows compact previews. Opening a table restores its full batch.
+    limit = page_size if active else min(page_size, 15)
+    batch = filtered[offset:offset + limit]
     params = {"snapshot": snapshot, "coverage_table": section}
     if query.get("gap_reason"):
         params["gap_reason"] = query["gap_reason"]
@@ -90,7 +92,9 @@ def coverage_batch(root, snapshot, query, section, records, search_text, *, page
     controls += f'<p class="filter-hint">Showing {first}–{last} of {total} matching rows ({len(records)} total). Table filters and CSV export apply to the loaded batch only.</p>'
     if offset:
         controls += f'<a class="button" href="{url(root, "coverage", **params, coverage_offset=max(0, offset-page_size)) + anchor}">Previous batch</a> '
-    if offset + len(batch) < total:
+    if not active and len(batch) < total:
+        controls += f'<a class="button" href="{url(root, "coverage", **params, coverage_offset=0) + anchor}">Open full table</a> '
+    elif offset + len(batch) < total:
         controls += f'<a class="button" href="{url(root, "coverage", **params, coverage_offset=offset+page_size) + anchor}">Next batch</a> '
     if offset and not batch:
         controls += f'<a class="button" href="{url(root, "coverage", **params) + anchor}">First batch</a> '
