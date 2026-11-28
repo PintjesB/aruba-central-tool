@@ -1,6 +1,7 @@
 """Anonymous qualification of aggregate engineering observations."""
 from .central_tool import refresh_configuration_review
-from .assessment_review import assessment, SECURITY_REASONS, ACL_REASONS, SEQUENCE_CONTEXTS, SEQUENCE_TARGET_STATES
+from .assessment_review import (assessment, SECURITY_REASONS, ACL_REASONS, SEQUENCE_CONTEXTS, SEQUENCE_TARGET_STATES,
+    POLICY_SCHEMA_STATES, ALTERNATIVE_POLICY_CONTEXTS, ASSIGNMENT_FUNCTION_CONTEXTS)
 
 # Fixed output keys only. Do not serialize action names, checkpoint data,
 # timestamps, names, identities, values or any raw report structures.
@@ -15,16 +16,20 @@ FIELDS={
     "policy_rules":("groups","groups_with_findings","observations","groups_with_unsupported_rules","unsupported_schema_groups","unsupported_rule_occurrences","unsupported_order_occurrences",
                     "unsupported_condition_occurrences","unsupported_acl_predicate_occurrences","unqualified_order",
                     "individual_conflict_groups","structural_security_repetitions","partial_overlap_candidates","reverse_containment_candidates","truncated")
+                    + tuple("schema_" + key for key in POLICY_SCHEMA_STATES + ("unknown",))
                     + tuple("security_" + key for key in SECURITY_REASONS)
                     + tuple("acl_" + key for key in ACL_REASONS),
     "policy_sequences":("captures","unqualified_order","unqualified_targets","cross_policy_candidates","qualified_rule_occurrences","unsupported_rule_occurrences","targets_with_unsupported_rules",
                         "partial_overlap_candidates","conflicting_targets","truncated")
                     + tuple("gap_context_" + key for key in SEQUENCE_CONTEXTS)
-                    + tuple("target_" + key for key in SEQUENCE_TARGET_STATES),
+                    + tuple("target_" + key for key in SEQUENCE_TARGET_STATES)
+                    + tuple("schema_" + key for key in POLICY_SCHEMA_STATES + ("unknown",))
+                    + tuple("alternative_" + key for key in ALTERNATIVE_POLICY_CONTEXTS + ("any",)),
     "assignments":("observed","overlaps","unknown_scopes","invalid","individual_conflicts",
                    "unresolved_scope_keyed_identity_observed","unresolved_scope_keyed_body_difference_observed","unresolved_scope_keyed_scope_only_observed",
                    "unresolved_scope_keyed_multiple_observations","unresolved_scope_keyed_not_collected","unresolved_scope_keyed_individual_read_unqualified",
-                   "function_not_collected","scope_observed_other_function","scope_not_observed","unknown"),
+                   "function_not_collected","scope_observed_other_function","scope_not_observed","unknown")
+                   + tuple("unresolved_function_" + key for key in ASSIGNMENT_FUNCTION_CONTEXTS),
     "consolidation":("groups","reviewable","source_definitions")
 }
 
