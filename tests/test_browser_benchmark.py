@@ -56,7 +56,9 @@ class BrowserBenchmarkTests(unittest.TestCase):
             self.assertIn("history_drift",result["stages"])
             self.assertIn("history_drift_inspector",result["stages"])
             for stage in ("identity_review","identity_review_inspector","policy_variants","policy_variants_inspector",
-                          "policy_rules","policy_rules_inspector","dependency_impact","dependency_impact_inspector","remediation"):
+                          "policy_rules","policy_rules_inspector","dependency_impact","dependency_impact_inspector","remediation",
+                          "reference_review","reference_review_inspector","observed_references","observed_references_inspector",
+                          "scope_precedence","dependency_high_fanout","dependency_high_fanout_inspector"):
                 self.assertIn(stage,result["stages"])
             for stage in ("field_search", "field_search_alternate", "field_search_multi_term", "grouped_search"):
                 self.assertIn(stage, result["stages"])
