@@ -1187,7 +1187,7 @@ def handler_for(workspace):
                 self.reply("Not found", 404)
                 return
             try:
-                query = {k: v[-1] for k, v in parse_qs(parsed.query, max_num_fields=12).items()}
+                query = {k: v[-1] for k, v in parse_qs(parsed.query, max_num_fields=16).items()}
                 if parsed.path == root + "status":
                     self.reply(json.dumps(workspace.status()), content_type="application/json; charset=utf-8")
                     return
