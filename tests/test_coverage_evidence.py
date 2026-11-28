@@ -42,3 +42,23 @@ class CoverageEvidenceTests(unittest.TestCase):
         self.assertEqual(evidence_record(bundle, "assignment", 1), {"raw": "second"})
         with self.assertRaises(ValueError):
             evidence_record(bundle, "assignment", -1)
+
+
+    def test_coverage_paging_searches_all_rows_and_preserves_ordinals(self):
+        from aruba_central.coverage_navigation import coverage_batch
+        records = [(i, f"row-{i}") for i in range(250)]
+        args = ("/local/", "capture.json")
+        batch, controls = coverage_batch(*args, {}, "hierarchy", records, lambda row: row[1])
+        self.assertEqual(batch, records[:100])
+        self.assertIn("Next batch", controls)
+        query = {"coverage_table": "hierarchy", "coverage_offset": "100", "gap_reason": "unverified"}
+        batch, controls = coverage_batch(*args, query, "hierarchy", records, lambda row: row[1])
+        self.assertEqual(batch, records[100:200])
+        self.assertIn("gap_reason=unverified", controls)
+        batch, controls = coverage_batch(*args, {**query, "coverage_offset": "0", "coverage_q": "row-249"},
+                                         "hierarchy", records, lambda row: row[1])
+        self.assertEqual(batch, [(249, "row-249")])
+        self.assertIn("1 matching rows", controls)
+        self.assertEqual(coverage_batch(*args, query, "operations", records, lambda row: row[1])[0], records[:100])
+        with self.assertRaises(ValueError):
+            coverage_batch(*args, {**query, "coverage_offset": "-1"}, "hierarchy", records, lambda row: row[1])
