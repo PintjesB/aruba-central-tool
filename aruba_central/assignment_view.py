@@ -14,6 +14,9 @@ def assignments_view(workspace, query):
     library = bundle.get("library") or {}
     modules = set(library.get("modules", {}))
     modules.update(str(a["profile-type"]) for a in (library.get("assignments") or {}).get("rows", []) if isinstance(a, dict) and a.get("profile-type"))
+    functions = set(bundle["results"])
+    functions.update(str(a["device-function"]) for a in (library.get("assignments") or {}).get("rows", [])
+                     if isinstance(a, dict) and type(a.get("device-function")) in (str, int) and str(a["device-function"]))
     module, persona, identity = (query.get(k, "") for k in ("module", "persona", "identity"))
     state = query.get("state", "all")
     result = filter_assignment_review(workspace.assignment_snapshot(bundle), module, persona, identity, state)
@@ -51,7 +54,7 @@ def assignments_view(workspace, query):
     body = intro("Library assignments", "Inspect observed assignment scopes, known recipients, retained profile visibility and overlapping assignments.", picker)
     body += (f'<section><form class="filter-bar" method="get" action="{e(root + "assignments")}"><input type="hidden" name="snapshot" value="{e(name)}">'
              + select("module", [("", "All modules")] + [(m, module_label(m)) for m in sorted(modules)], module, "Module")
-             + select("persona", [("", "All functions")] + [(p, persona_label(p)) for p in sorted(bundle["results"])], persona, "Device function")
+             + select("persona", [("", "All functions")] + [(p, persona_label(p)) for p in sorted(functions)], persona, "Device function")
              + f'<label>Exact profile name<input name="identity" value="{e(identity)}" maxlength="512"></label>'
              + select("state", list(ASSIGNMENT_FILTERS.items()), state, "Evidence")
              + '<button type="submit">Review assignments</button></form></section>')
@@ -64,7 +67,7 @@ def assignments_view(workspace, query):
     scope_counts=Counter(r["scope_resolution"] for r in rows if not r["scope_resolved"])
     if scope_counts:
         body += '<section><h2>Why assignment scopes are unresolved</h2><p>Exact scope IDs in another function are diagnostic evidence only. They do not establish recipients in the requested function.</p>'+table(("Reason","Assignments"),[
-            tr(e(pretty(reason)),str(count)) for reason,count in sorted(scope_counts.items())])+'</section>'
+            tr(f'<a href="{url(root, "assignments", snapshot=name, module=module, persona=persona, identity=identity, state=reason)}">{e(pretty(reason))}</a>',str(count)) for reason,count in sorted(scope_counts.items())])+'</section>'
     listing = []
     for index, row in enumerate(rows):
         counts = Counter(d["status"] for d in row["recipients"])
@@ -77,9 +80,12 @@ def assignments_view(workspace, query):
         if not row["scope_resolved"]:
             scope_label += '<small>'+e(pretty(row["scope_resolution"]))+'</small>'
         listing.append(tr(e(module_label(row["module"])), profile, e(persona_label(row["persona"])),
-                          scope_label, e(pretty(row["scope_kind"])), str(row["known_count"]), str(row["unknown_count"]),
-                          str(counts["matching_shared"]), str(counts["different_body"]), str(counts["not_visible"]),
-                          str(counts["unverified"] + counts["matching_source_unverified"] + counts["individual_evidence_conflict"]), control("assignment", index)))
+                          scope_label, e(pretty(row["scope_kind"])), str(row["known_count"]) if row["scope_resolved"] else "Unknown",
+                          str(row["unknown_count"]) if row["scope_resolved"] else "Unknown",
+                          str(counts["matching_shared"]) if row["scope_resolved"] else "Unknown",
+                          str(counts["different_body"]) if row["scope_resolved"] else "Unknown",
+                          str(counts["not_visible"]) if row["scope_resolved"] else "Unknown",
+                          str(counts["unverified"] + counts["matching_source_unverified"] + counts["individual_evidence_conflict"]) if row["scope_resolved"] else "Unknown", control("assignment", index)))
     body += '<section><h2>Assignment worklist</h2>' + table(("Module", "Profile", "Function", "Scope", "Type", "Known recipients", "Unknown membership", "Shared matches", "Different", "Not visible", "Unverified", ""), listing, search=True) + '</section>'
     body += '<section><h2>Overlapping assignment observations</h2><p>Complete overlap groups involving the selected assignments are shown, including other profile names outside the current filter. Assignments to overlapping scopes can be intentional. Atomic modules are grouped by module rather than name; overlap does not establish a conflict or prove precedence.</p>'
     body += table(("Function", "Device", "Module", "Identity", "Assignments", ""), [

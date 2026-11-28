@@ -105,7 +105,8 @@ class AssignmentReviewTests(unittest.TestCase):
         self.assertEqual(filter_assignment_review(report, state="overlap")["rows"], [first, second])
         self.assertEqual(filter_assignment_review(report, state="scope_unresolved")["rows"], [missing])
         self.assertEqual(filter_assignment_review(report, state="attention")["rows"], [first, second, missing])
-        self.assertEqual(filter_assignment_review(report, state="no_recipients")["rows"], [missing])
+        self.assertEqual(filter_assignment_review(report, state="no_recipients")["rows"], [])
+        self.assertEqual(filter_assignment_review(report, state="scope_unresolved")["rows"], [missing])
         self.assertEqual(report, original)
         with self.assertRaises(ValueError):
             filter_assignment_review(report, state="unknown")
