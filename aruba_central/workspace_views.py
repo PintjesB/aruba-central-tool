@@ -591,6 +591,9 @@ function selection(){
    if(v==='library')f.target='Library / exact source scopes';
    else if(f.selected_destination)f.target=f.selected_destination.kind+' / '+f.selected_destination.name+' ('+f.selected_destination.additional_devices.length+' additional, '+f.selected_destination.unknown_membership.length+' unknown members)';
    else f.target='Destination not selected';
+  }else if(f.action==='reuse_library'){
+   f.selected_destination={kind:'library',assignment_scopes:f.sources.map(s=>s.scope),reuse_existing:true};
+   f.target='Existing Library / exact source scopes';
   }
   return f;
  });
