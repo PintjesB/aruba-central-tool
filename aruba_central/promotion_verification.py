@@ -37,6 +37,7 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
         return ({r["scope"] for r in observed["known"]},
                 {r["scope"] for r in observed["unknown"]})
 
+    assignment_comparison = None
     intended, uncertain = members(before, sources)
     new_intended, new_uncertain = members(after, sources)
     if destination == "library":
@@ -44,12 +45,37 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
         new_dest = observation((after.get("library") or {}).get("modules", {}).get(module, {}), identity)
         old_recipients, old_unknown = intended, uncertain
         new_recipients, dest_unknown = new_intended, new_uncertain
-        assignment_view = (after.get("library") or {}).get("assignments") or {}
-        assignments = {(str(a.get("profile-type")), str(a.get("profile-instance")),
-                        str(a.get("device-function")), str(a.get("scope-id")))
-                       for a in assignment_view.get("rows", []) if isinstance(a, dict)}
+        def assigned(bundle):
+            view = (bundle.get("library") or {}).get("assignments") or {}
+            keys = set()
+            for row in view.get("rows", []):
+                if (isinstance(row, dict) and row.get("profile-type") == module
+                        and type(row.get("profile-instance")) in (str, int)
+                        and str(row["profile-instance"]) == identity
+                        and isinstance(row.get("device-function"), str)
+                        and type(row.get("scope-id")) in (str, int)):
+                    keys.add((row["device-function"], str(row["scope-id"])))
+            return view, keys
+        prior_assignment_view, prior_assignments = assigned(before)
+        assignment_view, assignments = assigned(after)
+        expected_scopes = {(persona, str(r["scope"])) for r in sources}
         assignment_rows = [{"scope": r["scope"], "observed": assignment_view.get("status") == "response_received"
-                            and (module, identity, persona, r["scope"]) in assignments} for r in sources]
+                            and (persona, str(r["scope"])) in assignments} for r in sources]
+        assignment_comparison = {
+            "before_capture_status": prior_assignment_view.get("status", "not_collected"),
+            "after_capture_status": assignment_view.get("status", "not_collected"),
+            "rows": [{"persona": function, "scope": sid,
+                      "selected_source_scope": (function, sid) in expected_scopes,
+                      "before_observed": (function, sid) in prior_assignments,
+                      "after_observed": (function, sid) in assignments,
+                      "status": ("observed_in_both" if (function, sid) in prior_assignments and (function, sid) in assignments
+                                 else "newly_observed" if (function, sid) in assignments
+                                 else "no_longer_observed" if (function, sid) in prior_assignments
+                                 else "not_observed")}
+                     for function, sid in sorted(prior_assignments | assignments | expected_scopes)]}
+        # Source-scope assignment checks do not establish the complete set
+        # of destinations. Expose all observed assignments independently,
+        # including other functions and scopes, without inferring removal.
         target_matches = matches(new_dest) and (not reuse or matches(old_dest)) and all(a["observed"] for a in assignment_rows)
     else:
         options = [p for p in candidate["placement_options"] if p["scope"] == destination]
@@ -128,5 +154,6 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
             "identity_checks": identity_checks, "destination_definition_matches": matches(new_dest),
             "destination_and_assignments_observed": target_matches,
             "before_destination": old_dest, "after_destination": new_dest,
-            "assignment_observations": assignment_rows, "source_rows": source_rows, "rows": rows,
+            "assignment_observations": assignment_rows, "assignment_comparison": assignment_comparison,
+            "source_rows": source_rows, "rows": rows,
             "complete": False, "safe_to_apply": False}
