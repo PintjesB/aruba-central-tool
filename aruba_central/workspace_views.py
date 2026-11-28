@@ -875,6 +875,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     """Bound the rendered worklist and load exact snapshot-bound evidence on demand."""
     from .review_dispositions import snapshot_binding, digest
     from .history_view import private_export
+    from .dependency_evidence import reference_semantics, REFERENCE_SEMANTICS
     binding = digest([snapshot_binding(workspace, name, bundle), workflow])
     params = {"snapshot": name, "workflow": workflow}
     if query.get("reference_detail") is not None:
@@ -901,11 +902,12 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     reason = query.get("ref_evidence", "")
     contexts = ("library_definition","other_function_same_scope","same_site_observation")
     context = query.get("ref_context","")
+    semantics = query.get("ref_semantics","")
     def positive_contexts(row):
         return {obs.get("context") for obs in row.get("target_alternative_observations",[])
                 if obs.get("status") == "identity_observed" and obs.get("context") in contexts}
     state, persona, module, keyword = (query.get(k, "") for k in ("ref_state", "ref_persona", "ref_module", "ref_q"))
-    if state not in ("", *states) or persona not in ("", *personas) or module not in ("", *modules) or reason not in ("", *evidence_reasons) or source not in ("", *sources) or context not in ("","no_positive_context",*contexts) or len(keyword) > 200 or len(field_filter) > 4096:
+    if state not in ("", *states) or persona not in ("", *personas) or module not in ("", *modules) or reason not in ("", *evidence_reasons) or source not in ("", *sources) or context not in ("","no_positive_context",*contexts) or semantics not in ("",*REFERENCE_SEMANTICS) or len(keyword) > 200 or len(field_filter) > 4096:
         raise ValueError("Invalid reference filter")
     terms = keyword.casefold().split()
     fields = ("device", "persona", "scope", "source_view", "source_module", "source",
@@ -916,10 +918,11 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                 and (not reason or r.get("target_evidence") == reason)
                 and (not source or r["source_module"] == source)
                 and (not field_filter or field(r) == field_filter)
+                and (not semantics or reference_semantics(r) == semantics)
                 and (not context or (context == "no_positive_context" and r["status"] == "unresolved" and r.get("target") is not None and not positive_contexts(r)) or context in positive_contexts(r))
                 and all(term in " ".join(str(r.get(k, "")) for k in fields).casefold() for term in terms)]
     filters = {**params, "ref_state": state, "ref_persona": persona, "ref_module": module, "ref_evidence": reason, "ref_q": keyword,
-               "ref_source": source, "ref_field": field_filter, "ref_context": context}
+               "ref_source": source, "ref_field": field_filter, "ref_context": context, "ref_semantics":semantics}
     if query.get("reference_export") == "1":
         if query.get("binding") != binding:
             raise ValueError("Reference evidence changed; reopen the worklist")
@@ -940,6 +943,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                 + select("ref_module", [("", "All target modules")] + [(v, module_label(v)) for v in modules], module, "Target module")
                 + (f'<input type="hidden" name="ref_field" value="{e(field_filter)}">' if field_filter else "")
                 + select("ref_evidence", [("", "All target evidence")] + [(v, pretty(v)) for v in evidence_reasons], reason, "Target evidence")
+                + select("ref_semantics",[("", "All reference kinds")]+[(v,pretty(v)) for v in REFERENCE_SEMANTICS],semantics,"Reference kind")
                 + select("ref_context", [("", "All alternative contexts"),("no_positive_context","Named unresolved without positive context")] + [(v, pretty(v)) for v in contexts], context, "Alternative evidence")
                 + f'<label>Search all observations<input name="ref_q" maxlength="200" value="{e(keyword)}"></label>'
                 + '<button type="submit">Filter</button></form>')
@@ -948,6 +952,19 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
         if 0 <= position < len(selected):
             controls += f'<a class="button" href="{url(root,"advanced",**filters,ref_offset=position)}">{label}</a> '
     controls += f'<a class="button" href="{url(root,"advanced",**filters,reference_export="1",binding=binding)}">Export all matching private JSON</a></p>'
+    absence_groups = Counter()
+    absence_fields = set()
+    for _, r in selected:
+        if r["status"] != "not_observed" or r.get("target_evidence") != "count_confirmed_absence":
+            continue
+        kind = reference_semantics(r)
+        absence_groups[kind] += 1
+        if kind != "direct_or_unclassified":
+            absence_fields.add((r["persona"],r["scope"],r.get("source_view"),r["source_module"],r["source"],tuple(r.get("path",[]))))
+    if absence_groups:
+        controls += '<section><h3>Absence from captured target views</h3><p>Set members can represent allowed VLANs, selection pools or spanning-tree membership. Their absence is not by itself a missing required definition. All member observations remain available for dependency tracing.</p>'+table(("Reference kind","Member observations",""),[
+            tr(e(pretty(kind)),str(count),f'<a href="{url(root,"advanced",**{**filters,"ref_semantics":kind,"ref_state":"not_observed","ref_evidence":"count_confirmed_absence"})}">Review</a>')
+            for kind,count in sorted(absence_groups.items())])+'<p>'+str(len(absence_fields))+' distinct captured set fields with unobserved members.</p></section>'
     groups = Counter((r["source_module"], r["target_module"], field(r)) for _, r in selected
                      if r["status"] == "unresolved" and r.get("target") is None)
     if field_filter:
@@ -973,6 +990,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                        + (f'<small>Individual target: {e(pretty(r["target_individual_status"]))}</small>' if r.get("target_individual_status") else "")
                        + (f'<small>Observed elsewhere: {e(", ".join(pretty(v) for v in sorted(positive_contexts(r))))}</small>' if positive_contexts(r) else ""),
                        e("Keep reference; verify before profile removal" if r["status"] in ("observed","definition_observed") else
+                         "Review configured set membership; not a missing definition by itself" if r["status"] == "not_observed" and reference_semantics(r) != "direct_or_unclassified" else
                          "Verify target profile and scope" if r["status"] == "not_observed" else "Collect or interpret missing reference evidence"), control))
     return controls + table(("Source scope", "Function", "Source", "Target", "State", "Suggested next step", ""), rows)
 
