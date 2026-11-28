@@ -50,3 +50,20 @@ class NACAuthorizationTests(unittest.TestCase):
         row = policy_review(bundle)["policies"][0]["rules"][0]
         self.assertEqual(row["status"], "enforcement_unqualified")
         self.assertFalse(row["combined_candidate_attributes"])
+
+
+    def test_rule_occurrences_remain_exact_after_sorting_and_malformed_rows_are_retained(self):
+        def bundle(rules,confirmed):
+            return {"nac_configuration":{"authz-policies":captured({"p":{"position":1,
+                "default-enf-profile":[],"rule":rules}},confirmed)}}
+        result=policy_review(bundle([{"position":3,"enf-profile":[]},{"position":1,"enf-profile":[]}],False))
+        self.assertTrue(result["policy_order_verified"])
+        self.assertFalse(result["complete_policy_order_observed"])
+        self.assertEqual([r["captured_index"] for r in result["policies"][0]["rules"]],[1,0])
+        result=policy_review(bundle([{"position":3,"enf-profile":[]},None,{"position":3,"enf-profile":[]}],True))
+        p=result["policies"][0]
+        self.assertFalse(p["rule_order_verified"])
+        self.assertEqual([r["captured_index"] for r in p["rules"]],[0,1,2])
+        self.assertEqual(p["rules"][1]["status"],"rule_schema_unqualified")
+        self.assertEqual(p["rules"][1]["combined_candidate_attributes"],[])
+        self.assertTrue(result["complete_policy_order_observed"])

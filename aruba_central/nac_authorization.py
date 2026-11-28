@@ -128,14 +128,18 @@ def policy_review(bundle):
         if isinstance(rules, list):
             pos = [r.get("position") if isinstance(r, dict) else None for r in rules]
             report["rule_order_verified"] = all(type(p) is int and p >= 0 for p in pos) and len(set(pos)) == len(pos)
+            occurrences = list(enumerate(rules))
             if report["rule_order_verified"]:
-                rules = sorted(rules, key=lambda rule: rule["position"])
-            for rule in rules:
+                occurrences.sort(key=lambda pair: pair[1]["position"])
+            for occurrence, rule in occurrences:
                 if not isinstance(rule, dict):
+                    report["rules"].append({"position":None,"captured_index":occurrence,"enabled":None,
+                        "conditions":None,"attributes":[],"combined_candidate_attributes":[],
+                        "gaps":["Captured rule is not an object"],"status":"rule_schema_unqualified"})
                     continue
                 overrides, issues = enforcement_attributes(rule.get("enf-profile"))
                 combined = attribute_rows(defaults, overrides) if not gaps and not issues else []
-                report["rules"].append({"position": rule.get("position"), "enabled": explicit_state(rule.get("enable")),
+                report["rules"].append({"position": rule.get("position"), "captured_index":occurrence, "enabled": explicit_state(rule.get("enable")),
                     "conditions": rule.get("conditions"), "attributes": attribute_rows({}, overrides),
                     "combined_candidate_attributes": combined, "gaps": [*gaps, *issues],
                     "status": "candidate_if_rule_matches" if not gaps and not issues else "enforcement_unqualified"})
@@ -150,4 +154,5 @@ def policy_review(bundle):
             "store_capture_status": stores.get("status", "not_collected"),
             "auth_capture_status": auth.get("status", "not_collected"),
             "policy_order_verified": order_verified and policies.get("status") == "list_parsed",
+            "complete_policy_order_observed": order_verified and policies.get("status") == "list_parsed" and policies.get("count_confirmed") is True,
             "policies": reports, "authentication": authentication, "safe_to_apply": False}
