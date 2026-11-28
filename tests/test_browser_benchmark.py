@@ -72,7 +72,7 @@ class BrowserBenchmarkTests(unittest.TestCase):
                         body=tab.locator("#workspace-inspector-body")
                         body.get_by_role("button",name="Compare").first.wait_for()
                         body.get_by_role("button",name="Compare").first.click()
-                        self.assertIn("Effective device",body.inner_text())
+                        self.assertIn("Captured configuration bodies are identical",body.inner_text())
                         tab.locator("#workspace-close").click()
                         self.assertEqual(errors,[])
                         plain=browser.new_context(java_script_enabled=False)
