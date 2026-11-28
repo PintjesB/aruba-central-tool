@@ -24,6 +24,9 @@ def retention_comparison(usage, suggested):
     elif any(u.get("library_individual_conflict") or u.get("individual_conflict_devices") for u in usage.values()):
         short = "Conflicting profile evidence"
         explanation = "No automatic suggestion because individual profile evidence contradicts a Library or effective collection."
+    elif any(u.get("conditional_nac_observations",0) for u in usage.values()):
+        short = "Conditional NAC dependencies"
+        explanation = "No automatic suggestion because captured NAC enforcement attributes refer to or match a candidate profile name; authorization impact is unverified."
     elif any(u.get("conflicting_reference_count", 0) for u in usage.values()):
         short = "Conflicting reference evidence"
         explanation = "No automatic suggestion because individual and collection reference evidence conflicts."
