@@ -40,6 +40,25 @@ def response_structure(raw, key, identity):
     return shape, records, recognized, matches
 
 
+def identity_relationship(raw, key, identity):
+    """Return fixed categories only, without exposing requested/returned names."""
+    if not isinstance(raw, dict) or type(raw.get(key)) not in (str, int):
+        return "no_direct_identity"
+    observed = str(raw[key])
+    if observed == identity:
+        return "exact"
+    if observed.casefold() == identity.casefold():
+        return "case_only"
+    if observed.strip() == identity.strip():
+        return "surrounding_whitespace_only"
+    if observed.strip().casefold() == identity.strip().casefold():
+        return "case_and_whitespace"
+    from urllib.parse import unquote
+    if unquote(observed) == identity or observed == unquote(identity):
+        return "percent_decoding_only"
+    return "different_identity"
+
+
 def schema_fields(raw):
     """Allowlisted immediate envelope and record fields, never tenant keys."""
     allowed = PUBLIC_FIELDS | {"metadata", "@", "role", "roles", "role-gpid", "role-gpids",
@@ -72,6 +91,8 @@ def schema_fields(raw):
 
 def keyed_qualification(bundle):
     schemas, differences, profiles, structures = Counter(), Counter(), Counter(), Counter()
+    relationships, locations = Counter(), Counter()
+    private_paths = {}
     for scopes in (bundle.get("keyed_profile_details") or {}).get("profiles", {}).values():
         for modules in scopes.values():
             for module, identities in modules.items():
@@ -83,6 +104,7 @@ def keyed_qualification(bundle):
                         if read.get("status") == "schema_unresolved":
                             shape = response_structure(read.get("raw"), MODULE_KEYS[module], str(identity))
                             schemas[(module, side, *shape)] += 1
+                            relationships[(module, side, identity_relationship(read.get("raw"), MODULE_KEYS[module], str(identity)))] += 1
                             for level, field, kind in schema_fields(read.get("raw")):
                                 structures[(module, side, level, field, kind)] += 1
                         diffs = read.get("differences")
@@ -97,6 +119,14 @@ def keyed_qualification(bundle):
                             categories.append(kind)
                             path = diff.get("path")
                             field = path[0] if isinstance(path, list) and path and path[0] in PUBLIC_FIELDS else "other"
+                            if isinstance(path, list):
+                                # Assign anonymous ordinal labels per module.
+                                # No private field names or hashes leave the capture.
+                                signature = tuple((type(part).__name__, str(part)) for part in path)
+                                ids = private_paths.setdefault(module, {})
+                                number = ids.setdefault(signature, len(ids) + 1)
+                                shape = "/".join("index" if type(part) is int else "field" for part in path) or "root"
+                                locations[(module, side, number, shape, field, kind)] += 1
                             local = diff.get("local_type")
                             reference = diff.get("reference_type")
                             differences[(module, side, field, kind,
@@ -115,5 +145,10 @@ def keyed_qualification(bundle):
                                   for (m, v, f, k, l, r), c in sorted(differences.items())],
             "profile_differences": [{"module": m, "view": v, "category": k, "reads": c}
                                     for (m, v, k), c in sorted(profiles.items())],
+            "identity_relationships": [{"module": m, "view": v, "relationship": k, "reads": n}
+                                       for (m, v, k), n in sorted(relationships.items())],
+            "difference_locations": [{"module": m, "view": v, "anonymous_path_number": p, "path_shape": s,
+                                       "field": f, "category": k, "occurrences": n}
+                                      for (m, v, p, s, f, k), n in sorted(locations.items())],
             "applicability": applicability_evidence(bundle),
             "safe_to_apply": False, "order_equivalence_qualified": False}
