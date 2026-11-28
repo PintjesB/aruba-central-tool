@@ -7,7 +7,7 @@ from .assessment_review import assessment, SECURITY_REASONS, ACL_REASONS, SEQUEN
 FIELDS={
     "engineering":("duplicate_groups","repeated_port_groups","ports_in_groups","scope_observations",
                    "precedence_conflicts","port_conversion_conflicts","port_library_conflicts","port_visibility_conflicts",
-                   "reference_target_collection_incomplete","reference_target_view_unqualified","reference_target_count_confirmed_absence",
+                   "reference_target_collection_incomplete","reference_target_view_unqualified","reference_target_count_confirmed_absence","unresolved_reference_target_individual_identity",
                    "unresolved_references","conditional_nac_observations","conflicting_reference_observations",
                    "both_ends","source_only","target_only","other_conflict","unknown_identity","named_target_not_observed","named_target_unqualified"),
     "identity_collisions":("groups","same_context_groups","linked_individual_responses","linked_same_context_responses"),
@@ -22,6 +22,8 @@ FIELDS={
                     + tuple("gap_context_" + key for key in SEQUENCE_CONTEXTS)
                     + tuple("target_" + key for key in SEQUENCE_TARGET_STATES),
     "assignments":("observed","overlaps","unknown_scopes","invalid","individual_conflicts",
+                   "unresolved_scope_keyed_identity_observed","unresolved_scope_keyed_body_difference_observed","unresolved_scope_keyed_scope_only_observed",
+                   "unresolved_scope_keyed_multiple_observations","unresolved_scope_keyed_not_collected","unresolved_scope_keyed_individual_read_unqualified",
                    "function_not_collected","scope_observed_other_function","scope_not_observed","unknown"),
     "consolidation":("groups","reviewable","source_definitions")
 }
