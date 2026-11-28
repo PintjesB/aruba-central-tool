@@ -74,6 +74,7 @@ def engineering_qualification(bundle, *, include_reference_patterns=False):
 def reference_identity_patterns(references):
     from collections import Counter
     from .central_tool import CONFIG_MODULES, VLAN_REFERENCE_FIELDS
+    from .advanced_review import REFERENCE_VALUE_SHAPES
     fields = VLAN_REFERENCE_FIELDS | {
         "access-vlan-name", "vlan-parameters", "vlan-type", "vlan-selector",
         "vlan-id-range", "vlan-name", "unknown-vlans", "vlan-range",
@@ -103,10 +104,12 @@ def reference_identity_patterns(references):
         shape = ("list_member" if any(type(v) is int for v in path) else
                  "root_field" if len(path) == 1 else "nested_field" if path else "unknown")
         view = row.get("source_view") if row.get("source_view") in known_views else "other"
-        counts[source, target, field, shape, view] += 1
+        value_shape = row.get("source_value_shape")
+        value_shape = value_shape if value_shape in REFERENCE_VALUE_SHAPES else "unknown"
+        counts[source, target, field, shape, view, value_shape] += 1
     return [{"source_module":s, "target_module":t, "field":f, "path_shape":p,
-             "source_view":v, "observations":count}
-            for (s,t,f,p,v),count in sorted(counts.items(), key=lambda item:(-item[1],item[0]))]
+             "source_view":v, "source_value_shape":value_shape,"observations":count}
+            for (s,t,f,p,v,value_shape),count in sorted(counts.items(), key=lambda item:(-item[1],item[0]))]
 
 
 def named_reference_gaps(references):

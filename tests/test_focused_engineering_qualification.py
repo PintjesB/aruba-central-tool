@@ -19,6 +19,14 @@ class FocusedEngineeringTests(unittest.TestCase):
         self.assertEqual(sum(r["observations"] for r in report),4)
         self.assertEqual(report[0],{"source_module":"roles","target_module":"layer2-vlan",
                                     "field":"access-vlan-name","path_shape":"list_member",
-                                    "source_view":"effective","observations":2})
+                                    "source_view":"effective","source_value_shape":"unknown","observations":2})
         self.assertNotIn("private",json.dumps(report))
         self.assertTrue(any(r["source_module"]=="other" and r["source_view"]=="other" for r in report))
+
+    def test_unknown_value_shape_is_allowlisted(self):
+        base={"status":"unresolved","target":None,"source_module":"roles","target_module":"layer2-vlan",
+              "path":["access-vlan-name"],"source_view":"effective"}
+        report=reference_identity_patterns([{**base,"source_value_shape":"empty_string"},
+                                           {**base,"source_value_shape":"private-value"}])
+        self.assertEqual({r["source_value_shape"] for r in report},{"empty_string","unknown"})
+        self.assertNotIn("private",json.dumps(report))

@@ -271,6 +271,46 @@ def target_reference_evidence(view, identity, *, definition=False):
     return "unresolved", "target_collection_incomplete"
 
 
+REFERENCE_VALUE_SHAPES = ("missing_path","null","empty_string","wildcard_string","nonempty_string",
+    "integer","boolean","empty_list","wildcard_list","literal_list","object_list","mixed_list",
+    "object","other","unknown")
+
+
+def reference_value_shape(body,path):
+    """Report only fixed structural categories, never source values."""
+    value=body
+    for part in path:
+        if isinstance(value,dict) and isinstance(part,str) and part in value:
+            value=value[part]
+        elif isinstance(value,list) and type(part) is int and 0 <= part < len(value):
+            value=value[part]
+        else:
+            return "missing_path"
+    def wildcard(item):
+        return isinstance(item,str) and item.strip().casefold() in ("all","any","*")
+    if value is None:
+        return "null"
+    if isinstance(value,str):
+        return "empty_string" if not value.strip() else "wildcard_string" if wildcard(value) else "nonempty_string"
+    if type(value) is bool:
+        return "boolean"
+    if type(value) is int:
+        return "integer"
+    if isinstance(value,list):
+        if not value:
+            return "empty_list"
+        if all(wildcard(v) for v in value):
+            return "wildcard_list"
+        if all(type(v) in (str,int) for v in value):
+            return "literal_list"
+        if all(isinstance(v,dict) for v in value):
+            return "object_list"
+        return "mixed_list"
+    if isinstance(value,dict):
+        return "object"
+    return "other"
+
+
 def profile_reference_observations(module, identity, body, vlans):
     """Use identical reference extraction for all qualified source reads."""
     handled = set()
@@ -424,12 +464,13 @@ def advanced_analysis(bundle):
             sid = device["id"]
             def get(module):
                 return views.get(module, {}).get(sid, {})
-            def emit(source_module, source, target, identity, path):
+            def emit(source_module, source, target, identity, path, body):
                 target_view = get(target)
                 status, reason = target_reference_evidence(target_view, identity)
                 result["references"].append({"persona": persona, "device": names[sid], "scope": sid,
                     "source_module": source_module, "source": source, "source_view": "effective", "source_scope_kind": "device", "target_module": target,
-                    "target": identity, "path": list(path), "status": status, "target_evidence": reason})
+                    "target": identity, "path": list(path), "status": status, "target_evidence": reason,
+                    **({"source_value_shape":reference_value_shape(body,path)} if identity is None else {})})
             for module in sorted(views):
                 view = get(module)
                 result["coverage"].append({"persona": persona, "scope": sid, "module": module,
@@ -441,7 +482,7 @@ def advanced_analysis(bundle):
                 for identity, raw in view["profiles"].items():
                     body = profile_body(raw)
                     for target, ref, path in profile_reference_observations(module, identity, body, vlans):
-                        emit(module, identity, target, ref, path)
+                        emit(module, identity, target, ref, path, body)
                     if module == "ethernet-interfaces" and persona.endswith("_SWITCH"):
                         if body.get("routing") is True or PORT_TOPOLOGY & body.keys():
                             continue
@@ -600,7 +641,8 @@ def advanced_analysis(bundle):
                 state, reason = target_reference_evidence(view, target_id, definition=True)
                 result["references"].append({"persona": persona, "scope": sid, "device": name,
                     "source_scope_kind": kind, "source_view": "library" if kind == "library" else "saved", "source_module": module, "source": identity,
-                    "target_module": target, "target": target_id, "path": list(path), "status": state, "target_evidence": reason})
+                    "target_module": target, "target": target_id, "path": list(path), "status": state, "target_evidence": reason,
+                    **({"source_value_shape":reference_value_shape(body,path)} if target_id is None else {})})
     for persona, entry in sorted(bundle["results"].items()):
         views = persona_views[persona]
         scopes = {s["id"]: s for s in entry["scopes"]}
@@ -668,7 +710,8 @@ def advanced_analysis(bundle):
                             "source_scope_kind": kind, "source_view": source_view, "source_module": module,
                             "source": identity, "target_module": target, "target": target_id,
                             "path": list(path), "status": state, "target_evidence": reason, "source_evidence": "individual",
-                            "collection_conflict": conflict})
+                            "collection_conflict": conflict,
+                            **({"source_value_shape":reference_value_shape(profile_body(body),path)} if target_id is None else {})})
                         existing[key].add(target_id)
 
     # Qualify references against exact positive direct observations at
