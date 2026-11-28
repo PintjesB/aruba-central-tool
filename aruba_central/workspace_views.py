@@ -745,7 +745,9 @@ def usage_detail(usage, *, root=None, snapshot=None, module=None):
                 tr("Distinct configuration objects referencing this name", usage_cells(usage)[2]),
                 tr("Saved definitions referencing this name", str(usage.get("definition_reference_count", 0))),
                 tr("Effective objects referencing this name", str(usage.get("effective_reference_count", 0))),
-                tr("Conflicting individual observations", str(usage.get("conflicting_reference_count", 0))),
+                tr("Conflicting individual reference observations", str(usage.get("conflicting_reference_count", 0))),
+                tr("Individual Library definition conflict", "Yes" if usage.get("library_individual_conflict") else "Not observed"),
+                tr("Device/function pairs with contradictory profile evidence", str(len(usage.get("individual_conflict_devices", [])))),
                 tr("Devices with incomplete module reads", usage_cells(usage)[3]),
                 tr("Devices with matching settings but unverified Library source", str(len(usage["matching_other_devices"])))])
             + '<h3>Assigned at</h3>' + table(("Scope", "Device function"), [

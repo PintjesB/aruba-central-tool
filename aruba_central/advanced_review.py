@@ -125,9 +125,17 @@ def library_usage(bundle, module, identities, references):
     wanted = set(identities)
     if not wanted:
         return {}
+    direct = (bundle.get("keyed_profile_details") or {}).get("profiles", {})
+    def contradicts(collection, identity, read):
+        if (collection.get("status") != "list_parsed" or read.get("status") != "identity_observed"
+                or not isinstance(read.get("profile"), dict)):
+            return False
+        profile = collection.get("profiles", {}).get(identity)
+        return (collection.get("count_confirmed") is True if profile is None else
+                canonical(profile_body(profile)) != canonical(profile_body(read["profile"])))
     assigned, referenced = defaultdict(list), defaultdict(list)
     for row in assignment_view.get("rows", []):
-        if row.get("profile-type") == module and str(row.get("profile-instance")) in wanted:
+        if isinstance(row, dict) and row.get("profile-type") == module and str(row.get("profile-instance")) in wanted:
             assigned[str(row["profile-instance"])].append(row)
     for ref in references:
         if ref["target_module"] == module and ref["target"] in wanted:
@@ -154,6 +162,9 @@ def library_usage(bundle, module, identities, references):
                             "shared_devices": [], "matching_other_devices": [],
                             "different_devices": [], "unknown_devices": [], "absent_devices": [], "compared_devices": 0,
                             "coverage_complete": False}
+        individual = direct.get("Library", {}).get("", {}).get(module, {}).get(identity, {}).get("library", {})
+        if contradicts(view, identity, individual):
+            result[identity]["library_individual_conflict"] = True
     for persona, entry in sorted(bundle["results"].items()):
         if module not in entry["modules"]:
             continue
@@ -162,7 +173,16 @@ def library_usage(bundle, module, identities, references):
             sid = device["id"]
             record = {"persona": persona, "scope": sid, "name": device.get("name") or sid}
             actual = views.get(sid, {})
+            individual = direct.get(persona, {}).get(str(sid), {}).get(module, {})
             for identity, usage in result.items():
+                conflict = contradicts(actual, identity, individual.get(identity, {}).get("effective", {}))
+                if usage.get("library_individual_conflict") or conflict:
+                    evidence = {**record, "individual_conflict": True,
+                                "library_conflict": bool(usage.get("library_individual_conflict")),
+                                "effective_conflict": conflict}
+                    usage["unknown_devices"].append(evidence)
+                    usage.setdefault("individual_conflict_devices", []).append(evidence)
+                    continue
                 if actual.get("status") != "list_parsed":
                     usage["unknown_devices"].append(record)
                     continue
@@ -185,6 +205,7 @@ def library_usage(bundle, module, identities, references):
 def preferred_duplicate(usage):
     """Suggest the least observed reference/assignment migration, not safe deletion."""
     if not usage or any(u["assignment_status"] != "response_received" or u.get("conflicting_reference_count", 0)
+                        or u.get("library_individual_conflict") or u.get("individual_conflict_devices")
                         for u in usage.values()):
         return None
     # Do not add incomparable metrics together. Prefer more explicit consumers,

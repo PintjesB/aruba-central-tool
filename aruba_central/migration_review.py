@@ -50,7 +50,8 @@ def migration_recipient_review(bundle, usage, keep, assignments, definitions, im
             continue
         for field, reason in (("shared_devices", "Matching shared source profile"),
                               ("matching_other_devices", "Matching source name; Library source unverified"),
-                              ("different_devices", "Different definition under source name")):
+                              ("different_devices", "Different definition under source name"),
+                              ("individual_conflict_devices", "Contradictory individual profile evidence")):
             for record in value.get(field, []):
                 add(record["persona"], record["scope"], reason, identity, record.get("name"))
         for row in value.get("assignments", []):
@@ -60,7 +61,7 @@ def migration_recipient_review(bundle, usage, keep, assignments, definitions, im
     visibility = {}
     for field, status in (("shared_devices", "matching_shared"), ("matching_other_devices", "matching_source_unverified"),
                           ("different_devices", "different_definition"), ("absent_devices", "count_confirmed_absence"),
-                          ("unknown_devices", "unverified")):
+                          ("unknown_devices", "unverified"), ("individual_conflict_devices", "individual_evidence_conflict")):
         for record in usage[keep].get(field, []):
             visibility[(record["persona"], record["scope"])] = status
     for key, record in recipients.items():

@@ -321,3 +321,31 @@ class AdvancedTests(unittest.TestCase):
         bundle["keyed_profile_details"]["profiles"]["Library"][""]["server-groups"]["group"]["library"] = {
             "status": "collection_only_sampled"}
         self.assertEqual(len(advanced_analysis(bundle)["references"]), 1)
+
+
+    def test_library_visibility_and_retention_respect_individual_contradictions(self):
+        from aruba_central.advanced_review import library_usage, preferred_duplicate, duplicate_migration_preview
+        from aruba_central.retention_review import retention_comparison
+        from aruba_central.library_usage_presentation import visibility_filter,device_visibility
+        profiles={"a":{"profile-name":"a","enable":True},"b":{"profile-name":"b","enable":True}}
+        shared={"aruba-annotation:object_type":"SHARED"}
+        data={"results":{"ACCESS_SWITCH":{"scopes":[{"id":"1","kind":"device","name":"Switch"}],
+            "modules":{"sw-port-profiles":{"scope_results":[{"scope":"1","effective_view":{
+                **view({"a":{**profiles["a"],"@":shared}}),"count_confirmed":True}}]}}}},
+            "library":{"modules":{"sw-port-profiles":view(profiles)},"assignments":{"status":"response_received","rows":[
+                {"profile-type":"sw-port-profiles","profile-instance":"a","scope-id":"1","device-function":"ACCESS_SWITCH"}]}}}
+        baseline=library_usage(data,"sw-port-profiles",profiles,[])
+        self.assertEqual(preferred_duplicate(baseline),"a")
+        data["keyed_profile_details"]={"profiles":{"ACCESS_SWITCH":{"1":{"sw-port-profiles":{
+            "a":{"effective":{"status":"identity_observed","profile":{"profile-name":"a","enable":False}}},
+            "b":{"effective":{"status":"identity_observed","profile":profiles["b"]}}}}}}}
+        usage=library_usage(data,"sw-port-profiles",profiles,[])
+        self.assertEqual(usage["a"]["shared_devices"],[])
+        self.assertEqual(usage["b"]["absent_devices"],[])
+        self.assertEqual(len(usage["a"]["unknown_devices"]),1)
+        self.assertEqual(visibility_filter(usage,"individual_conflicts"),{"a","b"})
+        self.assertIn("Contradictory individual evidence",device_visibility(usage["a"]))
+        self.assertIsNone(preferred_duplicate(usage))
+        self.assertEqual(retention_comparison(usage,None)["short_reason"],"Conflicting profile evidence")
+        plan=duplicate_migration_preview("sw-port-profiles",usage,"a",bundle=data)
+        self.assertEqual(plan["recipient_review"][0]["target_visibility"],"individual_evidence_conflict")
