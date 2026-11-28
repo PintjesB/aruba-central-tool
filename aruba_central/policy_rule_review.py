@@ -98,6 +98,36 @@ def policy_schema_state(module, body):
     return "qualified"
 
 
+POLICY_BODY_SHAPES = ("identity_only", "metadata_only", "security_wrapper_missing",
+    "security_wrapper_invalid", "security_subtype_missing", "security_subtype_other",
+    "rule_list_missing", "rule_list_null", "rule_list_invalid", "rule_list_empty", "rule_list_present")
+
+
+def policy_body_shape(body):
+    """Describe the captured structure without inferring a default type or rules."""
+    if set(body) <= {"name"}:
+        return "identity_only"
+    if set(body) <= {"name", "description", "association", "type", "dsf-enable"}:
+        return "metadata_only"
+    if "security-policy" not in body:
+        return "security_wrapper_missing"
+    sec = body["security-policy"]
+    if not isinstance(sec, dict):
+        return "security_wrapper_invalid"
+    if "type" not in sec:
+        return "security_subtype_missing"
+    if sec["type"] != "SECURITY_POLICY_TYPE_DEFAULT":
+        return "security_subtype_other"
+    if "policy-rule" not in sec:
+        return "rule_list_missing"
+    rules = sec["policy-rule"]
+    if rules is None:
+        return "rule_list_null"
+    if not isinstance(rules, list):
+        return "rule_list_invalid"
+    return "rule_list_present" if rules else "rule_list_empty"
+
+
 def rule_review(module, body, limit=2000):
     result = {"findings": [], "rules": 0, "qualified_match_rules": 0, "unsupported_rules": 0,
               "order_verified": False, "truncated": False, "safe_to_apply": False,"unsupported_reasons":{},
@@ -132,6 +162,7 @@ def rule_review(module, body, limit=2000):
             result["unsupported_reasons"]={reason:result["unsupported_rules"]}
         result["status"] = "literal_acl_prefix_review" if result["order_verified"] else "structural_acl_review"
         return result
+    result["body_shape"] = policy_body_shape(body)
     security = body.get("security-policy")
     if result["schema_state"] != "qualified":
         result["status"] = "rule_schema_unqualified"
@@ -206,6 +237,8 @@ def policy_rule_groups(bundle):
     """Deduplicate identical captured policy bodies per function and identity."""
     from .standard_evidence import conflicting_profiles
     groups = {}
+    library = (bundle.get("library") or {}).get("modules", {}).get("policies", {})
+    library_conflicts = conflicting_profiles(bundle,"Library","policies","",library,side="library")
     def add_conflicts(persona,module,location,conflicts):
         for identity,evidence in conflicts.items():
             key=(persona,module,identity,"individual_evidence_conflict",canonical(evidence))
@@ -223,7 +256,22 @@ def policy_rule_groups(bundle):
         if key not in groups:
             groups[key] = {"persona": persona, "module": module, "identity": identity,
                            "locations": [], **rule_review(module, body)}
-        groups[key]["locations"].append(location)
+        group = groups[key]
+        if module == "policies" and persona != "Library" and group.get("status") == "rule_schema_unqualified":
+            candidate = library.get("profiles", {}).get(identity) if library.get("status") == "list_parsed" else None
+            if identity in library_conflicts:
+                group["library_body_relation"] = "individual_conflict"
+            elif not isinstance(candidate, dict):
+                group["library_body_relation"] = "not_observed"
+            else:
+                other = profile_body(candidate)
+                if canonical(body) == canonical(other):
+                    group["library_body_relation"] = "exact_body_match"
+                elif "type" not in body and isinstance(other.get("type"), str) and other["type"] in POLICY_TYPES and canonical(body) == canonical({k:v for k,v in other.items() if k != "type"}):
+                    group["library_body_relation"] = "only_missing_policy_type"
+                else:
+                    group["library_body_relation"] = "different_body"
+        group["locations"].append(location)
     modules = ("policies", "role-acls")
     for persona, entry in sorted(bundle["results"].items()):
         scopes = {s["id"]: s for s in entry["scopes"]}
