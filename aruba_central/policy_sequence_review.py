@@ -5,7 +5,7 @@ https://developer.arubanetworks.com/new-central-config/reference/replacepolicygr
 The resultant policy still depends on role and device applicability.
 """
 from .central_tool import canonical, profile_body
-from .policy_rule_review import condition_relationship, simple_match, unsupported_security_reason
+from .policy_rule_review import condition_relationship, simple_match, unsupported_security_reason, policy_schema_state
 
 
 def sequence_entries(evidence):
@@ -61,6 +61,8 @@ def compare_sequence(parsed, policy_view, limit=1000, *, conflicts=None):
                   else "not_observed" if policy_view.get("status") == "list_parsed" and policy_view.get("count_confirmed") is True
                   else "target_unverified")
         reference = {"name": name, "position": entry["position"], "status": status}
+        if isinstance(body, dict):
+            reference["schema_state"] = policy_schema_state("policies", profile_body(body))
         result["references"].append(reference)
         if rules is None:
             continue
