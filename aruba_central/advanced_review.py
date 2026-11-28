@@ -314,8 +314,69 @@ def profile_reference_observations(module, identity, body, vlans):
     # https://developer.arubanetworks.com/new-central-config/reference/updateethernetinterfacesinterfacebyid
     if module == "ethernet-interfaces" and body.get("unknown-vlans") in ("BLOCK", "DISABLE", "LEARN"):
         handled.add("unknown-vlans")
+    # Preserve unrelated nested fields for generic review; specialize only
+    # documented paths in the relevant source profile.
+    filtered = {k:v for k,v in body.items() if k not in handled}
+    from .central_tool import parse_reference_ids
+    def numeric(value, path, allow_list=False):
+        ids = parse_reference_ids(value, allow_list=allow_list)
+        if ids:
+            for vid in sorted(ids,key=int):
+                yield "layer2-vlan",vid,path
+        else:
+            yield "layer2-vlan",None,path
+    if module == "ap-port-profiles" and isinstance(filtered.get("switchport"),dict):
+        port = dict(filtered["switchport"])
+        # https://developer.arubanetworks.com/new-central-config/reference/replaceapportprofilesprofilebyid
+        # The explicit ranges selector is a mode, not a reference. Unknown
+        # selectors and any contradictory named value remain unresolved.
+        if port.get("allowed-vlan-selector") == "VLAN_RANGES" and "allowed-vlan-name" not in port:
+            if any(k in port for k in ("trunk-vlan-ranges","trunk-vlans")) or port.get("trunk-vlan-all") is True:
+                port.pop("allowed-vlan-selector")
+                for key in ("trunk-vlan-ranges","trunk-vlans"):
+                    if key in port:
+                        yield from numeric(port.pop(key),["switchport",key],True)
+                if port.get("trunk-vlan-all") is True:
+                    yield "layer2-vlan",None,["switchport","trunk-vlan-all"]
+        filtered["switchport"] = port
+    if module == "stp":
+        # https://developer.arubanetworks.com/new-central-config/reference/createstpprofilebyid
+        if "rpvst-mstp-interconnect-vlan" in filtered:
+            yield from numeric(filtered.pop("rpvst-mstp-interconnect-vlan"),["rpvst-mstp-interconnect-vlan"])
+        if isinstance(filtered.get("mstp"),list):
+            instances=[]
+            for index,instance in enumerate(filtered["mstp"]):
+                if isinstance(instance,dict):
+                    instance=dict(instance)
+                    for key in ("mstp-vlans","vlans"):
+                        if key in instance:
+                            yield from numeric(instance.pop(key),["mstp",index,key],True)
+                instances.append(instance)
+            filtered["mstp"]=instances
+        if isinstance(filtered.get("rpvst"),list):
+            instances=[]
+            for index,instance in enumerate(filtered["rpvst"]):
+                if isinstance(instance,dict):
+                    instance=dict(instance)
+                    if type(instance.get("vlan-log-state-transitions")) is bool:
+                        instance.pop("vlan-log-state-transitions")
+                instances.append(instance)
+            filtered["rpvst"]=instances
+    if module == "roles" and isinstance(filtered.get("vlan-parameters"),dict):
+        parameters=dict(filtered["vlan-parameters"])
+        # The vendor role response distinguishes named-vlan and literal IDs.
+        # access-vlan-name and trunk names stay under existing conservative review.
+        if "named-vlan" in parameters:
+            value=parameters.pop("named-vlan")
+            yield "named-vlan",value if isinstance(value,str) and value.strip() else None,["vlan-parameters","named-vlan"]
+        for key in ("trunk-native-vlan","wired-access-vlan-id","trunk-allowed-vlans"):
+            if key in parameters:
+                yield from numeric(parameters.pop(key),["vlan-parameters",key],key=="trunk-allowed-vlans")
+        if parameters.get("private-vlan-port-type") in ("PROMISCUOUS","SECONDARY","ISL"):
+            parameters.pop("private-vlan-port-type")
+        filtered["vlan-parameters"]=parameters
     if module != "layer2-vlan":
-        vlan_refs = reference_candidates({k: v for k, v in body.items() if k not in handled} if handled else body, vlans)
+        vlan_refs = reference_candidates(filtered, vlans)
         for ref in vlan_refs["references"]:
             for vid in ref["vlan_ids"]:
                 yield "layer2-vlan", vid, ref["path"]
