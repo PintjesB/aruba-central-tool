@@ -23,6 +23,10 @@ def planner_qualification(directory, snapshot, *, max_validations=200, max_pair_
         row = actions.setdefault(action if action in KNOWN_ACTIONS else "other", Counter())
         row["findings"] += 1
         row["local_source_observations"] += len(finding["sources"])
+        if action == "promote_local":
+            for blocked in finding.get("blocked_destinations", []):
+                kind = blocked["kind"] if blocked["kind"] in DESTINATIONS else "other"
+                options.setdefault(kind, Counter())["blocked_by_individual_evidence"] += 1
         if action not in ACTIONS or not finding["preview_selectable"]:
             row["not_selectable"] += 1
             continue
@@ -30,9 +34,6 @@ def planner_qualification(directory, snapshot, *, max_validations=200, max_pair_
         if action != "promote_local":
             candidates.append((finding, None, "not_applicable"))
             continue
-        for blocked in finding.get("blocked_destinations", []):
-            kind = blocked["kind"] if blocked["kind"] in DESTINATIONS else "other"
-            options.setdefault(kind, Counter())["blocked_by_individual_evidence"] += 1
         if not any(d["destination"] == "library" for d in finding.get("blocked_destinations", [])):
             candidates.append((finding, "library", "library"))
         for option in finding["placement_options"]:
