@@ -21,6 +21,8 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
     persona, module, identity = (candidate[k] for k in ("persona", "module", "identity"))
     sources = candidate["sources"]
     reuse = candidate.get("action") == "reuse_library"
+    if any(d["destination"] == destination for d in candidate.get("blocked_destinations", [])):
+        raise ValueError("Destination blocked by contradictory individual evidence")
     if reuse and destination != "library":
         raise ValueError("Existing Library reuse has no other destination")
     expected = canonical(candidate["local"])
