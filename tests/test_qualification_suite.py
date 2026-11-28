@@ -59,7 +59,7 @@ class QualificationSuiteTests(unittest.TestCase):
                  patch("aruba_central.qualification_suite.browser_benchmark",return_value={}) as browser:
                 with self.assertRaises(ValueError):
                     qualification_suite(directory,after,previous=before)
-                result=qualification_suite(directory,after,previous=before,confirm_history_same_tenant=True,repeat=1)
+                result=qualification_suite(directory,after,previous=before,confirm_history_same_tenant=True,repeat=1,include_browser=True)
                 browser.assert_called_once_with(directory,after,repeat=1,executable=None,previous=before)
             self.assertTrue(result["same_capture_pair_verified"])
             self.assertEqual(result["history"]["counts"]["structured_records"],3)
@@ -93,5 +93,18 @@ class QualificationSuiteTests(unittest.TestCase):
             with patch("aruba_central.qualification_suite.benchmark", return_value={}), \
                  patch("aruba_central.qualification_suite.browser_benchmark", side_effect=RuntimeError("BrowserType.launch: Executable doesn't exist at private-path")):
                 with self.assertRaisesRegex(QualificationStageError, "browser benchmark.*playwright install chromium") as raised:
-                    qualification_suite(directory, repeat=1)
+                    qualification_suite(directory, repeat=1, include_browser=True)
             self.assertNotIn("private", str(raised.exception))
+
+    def test_standard_suite_never_starts_browser(self):
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(fixture()))
+            with patch("aruba_central.qualification_suite.benchmark", return_value={}), \
+                 patch("aruba_central.qualification_suite.browser_benchmark", side_effect=ImportError("Playwright absent")) as browser:
+                report = qualification_suite(directory, repeat=1)
+            browser.assert_not_called()
+            self.assertIsNone(report["browser"])
+            self.assertEqual(report["browser_qualification"], "not_requested")
+            self.assertTrue(report["planner"]["review_choice_validation_passed"])
+            self.assertIn("policy_predicate_patterns", report["engineering"])
