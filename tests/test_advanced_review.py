@@ -546,3 +546,18 @@ class AdvancedTests(unittest.TestCase):
             self.assertEqual(reference_value_shape({"vlan":[{"value":value}]},["vlan",0,"value"]),shape)
         self.assertEqual(reference_value_shape({"vlan":[]},"vlan"),"missing_path")
         self.assertEqual(reference_value_shape({"vlan":[]},["vlan",0]),"missing_path")
+
+    def test_ap_literal_ranges_without_selector_preserve_members_and_conflicts(self):
+        from aruba_central.advanced_review import profile_reference_observations
+        def refs(port):
+            return list(profile_reference_observations("ap-port-profiles","ap",{"switchport":port},{}))
+        self.assertEqual(refs({"trunk-vlan-ranges":["10-11",20]}),
+                         [("layer2-vlan","10",["switchport","trunk-vlan-ranges"]),
+                          ("layer2-vlan","11",["switchport","trunk-vlan-ranges"]),
+                          ("layer2-vlan","20",["switchport","trunk-vlan-ranges"])])
+        for port in ({"trunk-vlan-ranges":["invalid"]},
+                     {"trunk-vlan-ranges":["10"],"allowed-vlan-selector":"NAMED_VLAN"},
+                     {"trunk-vlan-ranges":["10"],"allowed-vlan-selector":None},
+                     {"trunk-vlan-ranges":["10"],"allowed-vlan-name":"named"}):
+            self.assertTrue(refs(port))
+            self.assertTrue(all(target is None for _,target,_ in refs(port)))
