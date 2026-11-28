@@ -500,7 +500,7 @@ function dependencyOrder(chosen){
  return {order:[...order,...blocked],blocked,relationships,complete:false};
 }
 function bulkReview(chosen){
- const known=new Map(),unknown=new Map(),touches=new Map(),library=new Map(),fallbacks=[];
+ const known=new Map(),unknown=new Map(),touches=new Map(),library=new Map(),recipientTouches=new Map(),fallbacks=[];
  const collisions=[],seen=new Set(),stages={prepare:[],verify:[],cleanup:[]};
  const missing=[];
  const key=(...parts)=>JSON.stringify(parts);
@@ -509,11 +509,21 @@ function bulkReview(chosen){
   const k=key(...[a,b].sort(),message);
   if(!seen.has(k)){seen.add(k);collisions.push({first:a,second:b,reason:message});}
  }
- function touch(k,f){
-  if(touches.has(k))collision(touches.get(k),f.id,'Overlapping source or destination profile at the same scope');
-  else touches.set(k,f.id);
+ function addTouch(map,k,f,message){
+  if(!map.has(k))map.set(k,new Set());
+  const ids=map.get(k);
+  for(const id of ids)collision(id,f.id,message);
+  ids.add(f.id);
  }
- function recipients(f,items,map){for(const d of items||[])map.set(key(f.persona,d.scope),{persona:f.persona,...d});}
+ function touch(k,f){
+  addTouch(touches,k,f,'Overlapping source or destination profile at the same scope');
+ }
+ function recipients(f,items,map){
+  for(const d of items||[]){
+   map.set(key(f.persona,d.scope),{persona:f.persona,...d});
+   if(map===known)addTouch(recipientTouches,key(f.persona,f.module,f.identity,d.scope),f,'Selected proposals affect the same profile at an observed device recipient');
+  }
+ }
  for(const f of chosen){
   const recipient=f.recipient_evidence||{};
   recipients(f,recipient.known,known);recipients(f,recipient.unknown,unknown);
@@ -524,8 +534,7 @@ function bulkReview(chosen){
    if(!d){missing.push(f.id);}
    else if(d.kind==='library'){
     const k=key(f.module,f.identity);
-    if(library.has(k))collision(library.get(k),f.id,'Multiple proposals use the same Library identity; reconcile the target definition');
-    else library.set(k,f.id);
+    addTouch(library,k,f,'Multiple proposals use the same Library identity; reconcile the target definition');
     stages.prepare.push({id:f.id,step:'Review Library definition and exact source-scope assignments'});
    }else{
     touch(scopeKey(d.scope),f);
@@ -537,7 +546,7 @@ function bulkReview(chosen){
    const k=key(f.module,f.identity);
    // Reuse/reuse alone is not a conflict, but a selected promotion to the
    // same Library identity must be reconciled before combining the work.
-   if(library.has(k))collision(library.get(k),f.id,'Selected Library reuse overlaps a proposed Library promotion');
+   if(library.has(k))for(const id of library.get(k))collision(id,f.id,'Selected Library reuse overlaps a proposed Library promotion');
    stages.prepare.push({id:f.id,step:'Verify existing Library definition and proposed assignments'});
   }
   for(const x of f.fallbacks||[]){
@@ -549,9 +558,9 @@ function bulkReview(chosen){
  // Also detect reuse preceding promotion (selection order must not affect checks).
  for(const f of chosen)if(f.action==='reuse_library'){
   const k=key(f.module,f.identity);
-  if(library.has(k))collision(library.get(k),f.id,'Selected Library reuse overlaps a proposed Library promotion');
+  if(library.has(k))for(const id of library.get(k))collision(id,f.id,'Selected Library reuse overlaps a proposed Library promotion');
  }
- for(const f of fallbacks)if(touches.has(f.key))collision(touches.get(f.key),f.id,'A selected proposal touches another proposal’s expected inherited definition');
+ for(const f of fallbacks)if(touches.has(f.key))for(const id of touches.get(f.key))collision(id,f.id,'A selected proposal touches another proposal’s expected inherited definition');
  const dependency_order=dependencyOrder(chosen);
  const rank=new Map(dependency_order.order.map((id,i)=>[id,i]));
  for(const phase of ['prepare','verify'])stages[phase].sort((a,b)=>rank.get(a.id)-rank.get(b.id));
