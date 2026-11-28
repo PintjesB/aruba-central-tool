@@ -130,6 +130,19 @@ def nac_view(workspace, query):
                             str(counts["count_confirmed_absence"]), str(counts["unverified"]),
                             inspect("Switch VLAN evidence", details, "Review")))
     body += table(("Policy", "Rule position", "VLAN attribute", "Evidence", "Observed", "Confirmed absent", "Unknown", ""), vlan_rows, search=True) + '</section>'
+    role_review=bindings["role_enforcement"]
+    body+='<section><h2>Role enforcement evidence</h2><p>Explicit Aruba-User-Role custom attributes and exact role-name value candidates are shown separately. Similar names are not aliases. Captured visibility is not a client authorization result or proof of role applicability.</p>'
+    role_rows=[]
+    for target in role_review["targets"]:
+        evidence=role_review["visibility"][target["role_identity"]]
+        counts=Counter(r["status"] for r in evidence["devices"])
+        detail=('<p>Library: '+e(pretty(evidence["library_status"]))+'</p><p>Other exact names differing in case: '+e(", ".join(evidence["similar_exact_names"]) or "None observed")+'</p>'
+                +table(("Function","Device","Role visibility","Library body comparison"),[
+                    tr(e(r["persona"]),e(r["device"]),badge(pretty(r["status"])),e(pretty(r["library_comparison"]))) for r in evidence["devices"]],search=True))
+        role_rows.append(tr(e(target["policy"]),e(context_label(target,"Default")),e(target["name"]),e(target["role_identity"]),
+                             badge(pretty(target["status"])),str(counts["observed"]),str(counts["count_confirmed_absence"]),
+                             str(counts["unverified"]+counts["individual_evidence_conflict"]),inspect("Role evidence",detail,"Review")))
+    body+=table(("Policy","Rule","Attribute","Exact value","Evidence","Observed","Confirmed absent","Unknown or conflicting",""),role_rows,search=True)+'</section>'
     body += '<section><h2>Authorization limits</h2><p>Registration and static tag association do not prove the effective role, VLAN, authentication result or authorization rule. Named MPSK secret collection is intentionally excluded.</p>'
     body += f'<a class="button" href="{url(root, "nac", snapshot=name, export="1", binding=binding)}">Prepare private report JSON</a></section>'
     return page("NAC identities", body, workspace.nav(name))
