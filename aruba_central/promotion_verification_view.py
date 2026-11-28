@@ -13,6 +13,8 @@ def promotion_outcome(result):
                     ("Unresolved or changed devices", sum(r["status"] not in good for r in rows), "Review first"),
                     ("Destination evidence", "Observed" if result["destination_and_assignments_observed"] else "Unverified",
                      "Definition and required Library assignment observations")])
+    if result["workflow"] == "library_reuse":
+        body += '<p class="note">Existing Library reuse: the retained Library definition must match in both captures; exact source-scope assignments and local cleanup are checked separately.</p>'
     body += '<section><h2>Destination definition</h2>' + observation_comparison(
         "Saved destination profile", result["before_destination"], result["after_destination"])
     if result["assignment_observations"]:

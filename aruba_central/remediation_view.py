@@ -39,15 +39,17 @@ def remediation_view(workspace, query):
     options += [(json.dumps(["override", f["id"]]), "Remove override / " + f["module"] + " / " + f["identity"] + " / " + f["persona"] + " / " + ", ".join(s["name"] for s in f["sources"])) for f in overrides]
     options += [(json.dumps(["library", d["module"], identity]), "Library migration / " + d["module"] + " / retain " + identity) for d in duplicates for identity in d["identities"]]
     for f in promotions:
-        label = "Promote local / " + f["module"] + " / " + f["identity"] + " / " + f["persona"]
+        reuse = f["action"] == "reuse_library"
+        label = ("Reuse Library / " if reuse else "Promote local / ") + f["module"] + " / " + f["identity"] + " / " + f["persona"]
         options.append((json.dumps(["promotion", f["id"], "library"]), label + " / Library"))
-        options.extend((json.dumps(["promotion", f["id"], p["scope"]]), label + " / " + p["kind"] + " / " + p["name"])
-                       for p in f["placement_options"])
+        if not reuse:
+            options.extend((json.dumps(["promotion", f["id"], p["scope"]]), label + " / " + p["kind"] + " / " + p["name"])
+                           for p in f["placement_options"])
     chosen = query.get("candidate", "")
     body += (f'<section><form class="filter-bar" method="get" action="{e(root + "remediation")}">'
              f'<input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="previous" value="{e(previous)}"><input type="hidden" name="confirmed" value="yes">'
              + select("candidate", options, chosen, "Prior opportunity") + '<button type="submit">Verify observed outcome</button></form>'
-             + '<p class="note">Prior device override candidates, duplicate Library groups and local-profile promotions are supported. This is not a replay of an executed plan.</p></section>')
+             + '<p class="note">Prior device override candidates, duplicate Library groups, existing Library reuse and local-profile promotions are supported. This is not a replay of an executed plan.</p></section>')
     if chosen:
         if chosen not in dict(options):
             raise ValueError("Unknown prior candidate")

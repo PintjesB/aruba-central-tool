@@ -10,7 +10,7 @@ from .remediation_review import comparable, observation, scoped_view, scope_meta
 
 def promotion_candidates(bundle):
     return [f for f in profile_recommendations(bundle)
-            if f["action"] == "promote_local" and f["preview_selectable"] and f["sources"]]
+            if f["action"] in ("promote_local", "reuse_library") and f["preview_selectable"] and f["sources"]]
 
 
 def verify_promotion(before, after, candidate_id, destination, *, confirmed=False):
@@ -20,6 +20,9 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
         raise ValueError("Unknown or unqualified prior promotion")
     persona, module, identity = (candidate[k] for k in ("persona", "module", "identity"))
     sources = candidate["sources"]
+    reuse = candidate.get("action") == "reuse_library"
+    if reuse and destination != "library":
+        raise ValueError("Existing Library reuse has no other destination")
     expected = canonical(candidate["local"])
 
     def matches(obs):
@@ -47,7 +50,7 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
                        for a in assignment_view.get("rows", []) if isinstance(a, dict)}
         assignment_rows = [{"scope": r["scope"], "observed": assignment_view.get("status") == "response_received"
                             and (module, identity, persona, r["scope"]) in assignments} for r in sources]
-        target_matches = matches(new_dest) and all(a["observed"] for a in assignment_rows)
+        target_matches = matches(new_dest) and (not reuse or matches(old_dest)) and all(a["observed"] for a in assignment_rows)
     else:
         options = [p for p in candidate["placement_options"] if p["scope"] == destination]
         if len(options) != 1:
@@ -121,7 +124,7 @@ def verify_promotion(before, after, candidate_id, destination, *, confirmed=Fals
                      "intended": intended_recipient, "destination_recipient": sid in new_recipients,
                      "status": status, "before_effective": old, "after_effective": new})
 
-    return {"workflow": "local_promotion", "candidate": candidate, "destination": destination,
+    return {"workflow": "library_reuse" if reuse else "local_promotion", "candidate": candidate, "destination": destination,
             "identity_checks": identity_checks, "destination_definition_matches": matches(new_dest),
             "destination_and_assignments_observed": target_matches,
             "before_destination": old_dest, "after_destination": new_dest,
