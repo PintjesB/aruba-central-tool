@@ -68,3 +68,42 @@ class RemediationTests(unittest.TestCase):
                                                      "previous": "config-audit-before.json", "confirmed": "yes"})
             self.assertIn("Prior opportunity", html)
             self.assertIn("Verify observed outcome", html)
+
+
+    def test_promotion_verifies_source_removal_destination_and_outside_recipient(self):
+        from aruba_central.promotion_verification import verify_promotion
+        before, after = self.captures()
+        persona, module = "ACCESS_SWITCH", "layer2-vlan"
+        candidate = {"id": "promote", "persona": persona, "module": module, "identity": "20",
+                     "local": {"vlan": 20, "name": "Office"},
+                     "sources": [{"scope": "3", "name": "Reference", "kind": "device"},
+                                 {"scope": "4", "name": "Target", "kind": "device"}],
+                     "placement_options": [{"scope": "1", "kind": "global"}]}
+        for row in after["results"][persona]["modules"][module]["scope_results"]:
+            if row["scope"] in ("3", "4"):
+                row["local_view"] = {"status": "list_parsed", "count_confirmed": True, "profiles": {}}
+        before["results"][persona]["modules"][module]["scope_results"].append({
+            "scope": "5", "effective_view": {"status": "list_parsed", "count_confirmed": True, "profiles": {}}})
+        after["results"][persona]["modules"][module]["scope_results"].append({
+            "scope": "5", "effective_view": {"status": "list_parsed", "count_confirmed": True,
+                                            "profiles": {"20": candidate["local"]}}})
+        after["library"]["assignments"] = {"status": "response_received", "rows": [
+            {"profile-type": module, "profile-instance": "20", "device-function": persona, "scope-id": sid}
+            for sid in ("3", "4")]}
+        with patch("aruba_central.promotion_verification.promotion_candidates", return_value=[candidate]):
+            for destination in ("library", "1"):
+                report = verify_promotion(before, after, "promote", destination, confirmed=True)
+                self.assertTrue(report["destination_and_assignments_observed"])
+                self.assertEqual({r["status"] for r in report["source_rows"]}, {"observed_local_removal"})
+                self.assertEqual({r["scope"]: r["status"] for r in report["rows"]},
+                    {"3": "observed_intended_effective_match", "4": "observed_intended_effective_match",
+                     "5": "outside_effective_changed"})
+                self.assertFalse(report["safe_to_apply"])
+                self.assertFalse(report["complete"])
+            after["library"]["assignments"]["rows"].pop()
+            self.assertFalse(verify_promotion(before, after, "promote", "library", confirmed=True)["destination_and_assignments_observed"])
+            after["results"][persona]["modules"][module]["scope_results"][1]["local_view"]["count_confirmed"] = False
+            self.assertEqual(verify_promotion(before, after, "promote", "library", confirmed=True)["source_rows"][0]["status"],
+                             "source_removal_unverified")
+            with self.assertRaises(ValueError):
+                verify_promotion(before, after, "promote", "unknown", confirmed=True)
