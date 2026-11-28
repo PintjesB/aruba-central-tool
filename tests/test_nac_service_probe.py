@@ -77,3 +77,28 @@ class NACServiceProbeTests(unittest.TestCase):
             for row in report["operations"][::2]:
                 self.assertEqual(row["status"], "pagination_unqualified")
                 self.assertFalse(row["count_confirmed"])
+
+
+    def test_saved_service_inventory_ui_and_anonymous_coverage(self):
+        import tempfile
+        from pathlib import Path
+        from test_consolidation import fixture
+        from aruba_central.config_app import Workspace
+        from aruba_central.coverage_diagnostics import diagnostics
+        from aruba_central.nac_service_probe import capture_service_inventory
+        class Client:
+            def get(self, path, **params):
+                return {"items": [], "count": 0, **({"total": 0} if path.endswith("/cnac-job") else {})}
+        bundle = fixture()
+        bundle["nac_service_inventory"] = capture_service_inventory(Client())
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-example.json"
+            (Path(directory) / name).write_text(json.dumps(bundle))
+            html = Workspace(directory).nac({"snapshot": name})
+            self.assertIn("Additional NAC service inventory", html)
+            self.assertIn("cnac-dpp-reg", html)
+            self.assertIn("cnac-job", html)
+            self.assertIn("No observed identity queried", html)
+        report = diagnostics(bundle)["nac"]
+        self.assertFalse(report["cnac-dpp-reg"]["count_confirmed"])
+        self.assertTrue(report["cnac-job"]["count_confirmed"])
