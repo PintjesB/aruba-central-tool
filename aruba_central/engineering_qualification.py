@@ -57,7 +57,9 @@ def engineering_qualification(bundle, *, include_reference_patterns=False):
     if include_reference_patterns:
         from .advanced_review import advanced_analysis
         engineering = advanced_analysis(reviewed)
-    report = assessment(reviewed) if engineering is None else assessment(reviewed, engineering=engineering)
+        from .policy_rule_review import policy_rule_groups
+        rules = policy_rule_groups(reviewed)
+    report = assessment(reviewed) if engineering is None else assessment(reviewed, engineering=engineering, rules=rules)
     counts={}
     for category,fields in FIELDS.items():
         counts[category]={}
@@ -76,8 +78,8 @@ def engineering_qualification(bundle, *, include_reference_patterns=False):
         result["reference_absence_patterns"] = reference_absence_patterns(engineering["references"])
         result["role_vlan_name_evidence"] = role_vlan_name_evidence(engineering["references"])
         result["reference_conflict_patterns"] = reference_conflict_patterns(engineering["references"])
-        from .policy_rule_review import policy_rule_groups
-        result["policy_clause_gaps"] = policy_clause_gaps(policy_rule_groups(bundle))
+        result["policy_clause_gaps"] = policy_clause_gaps(rules)
+        result["named_reference_target_groups"] = named_reference_target_groups(engineering["references"])
     return result
 
 
@@ -174,6 +176,37 @@ def named_reference_field_gaps(references):
              "observations":n,"distinct_source_fields":len(sources[s,t,f,r,kind]),
              "distinct_target_identities":len(targets[s,t,f,r,kind])}
             for (s,t,f,r,kind),n in sorted(counts.items(),key=lambda item:(-item[1],item[0]))]
+
+
+def named_reference_target_groups(references):
+    """Count exact distinct targets across reasons without revealing identities.
+
+    Group privately by actual module and identity; export only fixed module
+    categories and cardinalities. Repeated observations remain separate from
+    distinct identities, and positive alternatives do not qualify applicability.
+    """
+    from collections import Counter,defaultdict
+    from .central_tool import CONFIG_MODULES
+    contexts={"library_definition","other_function_same_scope","same_site_observation"}
+    groups=defaultdict(lambda:defaultdict(list))
+    for row in references:
+        if row.get("status")!="unresolved" or row.get("target") is None or row.get("source_evidence")=="nac_enforcement":
+            continue
+        if any(obs.get("status")=="identity_observed" and obs.get("context") in contexts for obs in row.get("target_alternative_observations",[])):
+            continue
+        module=row.get("target_module")
+        category=module if module in CONFIG_MODULES else "other"
+        groups[category][module,row["target"]].append(row)
+    result=[]
+    for category,targets in sorted(groups.items()):
+        reason_counts=Counter()
+        for rows in targets.values():
+            reasons={r.get("target_evidence") if r.get("target_evidence") in ("target_view_unqualified","target_collection_incomplete") else "other" for r in rows}
+            reason_counts["multiple_reasons" if len(reasons)>1 else next(iter(reasons))]+=1
+        result.append({"target_module":category,"distinct_target_identities":len(targets),
+                       "observations":sum(len(rows) for rows in targets.values()),
+                       "reason_groups":dict(sorted(reason_counts.items()))})
+    return result
 
 
 def reference_absence_patterns(references):

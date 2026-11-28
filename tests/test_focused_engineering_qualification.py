@@ -57,3 +57,16 @@ class FocusedEngineeringTests(unittest.TestCase):
         self.assertEqual(result[0]["distinct_target_identities"],1)
         self.assertEqual(result[0]["field"],"trunk-vlan-ranges")
         self.assertNotIn("private",json.dumps(result))
+
+    def test_target_groups_deduplicate_across_reason_buckets(self):
+        from aruba_central.engineering_qualification import named_reference_target_groups
+        base={"status":"unresolved","target":"private-id","target_module":"layer2-vlan",
+              "target_evidence":"target_view_unqualified"}
+        result=named_reference_target_groups([base]*57+[
+            {**base,"target_evidence":"target_collection_incomplete"},
+            {**base,"target":"private-other"},
+            {**base,"target_alternative_observations":[{"status":"identity_observed","context":"library_definition"}]},
+            {**base,"source_evidence":"nac_enforcement"}])
+        self.assertEqual(result,[{"target_module":"layer2-vlan","distinct_target_identities":2,
+            "observations":59,"reason_groups":{"multiple_reasons":1,"target_view_unqualified":1}}])
+        self.assertNotIn("private",json.dumps(result))
