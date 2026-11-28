@@ -50,3 +50,20 @@ class ImpactTests(unittest.TestCase):
             self.assertIn("Resolved reference chains", page)
             self.assertIn("Direct references", page)
             self.assertIn('data-nav="Dependency impact" aria-current="page"', page)
+
+
+    def test_indirect_unqualified_boundary_is_not_a_resolved_path(self):
+        root=("roles","root")
+        intermediate=("policies","p")
+        blocked=("object-groups","target")
+        refs=[edge(root,intermediate),edge(intermediate,blocked,state="conflicting_observation"),
+              edge(blocked,("roles","other")),edge(intermediate,("object-groups",None),state="unresolved"),
+              edge(intermediate,blocked,scope="2",state="not_observed")]
+        result=dependency_impact(refs,*root)
+        self.assertEqual([(p["module"],p["identity"]) for p in result["paths"]],[intermediate])
+        boundaries=result["unqualified_boundaries"]
+        self.assertEqual(len(boundaries),2)
+        self.assertTrue(all(r["depth"]==1 and r["scope"]=="1" for r in boundaries))
+        self.assertEqual({r["unqualified_edge"]["status"] for r in boundaries},{"conflicting_observation","unresolved"})
+        self.assertTrue(all(len(r["resolved_prefix"])==1 for r in boundaries))
+        self.assertTrue(dependency_impact(refs,*root,limit=1)["boundary_truncated"])

@@ -14,6 +14,7 @@ def dependency_impact(references, module, identity, *, persona="", scope="", lim
     """
     root = (module, identity)
     contexts = defaultdict(list)
+    unqualified = defaultdict(list)
     root_contexts = set()
     direct = []
     unresolved = []
@@ -28,11 +29,16 @@ def dependency_impact(references, module, identity, *, persona="", scope="", lim
             direct.append(ref)
         if ref["target_module"] == module and ref["target"] is None:
             unresolved.append(ref)
+        if view in ("effective","library") and (ref["status"] not in RESOLVED or ref["target"] is None):
+            unqualified[context].append((source,target,ref))
         if view in ("effective", "library") and ref["status"] in RESOLVED and ref["target"] is not None:
             contexts[context].append((source, target, ref))
             if source == root or target == root:
                 root_contexts.add(context)
     paths = []
+    boundaries = []
+    boundary_keys = set()
+    boundary_truncated = False
     truncated = False
     # A path cannot start in a context with no resolved incident root edge.
     # Avoid building two adjacency maps for unrelated devices and profiles.
@@ -43,10 +49,27 @@ def dependency_impact(references, module, identity, *, persona="", scope="", lim
             for source, target, ref in edges:
                 start, end = (target, source) if direction == "consumers" else (source, target)
                 adjacency[start].append((end, ref))
+            stopped = defaultdict(list)
+            for source,target,ref in unqualified[context]:
+                start = target if direction == "consumers" else source
+                stopped[start].append(ref)
             queue = deque([(root, [])])
             seen = {root}
             while queue:
                 node, chain = queue.popleft()
+                # Keep the first exact reachable boundary without extending
+                # a chain through a contradicted or unresolved edge.
+                for ref in stopped[node]:
+                    key=(context,direction,id(ref))
+                    if key in boundary_keys:
+                        continue
+                    if len(boundaries)>=limit:
+                        boundary_truncated=True
+                        break
+                    boundary_keys.add(key)
+                    boundaries.append({"persona":context[0],"scope":context[1],"view":context[2],
+                        "direction":direction,"module":node[0],"identity":node[1],
+                        "depth":len(chain),"resolved_prefix":chain,"unqualified_edge":ref})
                 for end, ref in adjacency[node]:
                     if end in seen:
                         continue
@@ -69,4 +92,5 @@ def dependency_impact(references, module, identity, *, persona="", scope="", lim
             break
     return {"module": module, "identity": identity, "direct": direct,
             "unresolved_target_observations": unresolved, "paths": paths,
+            "unqualified_boundaries":boundaries,"boundary_truncated":boundary_truncated,
             "truncated": truncated, "complete": False, "safe_to_apply": False}

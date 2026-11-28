@@ -64,6 +64,19 @@ def impact_view(workspace, query):
                        e(module_label(r["target_module"]) + " / " + (str(r["target"]) if r["target"] is not None else "Unknown")),
                        badge(pretty(r["status"])), inspect("Reference evidence", raw(r))) for r in records]
         headers = ("Scope", "Function", "View", "Source", "Target", "Result", "")
+        boundaries=result["unqualified_boundaries"]
+        boundary_rows=[]
+        for item in boundaries:
+            ref=item["unqualified_edge"]
+            detail='<p>Resolved prefix ends at this profile. The next reference is not qualified and is not traversed.</p>'+raw(item)
+            boundary_rows.append(tr(e(pretty(item["direction"])),e(ref["device"]),e(persona_label(item["persona"])),
+                e(item["module"]+" / "+item["identity"]),str(item["depth"]),
+                e(ref["source_module"]+" / "+str(ref["source"])),e(ref["target_module"]+" / "+str(ref["target"] or "Unknown")),
+                badge(pretty(ref["status"])),inspect("Dependency boundary",detail)))
+        body += '<section><h2>Unqualified dependency boundaries</h2><p>These observations stop an otherwise resolved chain. They may affect indirect impact, but do not establish a further reachable profile.</p>'+table(("Direction","Scope","Function","Last resolved profile","Resolved hops","Source","Target","Evidence",""),boundary_rows,search=True)
+        if result["boundary_truncated"] or result["truncated"]:
+            body += '<p class="note">Traversal or boundary limit reached; additional unresolved observations may exist.</p>'
+        body += '</section>'
         body += '<section><h2>Direct references</h2>' + table(headers, reference_rows(direct), search=True) + '</section>'
         body += '<section><h2>Unresolved target identities in this module</h2>' + table(headers, reference_rows(result["unresolved_target_observations"]), search=True) + '<p class="note">These references may point elsewhere; do not assign them to the selected identity without more evidence.</p></section>'
     return page("Dependency impact", body, workspace.nav(name), extra_css=IMPACT_CSS)
