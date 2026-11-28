@@ -58,6 +58,7 @@ def additional_evidence_drift(before, after):
         return result
     a, b = index(before), index(after)
     counts = defaultdict(Counter)
+    noncomparable = defaultdict(Counter)
     records = []
     for key in sorted(a.keys() | b.keys()):
         family, persona, sid, module, side, identity = key
@@ -91,6 +92,13 @@ def additional_evidence_drift(before, after):
                         and view.get("pagination_status") in (None,"complete","pagination_exhausted"))
             if not qualified(x) or not qualified(y):
                 totals["not_comparable"] += 1
+                if qualified(x) != qualified(y):
+                    reason = "one_comparable_response"
+                elif any(z.get("status") == "partial_response" or z.get("pagination_status") not in (None,"complete","pagination_exhausted") for z in (x,y)):
+                    reason = "partial_response"
+                else:
+                    reason = "neither_comparable_response"
+                noncomparable[family][reason] += 1
                 if states["before_status"] != states["after_status"]:
                     record("read_status_changed")
                 continue
@@ -103,8 +111,22 @@ def additional_evidence_drift(before, after):
                 totals["response_changed"] += 1
                 record("supplemental_response_changed", before=old, after=new, fields=field_differences(old,new))
         elif family == "individual":
-            if not all(z.get("status") == "identity_observed" and isinstance(z.get("profile"),dict) for z in (x,y)):
+            def positive(z):
+                return z.get("status") == "identity_observed" and isinstance(z.get("profile"),dict)
+            if not all(positive(z) for z in (x,y)):
                 totals["not_comparable"] += 1
+                sampled = sum(z.get("status") == "collection_only_sampled" for z in (x,y))
+                if sampled == 2:
+                    reason = "both_collection_only"
+                elif sampled == 1 and any(positive(z) for z in (x,y)):
+                    reason = "individual_to_collection_only"
+                elif sampled == 1:
+                    reason = "collection_only_and_other_unqualified"
+                elif any(positive(z) for z in (x,y)):
+                    reason = "one_positive_individual_response"
+                else:
+                    reason = "neither_positive_individual_response"
+                noncomparable[family][reason] += 1
                 if states["before_status"] != states["after_status"]:
                     record("read_status_changed")
                 continue
@@ -125,4 +147,5 @@ def additional_evidence_drift(before, after):
             else:
                 totals["exact_match"] += 1
     return {"counts": {family:dict(values) for family,values in sorted(counts.items())},
+            "noncomparable_reasons": {family:dict(values) for family,values in sorted(noncomparable.items())},
             "records": records, "complete": False, "safe_to_apply": False}
