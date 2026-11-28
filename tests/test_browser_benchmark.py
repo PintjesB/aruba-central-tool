@@ -24,7 +24,12 @@ class BrowserBenchmarkTests(unittest.TestCase):
             self.assertEqual(result["central_api_requests"], 0)
             self.assertIn("advisor_inspector", result["stages"])
             self.assertIn("coverage", result["stages"])
-            self.assertIn("field_search", result["stages"])
+            for stage in ("field_search", "field_search_alternate", "field_search_multi_term", "grouped_search"):
+                self.assertIn(stage, result["stages"])
+                self.assertGreater(result["stages"][stage]["first_navigation_seconds"], 0)
+                self.assertIsNone(result["stages"][stage]["warm_median_navigation_seconds"])
+            self.assertEqual(result["search_index"]["status"], "indexed")
+            self.assertGreater(result["search_index"]["leaves"], 0)
             self.assertGreater(result["stages"]["advisor"]["samples"][0]["dom_nodes"], 0)
             self.assertGreater(result["stages"]["coverage"]["samples"][0]["html_bytes"], 0)
             exported = json.dumps(result)

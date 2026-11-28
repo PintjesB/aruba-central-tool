@@ -25,6 +25,9 @@ def browser_benchmark(directory, snapshot, *, repeat=3, executable=None):
         ("advisor", "advisor", {}), ("overrides", "overrides", {"result": "all"}),
         ("keyed_evidence", "assessment", {"mode": "keyed"}),
         ("nac", "nac", {}), ("field_search", "report", {"mode": "search", "q": "vlan"}),
+        ("field_search_alternate", "report", {"mode": "search", "q": "name"}),
+        ("field_search_multi_term", "report", {"mode": "search", "q": "vlan name"}),
+        ("grouped_search", "report", {"mode": "search", "q": "vlan", "presentation": "grouped"}),
         ("object_search", "report", {"mode": "entities", "q": "vlan"}),
         ("port_mapping", "advanced", {"workflow": "ports"}),
         ("duplicates", "advanced", {"workflow": "duplicates"}),
@@ -95,10 +98,18 @@ def browser_benchmark(directory, snapshot, *, repeat=3, executable=None):
         server.shutdown()
         server.server_close()
         thread.join()
+    index = workspace.configuration_search_index(bundle)
+    index_summary = {"status": "streaming_fallback" if index is None else "indexed"}
+    if index is not None:
+        index_summary.update(sources=len(index), leaves=sum(len(fields) for _, _, fields in index))
     return {"schema": 1, "kind": "anonymous_browser_benchmark", "repeat": repeat,
+            "search_index": index_summary,
             "viewport": {"width": 1440, "height": 900}, "warm_reviewed_snapshot": True,
             "central_api_requests": 0,
-            "stages": {name: {"samples": values, "median_navigation_seconds": median(v["navigation_seconds"] for v in values)}
+            "stages": {name: {"samples": values,
+                              "first_navigation_seconds": values[0]["navigation_seconds"],
+                              "warm_median_navigation_seconds": median(v["navigation_seconds"] for v in values[1:]) if len(values) > 1 else None,
+                              "median_navigation_seconds": median(v["navigation_seconds"] for v in values)}
                        for name, values in samples.items()}}
 
 
