@@ -59,3 +59,31 @@ class ReferenceWorklistTests(unittest.TestCase):
                 path.write_text(path.read_text() + " ")
                 with self.assertRaises(ValueError):
                     w.advanced({**query,"reference_detail":"119","binding":binding})
+
+    def test_unknown_field_patterns_preserve_exact_source_module_and_list_path(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from aruba_central.config_app import Workspace
+        from aruba_central.central_tool import canonical
+        from test_consolidation import fixture
+        with tempfile.TemporaryDirectory() as directory:
+            name="config-audit-test.json"
+            (Path(directory)/name).write_text(json.dumps(fixture()))
+            w=Workspace(directory)
+            base={"persona":"ACCESS_SWITCH","scope":"1","device":"Switch","source_module":"roles",
+                  "source":"r","target_module":"layer2-vlan","target":None,"status":"unresolved"}
+            refs=[{**base,"path":["fields",0,"vlan"]},{**base,"path":["fields",3,"vlan"]},
+                  {**base,"path":["fields","0","vlan"]},{**base,"source_module":"wlan-ssids","path":["fields",0,"vlan"]},
+                  {**base,"path":["fields","[]","vlan"]}]
+            with patch.object(w,"advanced_snapshot",return_value={"references":refs,"shadowed":[],"port_groups":[],"library_duplicates":[]}):
+                query={"snapshot":name,"workflow":"references"}
+                html=w.advanced(query)
+                self.assertIn("Unknown reference identity patterns (4)",html)
+                self.assertIn("Inspect field",html)
+                detail=w.advanced({**query,"ref_source":"roles","ref_field":canonical(["fields",{"index":"*"},"vlan"])})
+                self.assertIn("of 2 matching observations",detail)
+                self.assertIn("Clear field filter",detail)
+                exact=w.advanced({**query,"ref_source":"roles","ref_field":canonical(["fields","0","vlan"])})
+                self.assertIn("of 1 matching observations",exact)

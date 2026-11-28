@@ -890,10 +890,17 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     states = sorted({r["status"] for r in records})
     personas = sorted({r["persona"] for r in records})
     modules = sorted({r["target_module"] for r in records})
+    sources = sorted({r["source_module"] for r in records})
+    def field(r):
+        # Collapse only numeric list positions; preserve exact string keys.
+        from .central_tool import canonical
+        path = r.get("path", [])
+        return canonical([{"index":"*"} if type(p) is int else p for p in path]) if isinstance(path, list) else "[]"
+    source, field_filter = query.get("ref_source", ""), query.get("ref_field", "")
     evidence_reasons = ("identity_unqualified", "target_view_unqualified", "identity_observed", "count_confirmed_absence", "target_collection_incomplete")
     reason = query.get("ref_evidence", "")
     state, persona, module, keyword = (query.get(k, "") for k in ("ref_state", "ref_persona", "ref_module", "ref_q"))
-    if state not in ("", *states) or persona not in ("", *personas) or module not in ("", *modules) or reason not in ("", *evidence_reasons) or len(keyword) > 200:
+    if state not in ("", *states) or persona not in ("", *personas) or module not in ("", *modules) or reason not in ("", *evidence_reasons) or source not in ("", *sources) or len(keyword) > 200 or len(field_filter) > 4096:
         raise ValueError("Invalid reference filter")
     terms = keyword.casefold().split()
     fields = ("device", "persona", "scope", "source_view", "source_module", "source",
@@ -902,8 +909,11 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                 if (not state or r["status"] == state) and (not persona or r["persona"] == persona)
                 and (not module or r["target_module"] == module)
                 and (not reason or r.get("target_evidence") == reason)
+                and (not source or r["source_module"] == source)
+                and (not field_filter or field(r) == field_filter)
                 and all(term in " ".join(str(r.get(k, "")) for k in fields).casefold() for term in terms)]
-    filters = {**params, "ref_state": state, "ref_persona": persona, "ref_module": module, "ref_evidence": reason, "ref_q": keyword}
+    filters = {**params, "ref_state": state, "ref_persona": persona, "ref_module": module, "ref_evidence": reason, "ref_q": keyword,
+               "ref_source": source, "ref_field": field_filter}
     if query.get("reference_export") == "1":
         if query.get("binding") != binding:
             raise ValueError("Reference evidence changed; reopen the worklist")
@@ -920,7 +930,9 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                 + "".join(f'<input type="hidden" name="{e(k)}" value="{e(v)}">' for k,v in params.items())
                 + select("ref_state", [("", "All states")] + [(v, pretty(v)) for v in states], state, "State")
                 + select("ref_persona", [("", "All functions")] + [(v, persona_label(v)) for v in personas], persona, "Function")
+                + select("ref_source", [("", "All source modules")] + [(v, module_label(v)) for v in sources], source, "Source module")
                 + select("ref_module", [("", "All target modules")] + [(v, module_label(v)) for v in modules], module, "Target module")
+                + (f'<input type="hidden" name="ref_field" value="{e(field_filter)}">' if field_filter else "")
                 + select("ref_evidence", [("", "All target evidence")] + [(v, pretty(v)) for v in evidence_reasons], reason, "Target evidence")
                 + f'<label>Search all observations<input name="ref_q" maxlength="200" value="{e(keyword)}"></label>'
                 + '<button type="submit">Filter</button></form>')
@@ -929,6 +941,20 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
         if 0 <= position < len(selected):
             controls += f'<a class="button" href="{url(root,"advanced",**filters,ref_offset=position)}">{label}</a> '
     controls += f'<a class="button" href="{url(root,"advanced",**filters,reference_export="1",binding=binding)}">Export all matching private JSON</a></p>'
+    groups = Counter((r["source_module"], r["target_module"], field(r)) for _, r in selected
+                     if r["status"] == "unresolved" and r.get("target") is None)
+    if field_filter:
+        controls += f'<p>Exact field pattern: {e(field_filter)} <a href="{url(root,"advanced",**{**filters,"ref_field":""})}">Clear field filter</a></p>'
+    if groups and workflow == "references" and not field_filter:
+        group_rows = []
+        for (source_module, target_module, pattern), count in sorted(groups.items(), key=lambda item: (-item[1], item[0]))[:50]:
+            href = url(root, "advanced", **{**filters, "ref_source":source_module, "ref_module":target_module,
+                                          "ref_field":pattern, "ref_state":"unresolved", "ref_evidence":""})
+            group_rows.append(tr(e(module_label(source_module)),e(module_label(target_module)),e(pattern),str(count),
+                                 f'<a href="{href}">Inspect field</a>'))
+        controls += ('<details open><summary>Unknown reference identity patterns ('+str(len(groups))+')</summary>'
+                     '<p>Exact field paths, with list positions grouped. Showing the 50 largest patterns; use source and target filters to narrow the remainder. These are observations, not confirmed dependencies.</p>'
+                     + table(("Source module","Target module","Field pattern","Observations",""),group_rows)+'</details>')
     rows = []
     for index, r in selected[offset:offset+50]:
         detail_url = url(root, "advanced", **params, reference_detail=index, binding=binding)
