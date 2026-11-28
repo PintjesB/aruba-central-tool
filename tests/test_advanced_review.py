@@ -349,3 +349,30 @@ class AdvancedTests(unittest.TestCase):
         self.assertEqual(retention_comparison(usage,None)["short_reason"],"Conflicting profile evidence")
         plan=duplicate_migration_preview("sw-port-profiles",usage,"a",bundle=data)
         self.assertEqual(plan["recipient_review"][0]["target_visibility"],"individual_evidence_conflict")
+
+
+    def test_reference_edges_retain_both_ends_but_withhold_positive_status_on_contradiction(self):
+        from aruba_central.advanced_review import advanced_analysis
+        from aruba_central.central_tool import canonical
+        from copy import deepcopy
+        p="ACCESS_SWITCH"
+        port={"name":"1","sw-profile":"p"}
+        profile={"profile-name":"p","enable":True}
+        def captured(profiles):
+            return {"status":"list_parsed","count_confirmed":True,"profiles":profiles}
+        data={"results":{p:{"scopes":[{"id":"1","kind":"device","name":"Switch"}],"modules":{
+            "ethernet-interfaces":{"scope_results":[{"scope":"1","local_view":captured({"1":port}),"effective_view":captured({"1":port})}]},
+            "sw-port-profiles":{"scope_results":[{"scope":"1","effective_view":captured({"p":profile})}]}}}}}
+        baseline=advanced_analysis(data)["references"]
+        self.assertEqual({r["status"] for r in baseline},{"observed","definition_observed"})
+        data["keyed_profile_details"]={"profiles":{p:{"1":{"sw-port-profiles":{"p":{"effective":{"status":"identity_observed","profile":{"profile-name":"p","enable":False}}}},
+            "ethernet-interfaces":{"1":{"local":{"status":"identity_observed","profile":{"name":"1","enable":False}}}}}}}}
+        refs=advanced_analysis(data)["references"]
+        self.assertEqual(len(refs),len(baseline))
+        self.assertTrue(all(r["status"]=="conflicting_observation" and r["target_body_conflict"] for r in refs))
+        self.assertTrue(next(r for r in refs if r["source_view"]=="saved")["source_body_conflict"])
+        self.assertFalse(next(r for r in refs if r["source_view"]=="effective")["source_body_conflict"])
+        data["keyed_profile_details"]["profiles"][p]["1"]["sw-port-profiles"]["p"]["effective"]["status"]="collection_only_sampled"
+        refs=advanced_analysis(data)["references"]
+        self.assertEqual(next(r for r in refs if r["source_view"]=="effective")["status"],"observed")
+        self.assertEqual(next(r for r in refs if r["source_view"]=="saved")["status"],"conflicting_observation")
