@@ -109,3 +109,31 @@ class AssignmentReviewTests(unittest.TestCase):
         self.assertEqual(report, original)
         with self.assertRaises(ValueError):
             filter_assignment_review(report, state="unknown")
+
+
+    def test_filtered_workspace_uses_exact_review_context(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from aruba_central.config_app import Workspace
+        from aruba_central.review_dispositions import snapshot_binding
+        from test_configuration_history import snapshot
+        bundle = snapshot()
+        assignment = {"profile-type": "layer2-vlan", "profile-instance": "20", "device-function": "ACCESS_SWITCH"}
+        bundle["library"]["assignments"] = {"status": "response_received", "rows": [
+            {**assignment, "scope-id": "1"}, {**assignment, "scope-id": "999"}]}
+        with tempfile.TemporaryDirectory() as directory:
+            name = "config-audit-test.json"
+            (Path(directory) / name).write_text(json.dumps(bundle))
+            workspace = Workspace(directory)
+            reviewed = workspace.reviewed_snapshot(name)
+            binding = snapshot_binding(workspace, name, reviewed)
+            query = {"snapshot": name, "state": "scope_unresolved"}
+            html = workspace.assignments(query)
+            self.assertIn("Scope unresolved", html)
+            self.assertIn("state=scope_unresolved", html)
+            self.assertNotIn("Scope resolved</", html)
+            detail = workspace.assignments({**query, "detail": "assignment", "index": "0", "binding": binding})
+            self.assertIn("999", detail)
+            with self.assertRaises(ValueError):
+                workspace.assignments({**query, "detail": "assignment", "index": "1", "binding": binding})
