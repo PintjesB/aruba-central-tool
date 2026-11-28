@@ -12,10 +12,32 @@ def nac_view(workspace, query):
         return empty
     root, name, bundle, picker = loaded
     report = nac_review(bundle)
+    from .review_dispositions import snapshot_binding
+    binding = snapshot_binding(workspace, name, bundle)
+    if "registration" in query or query.get("export") == "1":
+        if query.get("binding") != binding:
+            raise ValueError("NAC evidence or snapshot changed; reopen the worklist")
+    if "registration" in query:
+        try:
+            index = int(query["registration"])
+        except (TypeError, ValueError):
+            raise ValueError("Invalid registration selector") from None
+        if not 0 <= index < len(report["rows"]):
+            raise ValueError("Unknown captured registration")
+        row = report["rows"][index]
+        body = intro("Registration evidence", "Exact captured registration; not a live authorization result.", picker)
+        body += f'<p><a href="{url(root, "nac", snapshot=name)}#nac-registrations">Back to MAC registration worklist</a></p>'
+        body += '<section><h2>' + e(row["display_name"] or row["id"] or "Captured registration") + '</h2>' + registration_detail(row) + '</section>'
+        return page("NAC identities", body, workspace.nav(name))
     from .nac_authorization import policy_review
     from .nac_binding_review import nac_bindings, context_label
     policies = policy_review(bundle)
     bindings = nac_bindings(bundle, report, policies)
+    if query.get("export") == "1":
+        body = intro("Export private NAC report", "Full captured registration, authorization and binding review. Keep this data private.", picker)
+        body += f'<p><a href="{url(root, "nac", snapshot=name)}">Back to NAC overview</a></p>'
+        body += '<section>' + private_export("nac-registration-review", {"snapshot": name, "report": report, "authorization": policies, "bindings": bindings}) + '</section>'
+        return page("NAC identities", body, workspace.nav(name))
     selected = query.get("tag")
     if selected is not None:
         from .nac_tag_review import tag_review_view
@@ -28,19 +50,16 @@ def nac_view(workspace, query):
                      ("Observed tag definitions", len(report["tag_definitions"]), pretty(report["tag_definition_status"]))])
     if not report["count_confirmed"]:
         body += '<p class="note">Registration count not confirmed. Missing identities or tags are not evidence of absence.</p>'
-    body += '<section><h2>MAC registration worklist</h2>'
+    body += '<section id="nac-registrations"><h2>MAC registration worklist</h2>'
     listing = []
     duplicates = {v["mac"] for v in report["duplicate_mac_groups"]}
-    for row in rows:
-        detail = '<h3>Static tag evidence</h3>' + table(("Registration value", "Resolution", "Candidate tag IDs"), [
-            tr(e(ref["value"]), badge(pretty(ref["status"])), list_items(ref["candidates"])) for ref in row["references"]])
-        detail += '<h3>Captured registration record</h3>' + property_table(row["record"])
+    for index, row in enumerate(rows):
         tag_status = "Not returned" if not row["tags_observed"] else ", ".join(str(ref["value"]) for ref in row["references"]) or "Explicitly empty"
         listing.append(tr(e(row["display_name"] or ""), e(row["record"].get("macAddress") or "Unavailable"),
                           badge("Enabled" if row["enabled"] is True else "Disabled" if row["enabled"] is False else "Unknown"),
                           e(tag_status), str(sum(ref["status"] in ("ambiguous", "unresolved") for ref in row["references"])),
                           badge("Duplicate MAC" if row["mac"] in duplicates else "Identity observed" if row["mac"] else "Invalid or missing MAC"),
-                          inspect("Registration evidence", detail, "Review")))
+                          f'<a href="{url(root, "nac", snapshot=name, registration=index, binding=binding)}">Review registration</a>'))
     body += table(("Name", "MAC address", "State", "Static tags", "Unresolved tags", "Identity", ""), listing, search=True) + '</section>'
     body += '<section><h2>Static tag definitions</h2><p>Usage counts are exact captured registration values, not a complete policy-use inventory. Name-only matches do not prove immutable tag identity.</p>'
     body += table(("Tag ID", "Name", "ID occurrences", "Name occurrences", ""), [
@@ -93,5 +112,11 @@ def nac_view(workspace, query):
                             inspect("Switch VLAN evidence", details, "Review")))
     body += table(("Policy", "Rule position", "VLAN attribute", "Evidence", "Observed", "Confirmed absent", "Unknown", ""), vlan_rows, search=True) + '</section>'
     body += '<section><h2>Authorization limits</h2><p>Registration and static tag association do not prove the effective role, VLAN, authentication result or authorization rule. Named MPSK secret collection is intentionally excluded.</p>'
-    body += private_export("nac-registration-review", {"snapshot": name, "report": report, "authorization": policies, "bindings": bindings}) + '</section>'
+    body += f'<a class="button" href="{url(root, "nac", snapshot=name, export="1", binding=binding)}">Prepare private report JSON</a></section>'
     return page("NAC identities", body, workspace.nav(name))
+
+
+def registration_detail(row):
+    return ('<h3>Static tag evidence</h3>' + table(("Registration value", "Resolution", "Candidate tag IDs"), [
+        tr(e(ref["value"]), badge(pretty(ref["status"])), list_items(ref["candidates"])) for ref in row["references"]])
+        + '<h3>Captured registration record</h3>' + property_table(row["record"]))
