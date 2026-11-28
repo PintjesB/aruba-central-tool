@@ -899,8 +899,13 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     source, field_filter = query.get("ref_source", ""), query.get("ref_field", "")
     evidence_reasons = ("identity_unqualified", "target_view_unqualified", "identity_observed", "count_confirmed_absence", "target_collection_incomplete")
     reason = query.get("ref_evidence", "")
+    contexts = ("library_definition","other_function_same_scope","same_site_observation")
+    context = query.get("ref_context","")
+    def positive_contexts(row):
+        return {obs.get("context") for obs in row.get("target_alternative_observations",[])
+                if obs.get("status") == "identity_observed" and obs.get("context") in contexts}
     state, persona, module, keyword = (query.get(k, "") for k in ("ref_state", "ref_persona", "ref_module", "ref_q"))
-    if state not in ("", *states) or persona not in ("", *personas) or module not in ("", *modules) or reason not in ("", *evidence_reasons) or source not in ("", *sources) or len(keyword) > 200 or len(field_filter) > 4096:
+    if state not in ("", *states) or persona not in ("", *personas) or module not in ("", *modules) or reason not in ("", *evidence_reasons) or source not in ("", *sources) or context not in ("","no_positive_context",*contexts) or len(keyword) > 200 or len(field_filter) > 4096:
         raise ValueError("Invalid reference filter")
     terms = keyword.casefold().split()
     fields = ("device", "persona", "scope", "source_view", "source_module", "source",
@@ -911,9 +916,10 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                 and (not reason or r.get("target_evidence") == reason)
                 and (not source or r["source_module"] == source)
                 and (not field_filter or field(r) == field_filter)
+                and (not context or (context == "no_positive_context" and r["status"] == "unresolved" and r.get("target") is not None and not positive_contexts(r)) or context in positive_contexts(r))
                 and all(term in " ".join(str(r.get(k, "")) for k in fields).casefold() for term in terms)]
     filters = {**params, "ref_state": state, "ref_persona": persona, "ref_module": module, "ref_evidence": reason, "ref_q": keyword,
-               "ref_source": source, "ref_field": field_filter}
+               "ref_source": source, "ref_field": field_filter, "ref_context": context}
     if query.get("reference_export") == "1":
         if query.get("binding") != binding:
             raise ValueError("Reference evidence changed; reopen the worklist")
@@ -934,6 +940,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                 + select("ref_module", [("", "All target modules")] + [(v, module_label(v)) for v in modules], module, "Target module")
                 + (f'<input type="hidden" name="ref_field" value="{e(field_filter)}">' if field_filter else "")
                 + select("ref_evidence", [("", "All target evidence")] + [(v, pretty(v)) for v in evidence_reasons], reason, "Target evidence")
+                + select("ref_context", [("", "All alternative contexts"),("no_positive_context","Named unresolved without positive context")] + [(v, pretty(v)) for v in contexts], context, "Alternative evidence")
                 + f'<label>Search all observations<input name="ref_q" maxlength="200" value="{e(keyword)}"></label>'
                 + '<button type="submit">Filter</button></form>')
     controls += f'<p>Showing {offset+1 if selected else 0}–{min(len(selected),offset+50)} of {len(selected)} matching observations ({len(records)} in this workflow). '
@@ -963,7 +970,8 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                        f'{e(module_label(r["source_module"]))}<small>{e(r["source"])}</small>',
                        f'{e(module_label(r["target_module"]))}<small>{e(r["target"] if r["target"] is not None else "Unknown")}</small>',
                        status(r["status"]) + (f'<small>{e(pretty(r["target_evidence"]))}</small>' if r.get("target_evidence") else "")
-                       + (f'<small>Individual target: {e(pretty(r["target_individual_status"]))}</small>' if r.get("target_individual_status") else ""),
+                       + (f'<small>Individual target: {e(pretty(r["target_individual_status"]))}</small>' if r.get("target_individual_status") else "")
+                       + (f'<small>Observed elsewhere: {e(", ".join(pretty(v) for v in sorted(positive_contexts(r))))}</small>' if positive_contexts(r) else ""),
                        e("Keep reference; verify before profile removal" if r["status"] in ("observed","definition_observed") else
                          "Verify target profile and scope" if r["status"] == "not_observed" else "Collect or interpret missing reference evidence"), control))
     return controls + table(("Source scope", "Function", "Source", "Target", "State", "Suggested next step", ""), rows)
