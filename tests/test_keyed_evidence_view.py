@@ -64,3 +64,21 @@ class KeyedEvidenceViewTests(unittest.TestCase):
             self.assertNotIn("other-selector-example", html)
             self.assertIn("1 matching observations", html)
             self.assertIn('name="scope" value="3"', html)
+
+
+    def test_explains_case_collision_and_server_count_without_qualifying(self):
+        from aruba_central.keyed_evidence_view import individual_detail
+        bundle = fixture()
+        bundle["library"]["modules"]["roles"] = {"status": "list_parsed", "profiles": {
+            "Example": {"name": "Example"}, "example": {"name": "example"}}}
+        role = {"status": "schema_unresolved", "raw": {"name": "example"}}
+        html = individual_detail(role, context=(bundle, "Library", "", "roles", "Example", "library"))
+        self.assertIn("Multiple distinct case-equivalent names", html)
+        self.assertIn("No qualified exact comparison available", html)
+        read = {"status": "identity_observed", "profile": {"servers": ["one", "two"]},
+                "differences": field_differences({"servers": ["one", "two"], "example-count": 2},
+                                                  {"servers": ["one", "two"]})}
+        html = individual_detail(read, context=(bundle, "Library", "", "server-groups", "test", "library"))
+        self.assertIn("equals the length of the observed individual server list", html)
+        self.assertIn("does not establish a derived field", html)
+        self.assertIn("Exact comparison", html)
