@@ -31,3 +31,20 @@ class PolicyVariantTests(unittest.TestCase):
                  {"scope": "2", "effective_view": {"status": "list_parsed", "profiles": {"p": {"name": "p"}}}}]
         bundle = {"results": {"ACCESS_SWITCH": {"scopes": scopes, "modules": {"roles": {"scope_results": views}}}}}
         self.assertEqual(policy_variants(bundle)[0]["status"], "field_evidence_differs")
+
+
+    def test_variant_membership_and_conflicting_bodies_remain_separate(self):
+        from test_configuration_history import snapshot
+        data=snapshot("Other")
+        data["keyed_profile_details"]={"profiles":{"ACCESS_SWITCH":{"4":{"layer2-vlan":{"20":{
+            "effective":{"status":"identity_observed","profile":{"vlan":20,"name":"Contradiction"}}}}}}}}
+        row=policy_variants(data)[0]
+        self.assertEqual(row["status"],"individual_evidence_conflict")
+        self.assertEqual(row["present_count"],1)
+        self.assertEqual([r["scope"] for r in row["individual_conflicts"]],["4"])
+        self.assertEqual(row["membership_distribution"]["site"],[{"scope":"2","name":"Site","variant_numbers":[1]}])
+        self.assertEqual([r["scope"] for r in row["unknown"]],["5"])
+        data["keyed_profile_details"]={}
+        row=policy_variants(data)[0]
+        self.assertEqual(row["status"],"explicit_differences")
+        self.assertEqual(row["membership_distribution"]["site"][0]["variant_numbers"],[1,2])
