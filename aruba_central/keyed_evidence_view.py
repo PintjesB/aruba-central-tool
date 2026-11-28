@@ -41,6 +41,19 @@ def keyed_view(workspace, query):
     if empty:
         return empty
     root, name, bundle, picker = loaded
+    from .review_dispositions import snapshot_binding
+    binding = snapshot_binding(workspace, name, bundle)
+    if query.get("detail") == "1":
+        if query.get("binding") != binding:
+            raise ValueError("Evidence or snapshot changed; reopen the worklist")
+        fields = ("persona", "scope", "module", "identity", "view")
+        if not all(query.get(k) for k in fields if k != "scope"):
+            raise ValueError("Incomplete individual evidence selector")
+        persona, scope, module, identity, view = (query.get(k, "") for k in fields)
+        read = (bundle.get("keyed_profile_details") or {}).get("profiles", {}).get(persona, {}).get(scope, {}).get(module, {}).get(identity, {}).get(view)
+        if not isinstance(read, dict):
+            raise ValueError("Unknown individual evidence")
+        return '<template data-advisor-evidence><div class="inspector-title"><h2>' + e(identity) + '</h2></div>' + individual_detail(read) + '</template>'
     category = query.get("category", "attention")
     module = query.get("module", "")
     persona = query.get("persona", "")
@@ -96,21 +109,13 @@ def keyed_view(workspace, query):
     for row in selected:
         read = row["read"]
         category_name = row["category"]
-        detail = '<p>Individual read status: ' + e(read.get("status", "unknown")) + '</p>'
-        if read.get("http_error") is not None:
-            detail += '<p>HTTP ' + e(read["http_error"]) + '</p>'
-        if isinstance(read.get("differences"), list):
-            detail += '<h3>Exact comparison</h3>' + diff_table(read["differences"], "Collection profile", "Individual profile")
-        else:
-            detail += '<p>No qualified exact comparison available.</p>'
-        if "raw" in read:
-            detail += raw(read["raw"], "Original individual response (private)")
-        if "profile" in read:
-            detail += raw(read["profile"], "Parsed individual body")
+        endpoint = url(root, "assessment", snapshot=name, mode="keyed", persona=row["persona"], scope=row["scope"],
+                       module=row["module"], identity=row["identity"], view=row["view"], detail="1", binding=binding)
+        control = f'<button type="button" class="quiet inspect-trigger" data-inspect data-inspect-url="{endpoint}">Inspect evidence</button>'
         rows.append(tr(e(row["name"]), e(persona_label(row["persona"])), e(module_label(row["module"])),
                        e(row["identity"]), e(row["view"]), badge(CATEGORIES[category_name]),
                        str(len(read["differences"])) if isinstance(read.get("differences"), list) else "Unknown",
-                       inspect(row["identity"], detail, "Inspect evidence")))
+                       control))
     params = {"snapshot": name, "mode": "keyed", "category": category, "module": module, "persona": persona, "scope": scope}
     body += f'<section><h2>{total} matching observations</h2><p>Showing {offset + 1 if selected else 0}–{offset + len(selected) if selected else 0}. Table search and CSV cover this batch only.</p>'
     if offset:
@@ -119,3 +124,18 @@ def keyed_view(workspace, query):
         body += f'<a class="button" href="{url(root, "assessment", **params, offset=offset+200)}">Next batch</a>'
     body += table(("Scope", "Function", "Module", "Profile", "View", "Evidence", "Differences", ""), rows, search=True) + '</section>'
     return page("Configuration assessment", body, workspace.nav(name))
+
+
+def individual_detail(read):
+    detail = '<p>Individual read status: ' + e(read.get("status", "unknown")) + '</p>'
+    if read.get("http_error") is not None:
+        detail += '<p>HTTP ' + e(read["http_error"]) + '</p>'
+    if isinstance(read.get("differences"), list):
+        detail += '<h3>Exact comparison</h3>' + diff_table(read["differences"], "Collection profile", "Individual profile")
+    else:
+        detail += '<p>No qualified exact comparison available.</p>'
+    if "raw" in read:
+        detail += raw(read["raw"], "Original individual response (private)")
+    if "profile" in read:
+        detail += raw(read["profile"], "Parsed individual body")
+    return detail
