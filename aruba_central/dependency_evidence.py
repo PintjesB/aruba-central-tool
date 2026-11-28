@@ -41,6 +41,68 @@ def qualify_reference_edges(bundle, references, effective):
         cache[key] = value
         return value
 
+    from collections import defaultdict
+    from .consolidation import scope_memberships
+    kinds, sites = {}, {}
+    for persona, entry in bundle["results"].items():
+        for scope in entry["scopes"]:
+            sid = scope["id"]
+            kinds[persona,sid] = scope["kind"]
+            if scope["kind"] == "site":
+                sites[persona,sid] = sid
+        for sid, membership in scope_memberships(entry["scopes"]).items():
+            if membership["site"] is not None:
+                sites[persona,sid] = membership["site"]
+
+    # Index only positive target identities needed by unresolved references.
+    # Exact same-site membership is contextual evidence, not physical adjacency.
+    needed = defaultdict(set)
+    for ref in references:
+        if ref["status"] == "unresolved" and ref.get("target") is not None:
+            needed[ref["target_module"]].add(ref["target"])
+    by_scope, by_site = defaultdict(list), defaultdict(list)
+    for persona, modules in effective.items():
+        for module, identities in needed.items():
+            for sid, view in modules.get(module, {}).items():
+                if view.get("status") != "list_parsed":
+                    continue
+                kind = kinds.get((persona,sid))
+                site = sites.get((persona,sid))
+                for identity in identities.intersection(view.get("profiles", {})):
+                    status = "individual_evidence_conflict" if contradiction(persona,sid,module,identity,"effective") else "identity_observed"
+                    observation = {"persona":persona,"scope":sid,"scope_kind":kind or "unknown","status":status}
+                    if kind is not None:
+                        by_scope[module,identity,sid,kind].append(observation)
+                    if site is not None:
+                        by_site[module,identity,site].append(observation)
+
+    alternatives_cache = {}
+    def alternatives(persona,sid,module,identity):
+        key = persona,sid,module,identity
+        if key in alternatives_cache:
+            return alternatives_cache[key]
+        observations, seen = [], set()
+        if persona != "Library":
+            view = library.get(module,{})
+            if view.get("status") == "list_parsed" and identity in view.get("profiles",{}):
+                status = "individual_evidence_conflict" if contradiction("Library","",module,identity,"library") else "identity_observed"
+                observations.append({"context":"library_definition","persona":"Library","scope":"","status":status})
+            kind = kinds.get((persona,sid))
+            site = sites.get((persona,sid))
+            if kind is not None:
+                for obs in by_scope[module,identity,sid,kind]:
+                    if obs["persona"] != persona:
+                        seen.add((obs["persona"],obs["scope"]))
+                        observations.append({**obs,"context":"other_function_same_scope"})
+            if site is not None:
+                for obs in by_site[module,identity,site]:
+                    context = (obs["persona"],obs["scope"])
+                    if context != (persona,sid) and context not in seen:
+                        seen.add(context)
+                        observations.append({**obs,"context":"same_site_observation"})
+        alternatives_cache[key] = observations
+        return observations
+
     for ref in references:
         persona, sid = ref["persona"], ref["scope"]
         side = {"saved": "local", "effective": "effective", "library": "library"}.get(ref.get("source_view"))
@@ -64,4 +126,8 @@ def qualify_reference_edges(bundle, references, effective):
             ref["collection_conflict"] = True
             ref["source_body_conflict"] = source_conflict
             ref["target_body_conflict"] = target_conflict
+        elif ref["status"] == "unresolved" and ref.get("target") is not None:
+            observations = alternatives(persona,sid,ref["target_module"],ref["target"])
+            if observations:
+                ref["target_alternative_observations"] = observations
     return references
