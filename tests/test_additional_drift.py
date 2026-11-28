@@ -42,3 +42,23 @@ class AdditionalDriftTests(unittest.TestCase):
         b["keyed_profile_details"]={}
         result=configuration_drift(a,b,confirmed=True)["additional_evidence"]
         self.assertIn("selector_observation_changed",{r["status"] for r in result["records"]})
+
+
+    def test_sampled_and_unavailable_reasons_reconcile_without_claiming_loss(self):
+        a,b=snapshot(),snapshot()
+        def read(status):
+            return {"status":status, "profile":{"name":"example"}} if status=="identity_observed" else {"status":status}
+        for bundle,states in ((a,["collection_only_sampled","identity_observed","schema_unresolved"]),
+                              (b,["collection_only_sampled","collection_only_sampled","identity_observed"])):
+            bundle["keyed_profile_details"]={"profiles":{"ACCESS_SWITCH":{"4":{"roles":{
+                str(i):{"effective":read(status)} for i,status in enumerate(states)}}}}}
+            bundle["results"]["ACCESS_SWITCH"]["modules"]["dns"]={"scope_results":[
+                {"scope":"4","local_view":{"status":"request_rejected"},"effective_view":{"status":"empty_object"}}]}
+        report=configuration_drift(a,b,confirmed=True)
+        self.assertEqual(report["unavailable_reasons"],{"same_unavailable_status":2})
+        extra=report["additional_evidence"]
+        reasons=extra["noncomparable_reasons"]["individual"]
+        self.assertEqual(reasons,{"both_collection_only":1,"individual_to_collection_only":1,"one_positive_individual_response":1})
+        self.assertEqual(sum(reasons.values()),extra["counts"]["individual"]["not_comparable"])
+        self.assertEqual(len(extra["records"]),2)
+        self.assertNotIn("response_changed",extra["counts"]["individual"])
