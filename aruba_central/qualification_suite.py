@@ -7,6 +7,7 @@ from .central_tool import write_private
 from .local_benchmark import benchmark
 from .keyed_qualification import keyed_qualification
 from .browser_benchmark import browser_benchmark
+from .planner_qualification import planner_qualification
 
 
 def qualification_suite(directory, snapshot=None, *, repeat=3, executable=None):
@@ -34,13 +35,15 @@ def qualification_suite(directory, snapshot=None, *, repeat=3, executable=None):
     unchanged()
     qualification = keyed_qualification(read_audit(Path(directory), selected))
     unchanged()
+    planner = planner_qualification(directory, selected)
+    unchanged()
     browser = browser_benchmark(directory, selected, repeat=repeat, executable=executable)
     unchanged()
     # Export fixed report names, not the selected filename, filesystem identity
     # or customer data. Do not publish a partial suite when any stage fails.
     return {"schema": 1, "kind": "anonymous_offline_qualification_suite",
             "central_api_requests": 0, "same_capture_verified": True,
-            "performance": performance, "qualification": qualification, "browser": browser}
+            "performance": performance, "qualification": qualification, "planner": planner, "browser": browser}
 
 
 def main():
