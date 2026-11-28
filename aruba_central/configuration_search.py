@@ -106,14 +106,35 @@ def search_context(record):
     return " ".join(str(record[k]) for k in ("persona", "module", "name", "scope", "identity", "view")).casefold()
 
 
-def build_search_index(bundle, *, max_leaves=500_000, max_chars=32_000_000, max_sources=50_000):
-    """Bound private in-memory preprocessing; return None for streaming fallback.
+class SearchIndex(list):
+    """Snapshot-local ordered sources sharing immutable field representations."""
+    def __init__(self):
+        super().__init__()
+        self.stats = {}
 
-    Preserve source and leaf order, exact values and typed paths. Do not
-    serialize an index to disk or use it for a different capture.
+
+def build_search_index(bundle, *, max_leaves=500_000, max_chars=32_000_000,
+                       max_sources=100_000, diagnostics=None):
+    """Bound unique body preprocessing, not repeated inherited observations.
+
+    Use order-preserving JSON as the exact body key: canonical sorted keys
+    alone would conflate bodies with different leaf traversal order.
+    The key also preserves scalar types and signed zeros. Never persist it.
     """
-    records = []
-    count = chars = 0
+    import json
+    records = SearchIndex()
+    bodies = {}
+    count = chars = observations = 0
+
+    def report(status, reason=None):
+        stats = {"status": status, "sources": len(records), "unique_bodies": len(bodies),
+                 "unique_leaves": count, "observed_leaves": observations,
+                 "accounted_chars": chars}
+        if reason:
+            stats["reason"] = reason
+        if diagnostics is not None:
+            diagnostics.update(stats)
+        records.stats = stats
 
     @lru_cache(maxsize=8192)
     def path_text(path):
@@ -125,42 +146,57 @@ def build_search_index(bundle, *, max_leaves=500_000, max_chars=32_000_000, max_
 
     for record in configuration_sources(bundle):
         if len(records) >= max_sources:
+            report("streaming_fallback", "source_limit")
             return None
         context = search_context(record)
         chars += len(context)
-        fields = []
-        for path, value in leaves(record["body"]):
-            ptext = path_text(path)
-            vtext = scalar_text(value) if type(value) in (str, int, bool, type(None)) else canonical(value).casefold()
-            count += 1
-            chars += len(ptext) + len(vtext)
-            if count > max_leaves or chars > max_chars:
-                return None
-            fields.append((path, value, ptext, vtext))
+        key = json.dumps(record["body"], ensure_ascii=True, separators=(",", ":"))
+        fields = bodies.get(key)
+        if fields is None:
+            chars += len(key)
+            fields = []
+            for path, value in leaves(record["body"]):
+                ptext = path_text(path)
+                vtext = scalar_text(value) if type(value) in (str, int, bool, type(None)) else canonical(value).casefold()
+                count += 1
+                chars += len(ptext) + len(vtext)
+                if count > max_leaves or chars > max_chars:
+                    report("streaming_fallback", "leaf_limit" if count > max_leaves else "character_limit")
+                    return None
+                fields.append((path, value, ptext, vtext))
+            fields = tuple(fields)
+            bodies[key] = fields
+        if chars > max_chars:
+            report("streaming_fallback", "character_limit")
+            return None
+        observations += len(fields)
         records.append((record, context, fields))
+    report("indexed")
     return records
 
 
 def indexed_fields(index, terms, module, persona, scope):
+    # Results are local to this query. Cache by shared body and remaining
+    # context terms; preserve source order and every observed occurrence.
+    @lru_cache(maxsize=4096)
+    def matched_fields(body_id, missing):
+        fields = shared_fields[body_id]
+        if not missing:
+            return tuple((path, value) for path, value, _, _ in fields)
+        if len(missing) == 1:
+            term = missing[0]
+            return tuple((path, value) for path, value, ptext, vtext in fields
+                         if term in ptext or term in vtext)
+        return tuple((path, value) for path, value, ptext, vtext in fields
+                     if all(term in ptext or term in vtext for term in missing))
+
+    shared_fields = {id(fields): fields for _, _, fields in index}
     for record, context, fields in index:
         if (module and record["module"] != module or persona and record["persona"] != persona
                 or scope is not None and record["scope"] != scope):
             continue
         missing = tuple(term for term in terms if term not in context)
-        def matches(fields, missing):
-            if not missing:
-                for path, value, _, _ in fields:
-                    yield path, value
-            elif len(missing) == 1:
-                term = missing[0]
-                for path, value, ptext, vtext in fields:
-                    if term in ptext or term in vtext:
-                        yield path, value
-            else:
-                for path, value, ptext, vtext in fields:
-                    if all(term in ptext or term in vtext for term in missing):
-                        yield path, value
-        yield record, matches(fields, missing)
+        yield record, iter(matched_fields(id(fields), missing))
 
 
 def matching_fields(bundle, query, *, module="", persona="", scope=None, index=None):

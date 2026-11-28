@@ -646,9 +646,17 @@ class Workspace:
             if self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle:
                 if self._configuration_search_index is None:
                     # Tuple also remembers a rejected (oversized) index.
-                    self._configuration_search_index = (build_search_index(bundle),)
+                    diagnostics = {}
+                    self._configuration_search_index = (build_search_index(bundle, diagnostics=diagnostics), diagnostics)
                 return self._configuration_search_index[0]
         return None
+
+    def configuration_search_diagnostics(self, bundle):
+        with self.snapshot_lock:
+            if (self._reviewed_snapshot is not None and self._reviewed_snapshot[1] is bundle
+                    and self._configuration_search_index is not None):
+                return dict(self._configuration_search_index[1])
+        return {"status": "not_built"}
 
     def vlan_summary(self, bundle):
         """Reuse snapshot-wide aggregate diagnostics for filtered override views."""

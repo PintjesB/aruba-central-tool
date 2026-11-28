@@ -84,6 +84,7 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
                                 search_observations=matches["total"], search_groups=grouped["total_groups"])
             index = measure("configuration_search_index_build", lambda: workspace.configuration_search_index(bundle))
             trial_counts["search_index_admitted"] = index is not None
+            trial_counts["search_index_diagnostics"] = workspace.configuration_search_diagnostics(bundle)
             if index is not None:
                 trial_counts.update(search_index_sources=len(index),
                                     search_index_leaves=sum(len(fields) for _, _, fields in index))
