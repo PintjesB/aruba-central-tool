@@ -225,3 +225,36 @@ class AssignmentReviewTests(unittest.TestCase):
         self.assertTrue(all(not r["scope_resolved"] and not r["recipients"] for r in rows))
         del data["inventory"]
         self.assertEqual(assignment_review(data)["rows"][2]["function_context"],"function_inventory_unavailable")
+
+    def test_bounded_assignment_worklist_and_exact_inspector_indices(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from aruba_central.config_app import Workspace
+        from aruba_central.review_dispositions import snapshot_binding
+        from test_configuration_history import snapshot
+        data=snapshot()
+        data["library"]["assignments"]={"status":"response_received","rows":[
+            {"profile-type":"layer2-vlan","profile-instance":f"review-{i:03}","device-function":"ACCESS_SWITCH","scope-id":"999"}
+            for i in range(120)]}
+        with tempfile.TemporaryDirectory() as directory:
+            name="config-audit-test.json"
+            (Path(directory)/name).write_text(json.dumps(data))
+            w=Workspace(directory)
+            query={"snapshot":name}
+            html=w.assignments(query)
+            self.assertIn("of 120 matching assignments",html)
+            self.assertIn("review-000",html)
+            self.assertNotIn("review-119",html)
+            last=w.assignments({**query,"assignment_offset":"100"})
+            self.assertIn("review-119",last)
+            self.assertNotIn("review-000",last)
+            search=w.assignments({**query,"assignment_q":"review-119"})
+            self.assertIn("of 1 matching assignments",search)
+            self.assertIn("review-119",search)
+            self.assertNotIn("review-000",search)
+            reviewed=w.reviewed_snapshot(name)
+            binding=snapshot_binding(w,name,reviewed)
+            self.assertIn("review-119",w.assignments({**query,"detail":"assignment","index":"119","binding":binding}))
+            with self.assertRaises(ValueError):
+                w.assignments({**query,"assignment_offset":"150"})

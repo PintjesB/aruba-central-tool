@@ -85,8 +85,32 @@ def assignments_view(workspace, query):
                 str(len(members)), str(len({r["module"] for r in members})), str(exact),
                 e(", ".join(persona_label(p) for p in contexts) or "None observed"), f'<a href="{link}">Inspect assignments</a>'))
         body += '<section><h2>Unresolved scope groups</h2><p>'+str(len(groups))+' distinct function/scope pairs. An exact individual identity confirms an assignment observation, not the device recipients.</p>'+table(("Function","Scope ID","Reason","Assignments","Modules","Exact individual identities","Other observed functions",""), group_rows, search=True)+'</section>'
+    # Search the complete filtered assignment set before bounding rendered rows.
+    # Inspector indices remain relative to the original filtered result so
+    # paging and searching cannot rebind an evidence link to another profile.
+    keyword=query.get("assignment_q","")
+    if len(keyword)>200:
+        raise ValueError("Invalid assignment search")
+    terms=keyword.casefold().split()
+    selected=[(index,row) for index,row in enumerate(rows)
+              if all(term in " ".join(str(row.get(k,"")) for k in ("module","identity","persona","scope","scope_name","scope_kind","scope_resolution","function_context","assignment_evidence_state")).casefold() for term in terms)]
+    try:
+        offset=int(query.get("assignment_offset","0"))
+    except (TypeError,ValueError):
+        raise ValueError("Invalid assignment page") from None
+    if offset<0 or offset%50 or (offset and offset>=len(selected)):
+        raise ValueError("Invalid assignment page")
+    controls=(f'<form class="filter-bar" method="get" action="{e(root+"assignments")}">'
+              +"".join(f'<input type="hidden" name="{e(k)}" value="{e(v)}">' for k,v in common.items() if k!="binding")
+              +f'<label>Search all filtered assignments<input name="assignment_q" maxlength="200" value="{e(keyword)}"></label>'
+              +'<button type="submit">Search</button></form>'
+              +f'<p>Showing {offset+1 if selected else 0}–{min(offset+50,len(selected))} of {len(selected)} matching assignments. Summary and private export cover the complete scope filters. ')
+    for label,position in (("Previous",offset-50),("Next",offset+50)):
+        if 0<=position<len(selected):
+            controls+=f'<a class="button" href="{url(root,"assignments",**common,assignment_q=keyword,assignment_offset=position)}">{label}</a> '
+    controls+='</p>'
     listing = []
-    for index, row in enumerate(rows):
+    for index, row in selected[offset:offset+50]:
         counts = Counter(d["status"] for d in row["recipients"])
         profile = e(row["identity"]) + '<small>' + badge("Library observed" if row["library_present"] else "Library unverified",
                     "neutral" if row["library_present"] else "warn") + '</small>'
@@ -104,7 +128,7 @@ def assignments_view(workspace, query):
                           str(counts["different_body"]) if row["scope_resolved"] else "Unknown",
                           str(counts["not_visible"]) if row["scope_resolved"] else "Unknown",
                           str(counts["unverified"] + counts["matching_source_unverified"] + counts["individual_evidence_conflict"]) if row["scope_resolved"] else "Unknown", control("assignment", index)))
-    body += '<section><h2>Assignment worklist</h2>' + table(("Module", "Profile", "Function", "Scope", "Type", "Known recipients", "Unknown membership", "Shared matches", "Different", "Not visible", "Unverified", ""), listing, search=True) + '</section>'
+    body += '<section><h2>Assignment worklist</h2>' + controls + table(("Module", "Profile", "Function", "Scope", "Type", "Known recipients", "Unknown membership", "Shared matches", "Different", "Not visible", "Unverified", ""), listing, search=True) + '</section>'
     body += '<section><h2>Overlapping assignment observations</h2><p>Complete overlap groups involving the selected assignments are shown, including other profile names outside the current filter. Assignments to overlapping scopes can be intentional. Atomic modules are grouped by module rather than name; overlap does not establish a conflict or prove precedence.</p>'
     body += table(("Function", "Device", "Module", "Identity", "Assignments", ""), [
         tr(e(persona_label(row["persona"])), e(row["device"]), e(module_label(row["module"])), e(row["identity"]),
