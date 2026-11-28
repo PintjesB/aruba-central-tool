@@ -37,8 +37,28 @@ def identity_collisions(bundle):
                 add(row["persona"],row["scope"],module,side,row.get(field,{}),"supplemental")
         if isinstance(entry.get("library"),dict):
             add("Library","",module,"library",entry["library"],"supplemental")
+    mismatches = defaultdict(list)
+    from .keyed_qualification import identity_relationship
+    for persona,scopes in sorted((bundle.get("keyed_profile_details") or {}).get("profiles",{}).items()):
+        for sid,modules in sorted(scopes.items()):
+            for module,profiles in sorted(modules.items()):
+                key=keys.get(module)
+                if key is None:
+                    continue
+                for identity,views in sorted(profiles.items()):
+                    for side,read in sorted(views.items()):
+                        raw=read.get("raw")
+                        if read.get("status")!="schema_unresolved" or not isinstance(raw,dict) or not isinstance(raw.get(key),str):
+                            continue
+                        relation=identity_relationship(raw,key,identity)
+                        if relation not in ("case_only","surrounding_whitespace_only","case_and_whitespace"):
+                            continue
+                        returned=raw[key]
+                        mismatches[module,identity.strip().casefold()].append({
+                            "persona":persona,"scope":str(sid),"scope_name":names.get((persona,str(sid)),str(sid) or persona),
+                            "view":side,"requested_identity":identity,"returned_identity":returned,"relationship":relation})
     results = []
-    for (module,_),rows in sorted(groups.items()):
+    for (module,folded),rows in sorted(groups.items()):
         identities=sorted({row["identity"] for row in rows.values()})
         if len(identities)<2:
             continue
@@ -46,8 +66,13 @@ def identity_collisions(bundle):
         for row in rows.values():
             contexts[row["persona"],row["scope"],row["view"]].add(row["identity"])
         same_context=sum(len(values)>1 for values in contexts.values())
+        direct=[]
+        for mismatch in mismatches.get((module,folded),[]):
+            context=contexts.get((mismatch["persona"],mismatch["scope"],mismatch["view"]),set())
+            direct.append({**mismatch,"both_names_observed_in_context":
+                           {mismatch["requested_identity"],mismatch["returned_identity"]} <= context})
         results.append({"module":module,"identities":identities,"observations":list(rows.values()),
-                        "same_context_collisions":same_context,"context_count":len(contexts),
+                        "same_context_collisions":same_context,"context_count":len(contexts),"unresolved_individual_responses":direct,
                         "relationship":"case_only" if len({i.casefold() for i in identities})==1 else "case_or_whitespace",
                         "safe_to_apply":False})
     return sorted(results,key=lambda r:(-r["same_context_collisions"],r["module"],r["identities"]))

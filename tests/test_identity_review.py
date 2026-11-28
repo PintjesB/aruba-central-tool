@@ -19,3 +19,19 @@ class IdentityReviewTests(unittest.TestCase):
         self.assertFalse(r["safe_to_apply"])
         data["results"]["ACCESS_SWITCH"]["modules"]["roles"]["scope_results"][0]["effective_view"]=view("employee")
         self.assertEqual(identity_collisions(data)[0]["same_context_collisions"],0)
+
+
+    def test_unresolved_reads_link_to_exact_collision_context_without_adding_names(self):
+        def view(*names):
+            return {"status":"list_parsed","profiles":{n:{"name":n} for n in names}}
+        data={"results":{"ACCESS_SWITCH":{"scopes":[{"id":"1","kind":"device"}],"modules":{"roles":{"scope_results":[
+            {"scope":"1","local_view":view("Employee"),"effective_view":view("Employee","employee")}]}}}},
+            "keyed_profile_details":{"profiles":{"ACCESS_SWITCH":{"1":{"roles":{"Employee":{
+                "effective":{"status":"schema_unresolved","raw":{"name":"employee"}},
+                "local":{"status":"schema_unresolved","raw":{"name":"EMPLOYEE"}}}}}}}}}
+        row=identity_collisions(data)[0]
+        self.assertEqual(row["identities"],["Employee","employee"])
+        reads={r["view"]:r for r in row["unresolved_individual_responses"]}
+        self.assertTrue(reads["effective"]["both_names_observed_in_context"])
+        self.assertFalse(reads["local"]["both_names_observed_in_context"])
+        self.assertEqual(reads["local"]["returned_identity"],"EMPLOYEE")
