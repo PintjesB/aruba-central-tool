@@ -87,3 +87,23 @@ def nac_service_probe(client):
         results.append({"operation": template, "attempted": len(ids), "outcomes": dict(outcomes)})
     return {"schema": 1, "kind": "anonymous_nac_service_probe", "operations": results,
             "endpoint_policy": dict(ENDPOINTS), "complete": False, "safe_to_apply": False}
+
+
+def service_count_confirmed(summary):
+    """A bounded page count alone does not establish total inventory size."""
+    return (summary.get("status") == "list_observed"
+            and type(summary.get("total")) is int
+            and type(summary.get("rows")) is int
+            and summary["total"] == summary["rows"]
+            and summary.get("count") in (None, summary["rows"])
+            and summary.get("next_cursor_present") is False
+            and summary.get("identity_count") == summary["rows"])
+
+
+def capture_service_inventory(client):
+    """Capture bounded service coverage, never raw credential/job payloads."""
+    report = nac_service_probe(client)
+    for row in report["operations"]:
+        if row["operation"] in ("cnac-dpp-reg", "cnac-job"):
+            row["count_confirmed"] = service_count_confirmed(row)
+    return report
