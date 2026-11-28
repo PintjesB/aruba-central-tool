@@ -1,4 +1,4 @@
-"""Run the three anonymous offline acceptance reports against one unchanged capture."""
+"""Run anonymous offline acceptance reports against one unchanged capture."""
 import argparse
 from pathlib import Path
 

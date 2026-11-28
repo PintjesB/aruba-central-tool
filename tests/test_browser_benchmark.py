@@ -24,6 +24,8 @@ class BrowserBenchmarkTests(unittest.TestCase):
             self.assertEqual(result["central_api_requests"], 0)
             self.assertIn("advisor_inspector", result["stages"])
             self.assertIn("coverage", result["stages"])
+            self.assertIn("dashboard", result["stages"])
+            self.assertIn("assignments", result["stages"])
             for stage in ("field_search", "field_search_alternate", "field_search_multi_term", "grouped_search"):
                 self.assertIn(stage, result["stages"])
                 self.assertGreater(result["stages"][stage]["first_navigation_seconds"], 0)

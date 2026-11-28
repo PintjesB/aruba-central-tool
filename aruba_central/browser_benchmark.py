@@ -21,7 +21,8 @@ def browser_benchmark(directory, snapshot, *, repeat=3, executable=None):
     # Browser/HTTP timings still include normal server-side request processing.
     workspace.advanced_snapshot(bundle)
     routes = [
-        ("assessment", "assessment", {}), ("coverage", "coverage", {}),
+        ("dashboard", "", {}), ("assessment", "assessment", {}), ("coverage", "coverage", {}),
+        ("assignments", "assignments", {}),
         ("advisor", "advisor", {}), ("overrides", "overrides", {"result": "all"}),
         ("keyed_evidence", "assessment", {"mode": "keyed"}),
         ("nac", "nac", {}), ("field_search", "report", {"mode": "search", "q": "vlan"}),
