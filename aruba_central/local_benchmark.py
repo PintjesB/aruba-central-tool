@@ -42,18 +42,19 @@ def benchmark(directory, snapshot, *, repeat=3, ui=False):
                 "cpu_seconds": process_time() - cpu})
             return result
 
+        # Measure dashboard-first navigation before loading the main trial.
+        # Keep only its compact summary, never two full captures in memory.
+        dashboard_workspace = Workspace(directory)
+        dashboard_first = measure("dashboard_cold_summary", lambda: dashboard_workspace.snapshot_overview(snapshot))
+        measure("dashboard_to_review", lambda: dashboard_workspace.reviewed_snapshot(snapshot))
+        del dashboard_workspace
         bundle = measure("load_and_refresh_review", lambda: workspace.reviewed_snapshot(snapshot))
         measure("review_cache_hit", lambda: workspace.reviewed_snapshot(snapshot))
         overview = measure("dashboard_summary", lambda: workspace.snapshot_overview(snapshot))
         measure("dashboard_cache_hit", lambda: workspace.snapshot_overview(snapshot))
-        # Independent navigation order: opening the dashboard first must
-        # not require a second full parse when entering the workspace.
-        dashboard_workspace = Workspace(directory)
-        dashboard_first = measure("dashboard_cold_summary", lambda: dashboard_workspace.snapshot_overview(snapshot))
-        measure("dashboard_to_review", lambda: dashboard_workspace.reviewed_snapshot(snapshot))
         if dashboard_first != overview:
             raise ValueError("Dashboard summary differs by navigation order")
-        del dashboard_workspace, dashboard_first
+        del dashboard_first
         findings = measure("consolidation", lambda: profile_recommendations(bundle))
         cached_findings = measure("consolidation_workspace_lookup", lambda: workspace.consolidation_snapshot(bundle))
         if cached_findings != findings:
