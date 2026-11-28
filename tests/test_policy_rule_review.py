@@ -55,3 +55,21 @@ class PolicyRuleTests(unittest.TestCase):
         self.assertEqual(len(groups), 1)
         self.assertEqual(len(groups[0]["locations"]), 2)
         self.assertEqual(len(groups[0]["findings"]), 1)
+
+
+    def test_individual_conflicts_cannot_qualify_rule_groups(self):
+        body=policy([rule(1),rule(2)])
+        view={"status":"list_parsed","count_confirmed":True,"profiles":{"test":body}}
+        data={"results":{"CAMPUS_AP":{"scopes":[{"id":"1","kind":"device"},{"id":"2","kind":"device"}],
+            "modules":{"policies":{"scope_results":[{"scope":sid,"effective_view":view} for sid in ("1","2")]}}}},
+            "library":{"modules":{"policies":view}},
+            "keyed_profile_details":{"profiles":{"CAMPUS_AP":{"1":{"policies":{"test":{
+                "effective":{"status":"identity_observed","profile":policy([rule(1)])}}}}},
+                "Library":{"":{"policies":{"test":{"library":{"status":"identity_observed","profile":policy([])}}}}}}}}
+        groups=policy_rule_groups(data)
+        qualified=[r for r in groups if r["status"]!="individual_evidence_conflict"]
+        self.assertEqual(len(qualified),1)
+        self.assertEqual(qualified[0]["locations"][0]["scope"],"2")
+        conflicts=[r for r in groups if r["status"]=="individual_evidence_conflict"]
+        self.assertEqual(len(conflicts),2)
+        self.assertTrue(all(not r["findings"] and not r["order_verified"] for r in conflicts))
