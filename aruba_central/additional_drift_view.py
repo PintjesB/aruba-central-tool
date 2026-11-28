@@ -24,6 +24,12 @@ def additional_drift_panel(report, root, name, previous, query, *, binding):
         tr(e(families.get(f,f)),str(c.get("selectors",0)),str(c.get("exact_match",0)),str(c.get("not_comparable",0)),
            str(c.get("response_changed",0)),e(", ".join(pretty(k)+": "+str(n) for k,n in sorted(c.items()) if k not in ("selectors","exact_match","not_comparable","response_changed"))))
         for f,c in report["counts"].items()])
+    reasons = report.get("noncomparable_reasons",{})
+    if reasons:
+        body += '<h3>Why responses are not comparable</h3><p>Collection-only markers are not direct individual reads. Their presence does not mean configuration was lost or that an API request failed.</p>'
+        body += table(("Evidence","Reason","Selectors"),[
+            tr(e(families.get(family,family)),e(pretty(reason)),str(count))
+            for family,values in reasons.items() for reason,count in sorted(values.items())])
     body += (f'<form class="filter-bar" method="get" action="{e(root+"drift")}#additional-drift">'
              f'<input type="hidden" name="snapshot" value="{e(name)}"><input type="hidden" name="previous" value="{e(previous)}"><input type="hidden" name="confirmed" value="yes">'
              +select("additional_family",list(families.items()),family,"Evidence source")+'<button type="submit">Filter observations</button></form>')
