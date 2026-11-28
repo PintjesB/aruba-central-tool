@@ -140,3 +140,33 @@ class ReferenceWorklistTests(unittest.TestCase):
                 self.assertIn("of 1 matching observations",html)
                 with self.assertRaises(ValueError):
                     w.advanced({**query,"ref_semantics":"invalid"})
+
+    def test_role_name_review_and_exact_source_set_group(self):
+        from aruba_central.review_dispositions import digest,snapshot_binding
+        with tempfile.TemporaryDirectory() as directory:
+            name="config-audit-test.json"
+            (Path(directory)/name).write_text(json.dumps(fixture()))
+            w=Workspace(directory)
+            base={"persona":"ACCESS_SWITCH","scope":"1","device":"Switch","source_view":"effective",
+                  "source_module":"stp","source":"stp-a","path":["mstp",0,"mstp-vlans"],
+                  "target_module":"layer2-vlan","status":"not_observed","target_evidence":"count_confirmed_absence"}
+            refs=[{**base,"target":str(i)} for i in range(1,100)]
+            refs.append({**base,"source":"stp-b","target":"100"})
+            refs.append({**base,"source_module":"roles","source":"role-a","path":["access-vlan-name"],
+                         "status":"unresolved","target":None,"target_evidence":"identity_unqualified",
+                         "role_vlan_name_review":{"status":"single_candidate_id","configured_name":"private-vlan"}})
+            with patch.object(w,"advanced_snapshot",return_value={"references":refs,"shadowed":[],"port_groups":[],"library_duplicates":[]}):
+                query={"snapshot":name,"workflow":"references"}
+                html=w.advanced(query)
+                self.assertIn("Configured set fields (2)",html)
+                self.assertIn("Inspect members",html)
+                binding=digest([snapshot_binding(w,name,w.reviewed_snapshot(name)),"references"])
+                group=digest([binding,("ACCESS_SWITCH","1","effective","stp","stp-b",("mstp",0,"mstp-vlans"))])
+                html=w.advanced({**query,"ref_set_group":group})
+                self.assertIn("of 1 matching observations",html)
+                self.assertIn("Clear set field",html)
+                self.assertNotIn("stp-a",html)
+                html=w.advanced({**query,"ref_role_name":"single_candidate_id"})
+                self.assertIn("of 1 matching observations",html)
+                self.assertIn("private-vlan",html)
+                self.assertIn("single candidate id",html.lower())
