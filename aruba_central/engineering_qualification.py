@@ -72,6 +72,7 @@ def engineering_qualification(bundle, *, include_reference_patterns=False):
         result["named_reference_gaps"] = named_reference_gaps(engineering["references"])
         result["reference_absence_patterns"] = reference_absence_patterns(engineering["references"])
         result["role_vlan_name_evidence"] = role_vlan_name_evidence(engineering["references"])
+        result["reference_conflict_patterns"] = reference_conflict_patterns(engineering["references"])
     return result
 
 
@@ -170,6 +171,30 @@ def role_vlan_name_evidence(references):
         counts[field,state,positive]+=1
     return [{"field_context":f,"status":s,"positive_contexts":list(p),"observations":n}
             for (f,s,p),n in sorted(counts.items(),key=lambda item:(-item[1],item[0]))]
+
+
+def reference_conflict_patterns(references):
+    """Distinguish repeated edge observations from distinct exact endpoints."""
+    from collections import Counter, defaultdict
+    from .central_tool import CONFIG_MODULES
+    from .standard_evidence import CONFLICT_KINDS
+    counts=Counter()
+    endpoints=defaultdict(set)
+    for row in references:
+        if row.get("status")!="conflicting_observation":
+            continue
+        for side in ("source","target"):
+            if row.get(side+"_body_conflict") is not True:
+                continue
+            module=row.get(side+"_module")
+            kind=row.get(side+"_conflict_kind")
+            key=(side,module if module in CONFIG_MODULES else "other",
+                 kind if kind in CONFLICT_KINDS else "unknown")
+            counts[key]+=1
+            view=row.get("source_view") if side=="source" else "library" if row.get("persona")=="Library" else "effective"
+            endpoints[key].add((row.get("persona"),row.get("scope"),view,row.get(side+"_module"),row.get(side)))
+    return [{"side":s,"module":m,"kind":k,"observations":n,"distinct_endpoints":len(endpoints[s,m,k])}
+            for (s,m,k),n in sorted(counts.items(),key=lambda item:(-item[1],item[0]))]
 
 
 def main():

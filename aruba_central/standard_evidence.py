@@ -22,3 +22,36 @@ def conflicting_profiles(bundle,persona,module,scope,view,identities=None,*,side
         elif view.get("count_confirmed") is True:
             output[identity]={"collection_state":"count_confirmed_absent","individual_body":body}
     return output
+
+CONFLICT_KINDS=("count_confirmed_absence","collection_missing_fields","individual_missing_fields",
+                "field_presence_difference","list_order_difference","value_difference","mixed_difference")
+
+
+def body_conflict_kind(collection, individual):
+    """Describe exact body discrepancies, never normalize away evidence."""
+    flags=set()
+    def visit(left,right):
+        if canonical(left)==canonical(right):
+            return
+        if isinstance(left,dict) and isinstance(right,dict):
+            if right.keys()-left.keys():
+                flags.add("collection_missing_fields")
+            if left.keys()-right.keys():
+                flags.add("individual_missing_fields")
+            for key in left.keys() & right.keys():
+                visit(left[key],right[key])
+        elif isinstance(left,list) and isinstance(right,list):
+            if sorted(map(canonical,left))==sorted(map(canonical,right)):
+                flags.add("list_order_difference")
+            else:
+                flags.add("value_difference")
+        else:
+            flags.add("value_difference")
+    visit(collection,individual)
+    if not flags:
+        return None
+    if len(flags)==1:
+        return next(iter(flags))
+    if flags=={"collection_missing_fields","individual_missing_fields"}:
+        return "field_presence_difference"
+    return "mixed_difference"

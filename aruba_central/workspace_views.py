@@ -906,6 +906,8 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
     semantics = query.get("ref_semantics","")
     role_states=("single_candidate_id","multiple_candidate_ids","no_observed_candidate","conflicting_evidence")
     role_state=query.get("ref_role_name","")
+    from .standard_evidence import CONFLICT_KINDS
+    conflict_kind=query.get("ref_conflict_kind","")
     set_group=query.get("ref_set_group","")
     def set_key(r):
         return (r["persona"],r["scope"],r.get("source_view"),r["source_module"],r["source"],tuple(r.get("path",[])))
@@ -917,7 +919,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
         return {obs.get("context") for obs in row.get("target_alternative_observations",[])
                 if obs.get("status") == "identity_observed" and obs.get("context") in contexts}
     state, persona, module, keyword = (query.get(k, "") for k in ("ref_state", "ref_persona", "ref_module", "ref_q"))
-    if state not in ("", *states) or persona not in ("", *personas) or module not in ("", *modules) or reason not in ("", *evidence_reasons) or source not in ("", *sources) or context not in ("","no_positive_context",*contexts) or semantics not in ("",*REFERENCE_SEMANTICS) or role_state not in ("",*role_states) or len(set_group)>128 or len(keyword) > 200 or len(field_filter) > 4096:
+    if state not in ("", *states) or persona not in ("", *personas) or module not in ("", *modules) or reason not in ("", *evidence_reasons) or source not in ("", *sources) or context not in ("","no_positive_context",*contexts) or semantics not in ("",*REFERENCE_SEMANTICS) or role_state not in ("",*role_states) or conflict_kind not in ("",*CONFLICT_KINDS) or len(set_group)>128 or len(keyword) > 200 or len(field_filter) > 4096:
         raise ValueError("Invalid reference filter")
     terms = keyword.casefold().split()
     fields = ("device", "persona", "scope", "source_view", "source_module", "source",
@@ -930,11 +932,12 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                 and (not field_filter or field(r) == field_filter)
                 and (not semantics or reference_semantics(r) == semantics)
                 and (not role_state or r.get("role_vlan_name_review",{}).get("status")==role_state)
+                and (not conflict_kind or conflict_kind in (r.get("source_conflict_kind"),r.get("target_conflict_kind")))
                 and (not set_group or (set_member(r) and set_id(r)==set_group))
                 and (not context or (context == "no_positive_context" and r["status"] == "unresolved" and r.get("target") is not None and not positive_contexts(r)) or context in positive_contexts(r))
                 and all(term in " ".join(str(r.get(k, "")) for k in (*fields,"role_vlan_name_review")).casefold() or (r.get("target_member_ranges") and target_matches(r,"layer2-vlan",term)) for term in terms)]
     filters = {**params, "ref_state": state, "ref_persona": persona, "ref_module": module, "ref_evidence": reason, "ref_q": keyword,
-               "ref_source": source, "ref_field": field_filter, "ref_context": context, "ref_semantics":semantics,"ref_role_name":role_state,"ref_set_group":set_group}
+               "ref_source": source, "ref_field": field_filter, "ref_context": context, "ref_semantics":semantics,"ref_role_name":role_state,"ref_set_group":set_group,"ref_conflict_kind":conflict_kind}
     if query.get("reference_export") == "1":
         if query.get("binding") != binding:
             raise ValueError("Reference evidence changed; reopen the worklist")
@@ -956,6 +959,7 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                 + (f'<input type="hidden" name="ref_field" value="{e(field_filter)}">' if field_filter else "")
                 + select("ref_evidence", [("", "All target evidence")] + [(v, pretty(v)) for v in evidence_reasons], reason, "Target evidence")
                 + (f'<input type="hidden" name="ref_set_group" value="{e(set_group)}">' if set_group else "")
+                + select("ref_conflict_kind",[("","All conflict types")]+[(v,pretty(v)) for v in CONFLICT_KINDS],conflict_kind,"Conflict type")
                 + select("ref_role_name",[("","All role VLAN name states")]+[(v,pretty(v)) for v in role_states],role_state,"Role VLAN name evidence")
                 + select("ref_semantics",[("", "All reference kinds")]+[(v,pretty(v)) for v in REFERENCE_SEMANTICS],semantics,"Reference kind")
                 + select("ref_context", [("", "All alternative contexts"),("no_positive_context","Named unresolved without positive context")] + [(v, pretty(v)) for v in contexts], context, "Alternative evidence")
@@ -1017,6 +1021,8 @@ def reference_worklist(workspace, root, name, bundle, query, records, workflow):
                        status(r["status"]) + (f'<small>{e(pretty(r["target_evidence"]))}</small>' if r.get("target_evidence") else "")
                        + (f'<small>Individual target: {e(pretty(r["target_individual_status"]))}</small>' if r.get("target_individual_status") else "")
                        + (f'<small>Observed elsewhere: {e(", ".join(pretty(v) for v in sorted(positive_contexts(r))))}</small>' if positive_contexts(r) else "")
+                       + (f'<small>Source conflict: {e(pretty(r["source_conflict_kind"]))}</small>' if r.get("source_conflict_kind") else "")
+                       + (f'<small>Target conflict: {e(pretty(r["target_conflict_kind"]))}</small>' if r.get("target_conflict_kind") else "")
                        + (f'<small>Role VLAN name: {e(r["role_vlan_name_review"]["configured_name"])} · {e(pretty(r["role_vlan_name_review"]["status"]))}</small>' if r.get("role_vlan_name_review") else ""),
                        e("Keep reference; verify before profile removal" if r["status"] in ("observed","definition_observed") else
                          "Review configured set membership; not a missing definition by itself" if r["status"] == "not_observed" and reference_semantics(r) != "direct_or_unclassified" else
