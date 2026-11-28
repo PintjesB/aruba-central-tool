@@ -1331,6 +1331,13 @@ def coverage_view(workspace, query):
     if empty:
         return empty
     root, name, bundle, picker = loaded
+    from .coverage_evidence import evidence_link, evidence_view
+    from .review_dispositions import snapshot_binding
+    binding = snapshot_binding(workspace, name, bundle)
+    if "evidence_kind" in query:
+        return evidence_view(workspace, query, root, name, bundle, picker, binding)
+    def evidence(kind, index, label="Inspect"):
+        return evidence_link(root, name, binding, kind, index, label)
     records = module_coverage(bundle)
     counts = Counter(r["status"] for r in records)
     library = bundle.get("library") or {}
@@ -1395,14 +1402,14 @@ def coverage_view(workspace, query):
             value = row.get(key)
             return e(value) if isinstance(value, (str, int, float, bool)) else "Unavailable"
         health_rows = []
-        for serial in sorted(set(summary) | set(issues) | set(inventory)):
+        for index, serial in enumerate(sorted(set(summary) | set(issues) | set(inventory))):
             row = summary.get(serial, {})
             issue = issues.get(serial, {})
             label = row.get("name") or inventory.get(serial, {}).get("deviceName") or serial
             health_rows.append(tr(e(label), e(serial), field(row, "configStatus"),
                 field(row, "activeIssues"), field(row, "topPriorityIssue"), field(row, "recommendedAction"),
                 status(issue.get("status", "not_collected")),
-                inspect(label, raw(row, "Configuration health summary") + raw(issue, "Active issue response"), "Inspect")))
+                evidence("health", index)))
         body += '<section id="coverage-health"><h2>Configuration deployment health</h2>' + metrics([
             ("Device summaries", len(summary), "Count confirmed" if health.get("count_confirmed") else "Count unverified"),
             ("Active issue responses", f"{sum(v.get('status') == 'response_received' for v in issues.values())}/{len(issues)}", "All observed device identifiers"),
@@ -1411,7 +1418,7 @@ def coverage_view(workspace, query):
         ]) + '<p>Summary collection: ' + status(health.get("summary_status", "not_collected")) + '</p>'
         body += '<p class="note">Configuration status and issue counts are reported by Central. Missing data does not establish successful deployment. Issue responses have not been semantically qualified.</p>'
         body += table(("Device", "Serial", "Configuration status", "Active issues", "Top issue", "Recommended action", "Issue read", ""), health_rows, search=True)
-        body += raw(health.get("summary_pages", []), "Original health summary responses") + '</section>'
+        body += '<p>' + evidence("health-pages", 0, "Original health summary responses") + "</p>" + '</section>'
     else:
         body += '<section id="coverage-health"><h2>Configuration deployment health</h2><p class="muted">Not collected in this snapshot. Refresh to retrieve Central health evidence.</p></section>'
     assignments = library.get("assignments") or {}
@@ -1438,8 +1445,8 @@ def coverage_view(workspace, query):
                 tr(e(r["scope"]), e(r["kind"]), status(r["status"]), e(r.get("endpoint_version", "v1")),
                    e("HTTP " + str(r["http_error"]) if r.get("http_error") else "Response received" if r["status"] == "response_received" else "Unavailable") +
                    (('<small>Alternative: ' + e("HTTP " + str(r["alternate_read"]["http_error"]) if r["alternate_read"].get("http_error") else pretty(r["alternate_read"].get("status", "unknown"))) + '</small>') if r.get("alternate_read") else ""),
-                   inspect("Scope hierarchy", raw(r, "Captured hierarchy response"), "Inspect"))
-                for r in hierarchy.get("records", [])], search=True)
+                   evidence("hierarchy", index))
+                for index, r in enumerate(hierarchy.get("records", []))], search=True)
         if individual:
             body += '<h3>Individual assignments</h3><p>' + e(", ".join(f"{pretty(k)}: {v}" for k, v in sorted(individual.get("outcomes", {}).items()))) + '</p>'
             if individual.get("selector_rejections"):
@@ -1450,8 +1457,8 @@ def coverage_view(workspace, query):
                    e(module_label(r["selector"]["profile-type"])), e(r["selector"]["profile-instance"]),
                    status(r["status"]), "Identical" if r.get("body_matches_inventory") is True else
                    "Different" if r.get("body_matches_inventory") is False else "Unavailable",
-                   inspect("Assignment", raw(r, "Captured assignment response"), "Inspect"))
-                for r in individual.get("records", [])], search=True)
+                   evidence("assignment", index))
+                for index, r in enumerate(individual.get("records", []))], search=True)
         body += '</section>'
     from .library_visibility import visibility_summary
     visibility = visibility_summary(bundle)
