@@ -55,3 +55,15 @@ class NACBindingTests(unittest.TestCase):
         bundle["keyed_profile_details"]={"profiles":{"ACCESS_SWITCH":{"1":{"roles":{"Employee":{"effective":{"status":"identity_observed","profile":{"name":"Employee","enable":False}}}}}}}}
         r=role_enforcement_review(bundle,attrs)
         self.assertEqual(r["visibility"]["Employee"]["devices"][0]["status"],"individual_evidence_conflict")
+
+
+    def test_nac_vlan_conflicting_individual_evidence_and_original_occurrence(self):
+        from aruba_central.nac_binding_review import vlan_coverage,context_label
+        from test_configuration_history import snapshot
+        data=snapshot()
+        data["keyed_profile_details"]={"profiles":{"ACCESS_SWITCH":{"4":{"layer2-vlan":{"20":{
+            "effective":{"status":"identity_observed","profile":{"vlan":20,"name":"Different"}}}}}}}}
+        rows=vlan_coverage(data,{"20"})["20"]
+        self.assertEqual(next(r for r in rows if r["scope"]=="4")["status"],"individual_evidence_conflict")
+        self.assertEqual(next(r for r in rows if r["scope"]=="3")["status"],"observed")
+        self.assertEqual(context_label({"rule":1,"rule_index":0,"captured_rule_index":2}),"Rule 1 (captured #3)")
